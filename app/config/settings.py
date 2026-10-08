@@ -50,7 +50,10 @@ class Settings(BaseSettings):
     stream_token_key: SecretStr = SecretStr("")
     integration_cache_seconds: float = Field(default=15, ge=0, le=300)
     integration_verify_timeout_seconds: float = Field(default=8, gt=0, le=30)
-    tenant_llm_models: str = "gemini-3.8-flash,gemini-3.5-flash-lite"
+    tenant_llm_models: str = (
+        "gemini-3.8-flash,gemini-3.5-flash-lite,"
+        "google/gemini-3.8-flash,google/gemini-3.5-flash-lite"
+    )
     smtp_enabled: bool = False
     smtp_host: str = ""
     smtp_port: int = Field(default=587, ge=1, le=65535)
@@ -136,9 +139,11 @@ class Settings(BaseSettings):
     conversation_language_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     conversation_confirmation_timeout_seconds: float = Field(default=120.0, ge=10.0, le=600.0)
     agent_enabled: bool = False
-    llm_provider: Literal["mock", "gemini"] = "mock"
+    llm_provider: Literal["mock", "gemini", "openrouter"] = "mock"
     gemini_api_key: SecretStr = SecretStr("")
-    llm_model: str = "gemini-3.8-flash"
+    openrouter_api_key: SecretStr = SecretStr("")
+    # Empty uses the selected provider's default model.
+    llm_model: str = ""
     llm_timeout_seconds: float = Field(default=10, ge=1, le=30)
     # Thinking tokens count against this budget, so it leaves room for the reply.
     llm_max_output_tokens: int = Field(default=2048, ge=128, le=8192)
@@ -158,8 +163,9 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_knowledge(self) -> Self:
         if self.knowledge_enabled:
-            if not self.tenant_integrations_enabled and not self.gemini_api_key.get_secret_value():
-                raise ValueError("Knowledge requires GEMINI_API_KEY for embeddings")
+            platform_key = self.platform_llm_key.get_secret_value()
+            if not self.tenant_integrations_enabled and not platform_key:
+                raise ValueError("Knowledge requires the platform model key for embeddings")
             if self.knowledge_storage_backend == "s3" and not self.knowledge_s3_bucket:
                 raise ValueError("S3 knowledge storage requires KNOWLEDGE_S3_BUCKET")
             if (
@@ -194,11 +200,11 @@ class Settings(BaseSettings):
     def validate_agent(self) -> Self:
         if (
             self.agent_enabled
-            and self.llm_provider == "gemini"
+            and self.llm_provider != "mock"
             and not self.tenant_integrations_enabled
-            and (not self.gemini_api_key.get_secret_value() or not self.llm_model.strip())
+            and not self.platform_llm_key.get_secret_value()
         ):
-            raise ValueError("Gemini agent requires GEMINI_API_KEY and LLM_MODEL")
+            raise ValueError("The agent requires the API key of the selected LLM_PROVIDER")
         if (
             self.agent_enabled
             and self.llm_provider == "mock"
@@ -258,6 +264,11 @@ class Settings(BaseSettings):
             )
         except ValueError:
             raise ValueError("LEGACY_PROVIDER_TENANT_IDS must be comma-separated UUIDs") from None
+
+    @property
+    def platform_llm_key(self) -> SecretStr:
+        """The platform account key for the selected provider; empty when unset."""
+        return self.openrouter_api_key if self.llm_provider == "openrouter" else self.gemini_api_key
 
     @property
     def llm_models(self) -> tuple[str, ...]:

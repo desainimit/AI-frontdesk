@@ -8,6 +8,7 @@ from pydantic import SecretStr
 from app.agents.providers.base import (
     LLMBlockedError,
     LLMCredentialsError,
+    LLMCreditsError,
     LLMInvalidResponseError,
     LLMMessage,
     LLMProviderError,
@@ -17,7 +18,9 @@ from app.agents.providers.base import (
     LLMTimeoutError,
     LLMUnavailableError,
 )
-from app.agents.providers.gemini import GeminiLLMProvider, wire_schema
+from app.agents.providers.gemini import GeminiLLMProvider
+from app.agents.providers.openrouter import OpenRouterLLMProvider
+from app.agents.providers.schema import wire_schema
 from app.agents.schemas import AgentDecision
 from app.safety.classifier import SafetySignal
 
@@ -168,3 +171,147 @@ def test_wire_schema_inlines_nested_models_and_enums() -> None:
     call = wire["properties"]["tool_calls"]["items"]
     assert set(call["properties"]) == {"name", "arguments_json"}
     assert wire["properties"]["tool_calls"]["maxItems"] == 3
+
+
+OPENROUTER_FAILURES: dict[str, type[LLMProviderError]] = {
+    "rate_limit": LLMRateLimitError,
+    "bad_key": LLMCredentialsError,
+    "no_credit": LLMCreditsError,
+    "moderated": LLMRejectedError,
+    "unknown_model": LLMRejectedError,
+    "no_provider": LLMUnavailableError,
+    "slow": LLMTimeoutError,
+    "timeout": LLMTimeoutError,
+    "offline": LLMUnavailableError,
+    "filtered": LLMBlockedError,
+    "truncated": LLMInvalidResponseError,
+    "invalid": LLMInvalidResponseError,
+    "empty": LLMInvalidResponseError,
+    "failed_inside_200": LLMUnavailableError,
+    "error_body": LLMUnavailableError,
+}
+OPENROUTER_STATUS = {
+    "rate_limit": 429,
+    "bad_key": 401,
+    "no_credit": 402,
+    "moderated": 403,
+    "unknown_model": 404,
+    "no_provider": 503,
+    "slow": 408,
+}
+
+
+def openrouter_reply(outcome: str) -> httpx.Response:
+    if outcome in OPENROUTER_STATUS:
+        code = OPENROUTER_STATUS[outcome]
+        return httpx.Response(code, json={"error": {"code": code, "message": "private-body"}})
+    if outcome == "error_body":
+        return httpx.Response(200, json={"error": {"code": 502, "message": "private-body"}})
+    text: str | None = json.dumps({"intent": "greeting", "response": "Hello.", "tool_calls": []})
+    finish = "stop"
+    if outcome == "invalid":
+        text = '{"intent":"unknown","response":"","tool_calls":[]}'
+    elif outcome == "empty":
+        text = None
+    elif outcome == "filtered":
+        finish = "content_filter"
+    elif outcome == "truncated":
+        finish = "length"
+    choice: dict[str, Any] = {
+        "finish_reason": finish,
+        "message": {"role": "assistant", "content": text},
+    }
+    if outcome == "failed_inside_200":
+        choice = {"finish_reason": "error", "error": {"code": 502, "message": "private-body"}}
+    return httpx.Response(
+        200,
+        json={"id": "gen-1", "choices": [choice], "usage": {"prompt_tokens": 9, "cost": 0.00001}},
+    )
+
+
+@pytest.mark.parametrize("outcome", ["valid", *OPENROUTER_FAILURES])
+async def test_openrouter_adapter_contract(outcome: str) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if outcome == "timeout":
+            raise httpx.ReadTimeout("private-timeout", request=request)
+        if outcome == "offline":
+            raise httpx.ConnectError("private-connect", request=request)
+        return openrouter_reply(outcome)
+
+    provider = OpenRouterLLMProvider(
+        SecretStr("test-key"),
+        "",
+        1,
+        800,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        if outcome == "valid":
+            result = await provider.generate_structured(REQUEST, AgentDecision)
+            assert result.response == "Hello."
+        else:
+            with pytest.raises(LLMProviderError) as error:
+                await provider.generate_structured(REQUEST, AgentDecision)
+            assert type(error.value) is OPENROUTER_FAILURES[outcome]
+            assert "private" not in str(error.value)
+    finally:
+        await provider.close()
+    # Exactly one billed request per call: a failure is never retried here.
+    assert len(seen) == 1
+    request = seen[0]
+    assert str(request.url) == "https://openrouter.ai/api/v1/chat/completions"
+    assert request.headers["authorization"] == "Bearer test-key"
+    body = json.loads(request.content)
+    assert body["model"] == "google/gemini-3.8-flash"  # The default when none is configured.
+    assert body["messages"] == [
+        {"role": "system", "content": "Policy\n\nTools"},
+        {"role": "user", "content": "Hello"},
+    ]
+    assert body["max_tokens"] == 800
+    # Never an endpoint that keeps the conversation or ignores the schema; cheapest first.
+    assert body["provider"] == {
+        "data_collection": "deny",
+        "require_parameters": True,
+        "sort": "price",
+    }
+    assert body["reasoning"] == {"effort": "low", "exclude": True}
+    assert not {"temperature", "top_p", "stream", "tools"} & body.keys()
+    wire = body["response_format"]
+    assert wire["type"] == "json_schema" and wire["json_schema"]["strict"] is True
+    assert wire["json_schema"]["name"] == "AgentDecision"
+    assert "$ref" not in json.dumps(wire) and "maxLength" not in json.dumps(wire)
+
+
+async def test_openrouter_plain_text_uses_the_configured_model_and_optional_reasoning() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"finish_reason": "stop", "message": {"content": "Hi"}}]},
+        )
+
+    provider = OpenRouterLLMProvider(
+        SecretStr("test-key"),
+        "google/gemini-3.5-flash-lite",
+        1,
+        800,
+        reasoning_effort=None,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        assert (await provider.generate(REQUEST)).text == "Hi"
+    finally:
+        await provider.close()
+    assert seen[0]["model"] == "google/gemini-3.5-flash-lite"
+    assert "reasoning" not in seen[0] and "response_format" not in seen[0]
+
+
+def test_adapters_refuse_to_start_without_a_key() -> None:
+    for adapter in (GeminiLLMProvider, OpenRouterLLMProvider):
+        with pytest.raises(LLMCredentialsError):
+            adapter(SecretStr(""), "model", 1, 800)

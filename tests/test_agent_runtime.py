@@ -190,11 +190,17 @@ async def test_offline_intent_keeps_context() -> None:
 def test_agent_configuration_fails_closed(settings: Settings) -> None:
     for update in (
         {"agent_enabled": True, "llm_provider": "gemini"},
+        {"agent_enabled": True, "llm_provider": "openrouter"},
         {"agent_enabled": True, "environment": "production", "llm_provider": "mock"},
     ):
         with pytest.raises(ValidationError):
             Settings.model_validate(
-                {**settings.model_dump(), **update, "gemini_api_key": SecretStr("")}
+                {
+                    **settings.model_dump(),
+                    **update,
+                    "gemini_api_key": SecretStr(""),
+                    "openrouter_api_key": SecretStr(""),
+                }
             )
     assert "private-key" not in repr(
         settings.model_copy(update={"gemini_api_key": SecretStr("private-key")})

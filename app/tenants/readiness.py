@@ -227,13 +227,13 @@ class TenantReadinessService:
                     Purpose.LLM,
                     "AI model",
                     settings.llm_provider == "mock"
-                    or bool(settings.gemini_api_key.get_secret_value()),
+                    or bool(settings.platform_llm_key.get_secret_value()),
                 )
             )
         knowledge = integrations.get((Purpose.EMBEDDINGS, "primary"))
         if settings.knowledge_enabled and not (
             (knowledge is not None and knowledge.status == "verified")
-            or (knowledge is None and legacy and settings.gemini_api_key.get_secret_value())
+            or (knowledge is None and legacy and settings.platform_llm_key.get_secret_value())
         ):
             checks.append(
                 ReadinessCheck(

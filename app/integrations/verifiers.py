@@ -118,6 +118,21 @@ class HttpProviderVerifier:
                     if response.status_code == 400:
                         return Verification("invalid", "credentials_rejected")
                     return _classify(response.status_code, missing="model_unavailable")
+                if provider == "openrouter" and purpose in {Purpose.LLM, Purpose.EMBEDDINGS}:
+                    # Key information only: this request generates nothing and costs nothing.
+                    response = await client.get(
+                        "https://openrouter.ai/api/v1/key",
+                        headers={"Authorization": f"Bearer {secrets['api_key']}"},
+                    )
+                    accepted = _classify(response.status_code)
+                    if accepted is not VERIFIED or purpose == Purpose.EMBEDDINGS:
+                        return accepted
+                    author, _, slug = str(config["model"]).partition("/")
+                    response = await client.get(
+                        "https://openrouter.ai/api/v1/models/"
+                        f"{quote(author, safe='')}/{quote(slug, safe='')}/endpoints"
+                    )
+                    return _classify(response.status_code, missing="model_unavailable")
         except (httpx.HTTPError, KeyError, ValueError):
             return Verification("unavailable", "provider_unavailable")
         return Verification("invalid", "unsupported_provider")

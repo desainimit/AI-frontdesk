@@ -22,7 +22,7 @@ x-app-environment: &app-environment
   TENANT_AUTH_PUBLIC_ORIGIN: ${TENANT_AUTH_PUBLIC_ORIGIN:-}
   TENANT_INTEGRATIONS_ENABLED: ${TENANT_INTEGRATIONS_ENABLED:-false}
   LEGACY_PROVIDER_TENANT_IDS: ${LEGACY_PROVIDER_TENANT_IDS:-}
-  TENANT_LLM_MODELS: ${TENANT_LLM_MODELS:-gemini-3.8-flash,gemini-3.5-flash-lite}
+  TENANT_LLM_MODELS: ${TENANT_LLM_MODELS:-gemini-3.8-flash,gemini-3.5-flash-lite,google/gemini-3.8-flash,google/gemini-3.5-flash-lite}
   INTEGRATION_CACHE_SECONDS: ${INTEGRATION_CACHE_SECONDS:-15}
   INTEGRATION_VERIFY_TIMEOUT_SECONDS: ${INTEGRATION_VERIFY_TIMEOUT_SECONDS:-8}
   # Injected by the deployment secret manager; never stored in PostgreSQL or its backups.
@@ -103,7 +103,8 @@ services:
       AGENT_ENABLED: ${AGENT_ENABLED:-false}
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      LLM_MODEL: ${LLM_MODEL:-gemini-3.8-flash}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-10}
       LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-2048}
       AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-3}
@@ -166,7 +167,9 @@ services:
       OUTBOX_LEASE_SECONDS: ${OUTBOX_LEASE_SECONDS:-90}
       OUTBOX_POLL_SECONDS: ${OUTBOX_POLL_SECONDS:-1}
       KNOWLEDGE_ENABLED: ${KNOWLEDGE_ENABLED:-false}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       HF_HOME: /srv/app/data/models
     depends_on:
       migrate:

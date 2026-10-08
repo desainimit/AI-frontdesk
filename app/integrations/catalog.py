@@ -108,6 +108,17 @@ class GeminiEmbeddingsConfig(_Config):
     model: Literal["gemini-embedding-2"] = "gemini-embedding-2"
 
 
+class OpenRouterChatConfig(_Config):
+    # An OpenRouter slug such as google/gemini-3.8-flash; the allowlist still applies.
+    model: str = Field(pattern=r"^[a-z0-9][a-z0-9.\-]{0,40}/[a-z0-9][a-z0-9.\-:]{1,80}$")
+    thinking_level: Literal["minimal", "low", "medium", "high"] | None = "low"
+
+
+class OpenRouterEmbeddingsConfig(_Config):
+    # Produces 1536 dimensions natively, matching the vector index.
+    model: Literal["openai/text-embedding-3-small"] = "openai/text-embedding-3-small"
+
+
 class TwilioSecrets(_Secrets):
     auth_token: SecretStr = Field(min_length=32, max_length=32)
     api_key_sid: str | None = Field(default=None, pattern=r"^SK[0-9a-fA-F]{32}$")
@@ -200,6 +211,10 @@ _SPECS = (
     ProviderSpec(
         "gemini", Purpose.EMBEDDINGS, "Google Gemini", GeminiEmbeddingsConfig, ApiKeySecrets
     ),
+    ProviderSpec("openrouter", Purpose.LLM, "OpenRouter", OpenRouterChatConfig, ApiKeySecrets),
+    ProviderSpec(
+        "openrouter", Purpose.EMBEDDINGS, "OpenRouter", OpenRouterEmbeddingsConfig, ApiKeySecrets
+    ),
 )
 CATALOG: dict[tuple[Purpose, str], ProviderSpec] = {
     (spec.purpose, spec.provider): spec for spec in _SPECS
@@ -253,8 +268,10 @@ def catalog_entries(llm_models: tuple[str, ...]) -> list[ProviderCatalogEntry]:
     entries: list[ProviderCatalogEntry] = []
     for spec in _SPECS:
         schema = spec.config.model_json_schema()
-        if spec.config is GeminiChatConfig:
-            schema["properties"]["model"]["enum"] = list(llm_models)
+        if spec.purpose == Purpose.LLM:
+            # Each provider is offered only the allowed models written in its own form.
+            pattern = re.compile(str(schema["properties"]["model"]["pattern"]))
+            schema["properties"]["model"]["enum"] = [m for m in llm_models if pattern.fullmatch(m)]
         entries.append(
             ProviderCatalogEntry(
                 provider=spec.provider,

@@ -419,14 +419,13 @@ async def resolve_call_providers(
     llm: LLMProvider | None = app.state.llm_provider
     owned_llm: LLMProvider | None = None
     if llm_connection is not None:
-        from app.agents.providers.gemini import GeminiLLMProvider
+        from app.agents.factory import llm_from_connection
 
-        owned_llm = llm = GeminiLLMProvider(
+        owned_llm = llm = llm_from_connection(
+            settings,
+            llm_connection.provider,
             llm_connection.secret("api_key"),
-            str(llm_connection.config["model"]),
-            settings.llm_timeout_seconds,
-            settings.llm_max_output_tokens,
-            thinking_level=llm_connection.config.get("thinking_level"),
+            dict(llm_connection.config),
         )
     if settings.agent_enabled and llm is None:
         raise IntegrationUnavailableError()
@@ -590,7 +589,7 @@ async def run_media(
                 LLMSafetyClassifier(llm)
                 if settings.agent_enabled
                 and llm is not None
-                and (settings.llm_provider == "gemini" or owned_llm is not None)
+                and (settings.llm_provider != "mock" or owned_llm is not None)
                 and settings.safety_semantic_enabled
                 else None
             )

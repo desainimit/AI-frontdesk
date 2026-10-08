@@ -30,7 +30,7 @@ from app.events.processor import EventProcessor
 from app.events.providers import ConsoleNotificationProvider, RetryPolicy
 from app.events.store import OutboxStore, verify_worker_role
 from app.integrations.resolver import TenantIntegrationResolver
-from app.knowledge.embeddings import GeminiEmbedder, open_embedder
+from app.knowledge.embeddings import open_embedder, platform_embedder
 from app.knowledge.storage import build_storage
 from app.knowledge.worker import KnowledgeWorker
 from app.observability.tracing import Telemetry
@@ -112,7 +112,7 @@ async def build_queues(settings: Settings, stack: AsyncExitStack) -> list[Queue]
         queues.append(Queue("mail", lambda: deliver_one(sessions, settings), 2))
     if settings.knowledge_enabled:
         # With tenant connections each job embeds with its own tenant's key.
-        shared = None if settings.tenant_integrations_enabled else GeminiEmbedder(settings)
+        shared = None if settings.tenant_integrations_enabled else platform_embedder(settings)
         if shared is not None:
             stack.push_async_callback(shared.close)
         resolver = TenantIntegrationResolver(sessions, settings, role_check=verify_worker_role)

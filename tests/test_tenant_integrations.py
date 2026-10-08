@@ -57,9 +57,17 @@ def test_catalog_accepts_only_allowlisted_configuration() -> None:
     for purpose, provider in (("stt", "twilio"), ("telephony", "deepgram"), ("sms", "twilio")):
         with pytest.raises(InvalidIntegrationError):
             spec_for(purpose, provider)
-    entries = catalog_entries(("gpt-4o-mini",))
-    llm = next(item for item in entries if item.purpose == "llm")
-    assert llm.config_schema["properties"]["model"]["enum"] == ["gpt-4o-mini"]
+    entries = catalog_entries(("gemini-3.8-flash", "google/gemini-3.8-flash"))
+    models = {
+        item.provider: item.config_schema["properties"]["model"]["enum"]
+        for item in entries
+        if item.purpose == "llm"
+    }
+    # Each provider is offered only the allowed models written in its own form.
+    assert models == {"gemini": ["gemini-3.8-flash"], "openrouter": ["google/gemini-3.8-flash"]}
+    for model in ("gemini-3.8-flash", "../v1/key", "google/gemini 3", "https://x.example/y"):
+        with pytest.raises(InvalidIntegrationError):
+            validate_config(spec_for("llm", "openrouter"), {"model": model})
     twilio = next(item for item in entries if item.provider == "twilio")
     assert twilio.requires_account_identifier and twilio.required_secret_fields == ["auth_token"]
 
@@ -164,6 +172,15 @@ async def test_verifier_classifies_provider_answers_and_uses_fixed_hosts() -> No
             {"api_key": "k" * 20},
             "generativelanguage.googleapis.com",
         ),
+        (
+            "llm",
+            "openrouter",
+            None,
+            {"model": "google/gemini-3.8-flash"},
+            {"api_key": "k" * 20},
+            "openrouter.ai",
+        ),
+        ("embeddings", "openrouter", None, {}, {"api_key": "k" * 20}, "openrouter.ai"),
     )
     for purpose, provider, account, config, secrets_, host in cases:
         requests.clear()
@@ -217,6 +234,37 @@ def tenant_settings(settings: Settings) -> Settings:
             "stream_token_key": SecretStr(secrets.token_urlsafe(48)),
         }
     )
+
+
+async def test_openrouter_check_costs_nothing_and_keeps_the_key_off_public_routes() -> None:
+    requests: list[httpx.Request] = []
+    known = {"google/gemini-3.8-flash"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/api/v1/key":
+            accepted = request.headers.get("authorization") == "Bearer " + "k" * 20
+            return httpx.Response(200 if accepted else 401, json={})
+        slug = request.url.path.removeprefix("/api/v1/models/").removesuffix("/endpoints")
+        return httpx.Response(200 if slug in known else 404, json={})
+
+    verifier = HttpProviderVerifier(2, transport=httpx.MockTransport(handler))
+    secrets_ = {"api_key": "k" * 20}
+    good = await verifier.verify(
+        "llm", "openrouter", None, {"model": "google/gemini-3.8-flash"}, secrets_
+    )
+    assert good.outcome == "verified"
+    missing = await verifier.verify("llm", "openrouter", None, {"model": "google/gone"}, secrets_)
+    assert (missing.outcome, missing.code) == ("invalid", "model_unavailable")
+    rejected = await verifier.verify(
+        "llm", "openrouter", None, {"model": "google/gemini-3.8-flash"}, {"api_key": "x" * 20}
+    )
+    assert (rejected.outcome, rejected.code) == ("invalid", "credentials_rejected")
+    # Only read-only information routes are used; nothing here generates or bills.
+    assert {request.method for request in requests} == {"GET"}
+    assert all("/chat/" not in request.url.path for request in requests)
+    public = [request for request in requests if request.url.path.endswith("/endpoints")]
+    assert public and all("authorization" not in request.headers for request in public)
 
 
 def test_stream_token_is_bound_to_call_connection_and_expiry(

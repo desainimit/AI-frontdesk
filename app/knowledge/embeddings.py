@@ -1,7 +1,12 @@
-"""Embeddings use the same fixed model and dimension for indexing and queries."""
+"""Embeddings use one fixed dimension for indexing and queries.
+
+Vectors from different providers are not comparable. A deployment (or a tenant with its
+own connection) must embed its documents and its questions with the same provider;
+changing provider means re-indexing the documents.
+"""
 
 import asyncio
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID
 
 import httpx
@@ -14,9 +19,11 @@ if TYPE_CHECKING:
     from app.integrations.resolver import TenantIntegrationResolver
 
 EMBEDDING_MODEL = "gemini-embedding-2"
+OPENROUTER_EMBEDDING_MODEL = "openai/text-embedding-3-small"
+OPENROUTER_EMBEDDINGS_URL = "https://openrouter.ai/api/v1/embeddings"
 EMBEDDING_DIMENSIONS = 1536
 EmbeddingKind = Literal["document", "query"]
-# The model is steered by these prefixes instead of a task-type parameter.
+# The Gemini model is steered by these prefixes instead of a task-type parameter.
 _PREFIX: dict[EmbeddingKind, str] = {
     "document": "title: none | text: ",
     "query": "task: search result | query: ",
@@ -29,21 +36,24 @@ class Embedder(Protocol):
     ) -> list[list[float]]: ...
 
 
+class OwnedEmbedder(Embedder, Protocol):
+    """An embedder opened for one request or job; its opener closes it."""
+
+    async def close(self) -> None: ...
+
+
+def _checked(texts: list[str]) -> None:
+    if not texts or any(not text.strip() or len(text) > 6000 for text in texts):
+        raise ValueError("Invalid embedding input")
+
+
 class GeminiEmbedder:
-    def __init__(
-        self,
-        settings: Settings,
-        api_key: SecretStr | None = None,
-        *,
-        http_client: httpx.AsyncClient | None = None,
-    ) -> None:
-        # A tenant connection supplies its own key; settings is the platform account.
-        secret = (api_key or settings.gemini_api_key).get_secret_value()
-        if not secret:
+    def __init__(self, api_key: SecretStr, *, http_client: httpx.AsyncClient | None = None) -> None:
+        if not api_key.get_secret_value():
             raise ValueError("Embedding credentials are not configured")
         self._http = http_client or httpx.AsyncClient(timeout=10.0)
         self.client = Client(
-            api_key=secret,
+            api_key=api_key.get_secret_value(),
             http_options=types.HttpOptions(
                 httpx_async_client=self._http,
                 timeout=10_000,
@@ -70,8 +80,7 @@ class GeminiEmbedder:
     async def embed(
         self, texts: list[str], *, kind: EmbeddingKind = "document"
     ) -> list[list[float]]:
-        if not texts or any(not text.strip() or len(text) > 6000 for text in texts):
-            raise ValueError("Invalid embedding input")
+        _checked(texts)
         return list(await asyncio.gather(*(self._one(_PREFIX[kind] + text) for text in texts)))
 
     async def close(self) -> None:
@@ -80,9 +89,62 @@ class GeminiEmbedder:
         await self._http.aclose()
 
 
+class OpenRouterEmbedder:
+    """One request per batch, never retried, and only to endpoints that keep no data."""
+
+    def __init__(self, api_key: SecretStr, *, http_client: httpx.AsyncClient | None = None) -> None:
+        if not api_key.get_secret_value():
+            raise ValueError("Embedding credentials are not configured")
+        self._key = api_key
+        self._http = http_client or httpx.AsyncClient(timeout=10.0)
+
+    async def embed(
+        self, texts: list[str], *, kind: EmbeddingKind = "document"
+    ) -> list[list[float]]:
+        _checked(texts)
+        response = await self._http.post(
+            OPENROUTER_EMBEDDINGS_URL,
+            json={
+                "model": OPENROUTER_EMBEDDING_MODEL,
+                "input": texts,
+                "encoding_format": "float",
+                "provider": {"data_collection": "deny"},
+            },
+            headers={"Authorization": f"Bearer {self._key.get_secret_value()}"},
+        )
+        if response.status_code != 200:
+            # The body may quote the input; only a static message leaves this function.
+            raise ValueError("Embedding provider rejected the request")
+        rows = cast(list[dict[str, Any]], cast(dict[str, Any], response.json()).get("data") or [])
+        ordered = sorted(rows, key=lambda row: int(row.get("index", 0)))
+        vectors = [cast(list[float], row.get("embedding") or []) for row in ordered]
+        if len(vectors) != len(texts) or any(
+            len(vector) != EMBEDDING_DIMENSIONS for vector in vectors
+        ):
+            raise ValueError("Embedding provider returned invalid dimensions")
+        return vectors
+
+    async def close(self) -> None:
+        await self._http.aclose()
+
+
+def build_embedder(provider: str, api_key: SecretStr) -> OwnedEmbedder:
+    if provider == "openrouter":
+        return OpenRouterEmbedder(api_key)
+    if provider == "gemini":
+        return GeminiEmbedder(api_key)
+    raise ValueError("Unsupported embeddings provider")
+
+
+def platform_embedder(settings: Settings) -> OwnedEmbedder:
+    """The platform account's embedder, following the selected model provider."""
+    provider = "openrouter" if settings.llm_provider == "openrouter" else "gemini"
+    return build_embedder(provider, settings.platform_llm_key)
+
+
 async def open_embedder(
     settings: Settings, resolver: "TenantIntegrationResolver | None", tenant_id: UUID
-) -> GeminiEmbedder:
+) -> OwnedEmbedder:
     """Embedder for one tenant's request or job; the caller closes it.
 
     Uses the tenant's own embeddings connection. The platform key serves only tenants
@@ -91,10 +153,10 @@ async def open_embedder(
     from app.integrations.resolver import IntegrationUnavailableError
 
     if resolver is None or not resolver.enabled:
-        return GeminiEmbedder(settings)
+        return platform_embedder(settings)
     connection = await resolver.active(tenant_id, "embeddings")
     if connection is not None:
-        return GeminiEmbedder(settings, connection.secret("api_key"))
-    if resolver.legacy_allowed(tenant_id) and settings.gemini_api_key.get_secret_value():
-        return GeminiEmbedder(settings)
+        return build_embedder(connection.provider, connection.secret("api_key"))
+    if resolver.legacy_allowed(tenant_id) and settings.platform_llm_key.get_secret_value():
+        return platform_embedder(settings)
     raise IntegrationUnavailableError()

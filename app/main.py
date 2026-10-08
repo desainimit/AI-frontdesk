@@ -83,7 +83,7 @@ def create_app(
                 app.state.tts_provider = build_tts_provider(config, telemetry)
             app.state.llm_provider = None
             if config.agent_enabled and (
-                config.llm_provider == "mock" or config.gemini_api_key.get_secret_value()
+                config.llm_provider == "mock" or config.platform_llm_key.get_secret_value()
             ):
                 provider = build_llm_provider(config)
                 app.state.llm_provider = provider

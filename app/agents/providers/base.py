@@ -48,6 +48,12 @@ class LLMCredentialsError(LLMProviderError):
     code = "llm_credentials_rejected"
 
 
+class LLMCreditsError(LLMProviderError):
+    """The provider account has run out of credit; only topping up helps."""
+
+    code = "llm_credits_exhausted"
+
+
 class LLMRejectedError(LLMProviderError):
     """The provider refused the request itself, such as an unknown model."""
 

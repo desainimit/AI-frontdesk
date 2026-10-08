@@ -681,6 +681,7 @@ async def test_two_twilio_accounts_route_to_two_tenants_over_http(
             "azure_speech",
             "elevenlabs",
             "gemini",
+            "openrouter",
         }
         readiness = await client.get("/api/v1/tenants/current/readiness", headers=headers)
         assert readiness.status_code == 200 and readiness.json()["ready"] is True
