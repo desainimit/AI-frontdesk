@@ -156,7 +156,14 @@ async def test_verifier_classifies_provider_answers_and_uses_fixed_hosts() -> No
             {"speech_key": "k" * 20},
             "eastus.api.cognitive.microsoft.com",
         ),
-        ("llm", "openai", None, {"model": "gpt-4o-mini"}, {"api_key": "k" * 20}, "api.openai.com"),
+        (
+            "llm",
+            "gemini",
+            None,
+            {"model": "gemini-3.8-flash"},
+            {"api_key": "k" * 20},
+            "generativelanguage.googleapis.com",
+        ),
     )
     for purpose, provider, account, config, secrets_, host in cases:
         requests.clear()
@@ -178,8 +185,13 @@ async def test_verifier_classifies_provider_answers_and_uses_fixed_hosts() -> No
         ).outcome == "unavailable"
 
     status["code"] = 404
-    missing = await verifier.verify("llm", "openai", None, {"model": "x"}, {"api_key": "k" * 20})
+    missing = await verifier.verify("llm", "gemini", None, {"model": "x"}, {"api_key": "k" * 20})
     assert (missing.outcome, missing.code) == ("invalid", "model_unavailable")
+    status["code"] = 400  # How Google reports a key it does not recognise.
+    unknown = await verifier.verify("llm", "gemini", None, {"model": "x"}, {"api_key": "k" * 20})
+    assert (unknown.outcome, unknown.code) == ("invalid", "credentials_rejected")
+    assert requests[-1].headers["x-goog-api-key"] == "k" * 20
+    assert "k" * 20 not in str(requests[-1].url)
     status["code"] = 200
     numbers = await verifier.twilio_numbers(SID, {"auth_token": TOKEN})
     assert [(item.sid, item.number) for item in numbers] == [("PN" + "1" * 32, "+15551230001")]

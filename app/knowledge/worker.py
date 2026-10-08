@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database.rls import set_tenant_scope
 from app.events.store import verify_worker_role
-from app.knowledge.embeddings import Embedder, OpenAIEmbedder
+from app.knowledge.embeddings import Embedder, GeminiEmbedder
 from app.knowledge.models import DocumentChunk, DocumentVersion, KnowledgeJob
 from app.knowledge.parsing import ParsedChunk, parse_document
 from app.knowledge.storage import ObjectStorage
@@ -38,7 +38,7 @@ class KnowledgeWorker:
         storage: ObjectStorage,
         embedder: Embedder | None,
         *,
-        tenant_embedder: Callable[[UUID], Awaitable[OpenAIEmbedder]] | None = None,
+        tenant_embedder: Callable[[UUID], Awaitable[GeminiEmbedder]] | None = None,
     ) -> None:
         if embedder is None and tenant_embedder is None:
             raise ValueError("Knowledge worker requires an embedding source")

@@ -5,7 +5,13 @@ from dataclasses import dataclass
 from hashlib import sha256
 from io import BytesIO
 
-import tiktoken
+# Chunks are sized by characters, so no model-specific tokenizer is needed. The limit
+# is about 1,000 English tokens and stays well inside the embedding model's input.
+MAX_CHUNK_CHARACTERS = 4000
+
+
+def approximate_tokens(text: str) -> int:
+    return max(1, (len(text) + 3) // 4)
 
 
 @dataclass(frozen=True)
@@ -36,7 +42,6 @@ def parse_document(name: str, body: bytes) -> list[ParsedChunk]:
         max_file_size=25_000_000,
         max_num_pages=100,
     ).document
-    tokenizer = tiktoken.get_encoding("cl100k_base")
     chunks: list[ParsedChunk] = []
     for raw in HierarchicalChunker().chunk(dl_doc=document):
         if not isinstance(raw, DocChunk):
@@ -52,24 +57,23 @@ def parse_document(name: str, body: bytes) -> list[ParsedChunk]:
         current = ""
         for paragraph in [*paragraphs, ""]:
             proposed = f"{current} {paragraph}".strip()
-            if paragraph and len(tokenizer.encode(proposed)) <= 1000:
+            if paragraph and len(proposed) <= MAX_CHUNK_CHARACTERS:
                 current = proposed
                 continue
             if current:
-                count = len(tokenizer.encode(current))
                 chunks.append(
                     ParsedChunk(
                         current,
                         section,
                         subsection,
                         page_number,
-                        count,
+                        approximate_tokens(current),
                         sha256(current.encode()).hexdigest(),
                         {"pages": pages[:20], "doc_items": references},
                     )
                 )
             current = paragraph
-            if len(tokenizer.encode(current)) > 1000:
+            if len(current) > MAX_CHUNK_CHARACTERS:
                 # An indivisible element is rejected instead of embedding an
                 # overlong input or silently discarding source provenance.
                 raise ValueError("Document contains an oversized element")

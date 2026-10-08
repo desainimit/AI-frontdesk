@@ -14,7 +14,7 @@ from app.config.settings import Settings
 from app.database.session import Database
 from app.events.store import verify_worker_role
 from app.integrations.resolver import TenantIntegrationResolver
-from app.knowledge.embeddings import OpenAIEmbedder, open_embedder
+from app.knowledge.embeddings import GeminiEmbedder, open_embedder
 from app.knowledge.storage import build_storage
 from app.knowledge.worker import KnowledgeWorker
 from app.workflows.activities import WorkflowActivities
@@ -35,7 +35,7 @@ async def run(settings: Settings, *, once: bool = False, check: bool = False) ->
         raise ValueError("Temporal worker requires enabled Temporal and worker credentials")
     database = Database(settings.model_copy(update={"database_url": settings.worker_database_url}))
     per_tenant = settings.tenant_integrations_enabled
-    embedder = OpenAIEmbedder(settings) if settings.knowledge_enabled and not per_tenant else None
+    embedder = GeminiEmbedder(settings) if settings.knowledge_enabled and not per_tenant else None
     resolver = TenantIntegrationResolver(
         database.session_factory, settings, role_check=verify_worker_role
     )

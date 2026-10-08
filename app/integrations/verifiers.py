@@ -9,6 +9,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -107,11 +108,15 @@ class HttpProviderVerifier:
                         },
                     )
                     return _classify(response.status_code)
-                if provider == "openai" and purpose in {Purpose.LLM, Purpose.EMBEDDINGS}:
+                if provider == "gemini" and purpose in {Purpose.LLM, Purpose.EMBEDDINGS}:
                     response = await client.get(
-                        f"https://api.openai.com/v1/models/{config['model']}",
-                        headers={"Authorization": f"Bearer {secrets['api_key']}"},
+                        "https://generativelanguage.googleapis.com/v1beta/models/"
+                        + quote(str(config["model"]), safe=""),
+                        headers={"x-goog-api-key": secrets["api_key"]},
                     )
+                    # Google answers 400, not 401, for a key it does not recognise.
+                    if response.status_code == 400:
+                        return Verification("invalid", "credentials_rejected")
                     return _classify(response.status_code, missing="model_unavailable")
         except (httpx.HTTPError, KeyError, ValueError):
             return Verification("unavailable", "provider_unavailable")

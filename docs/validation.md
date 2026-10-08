@@ -67,7 +67,7 @@ Earlier entries below are historical and are superseded by this verification.
 - Docker Compose configuration and API image build: passed.
 - Media regression checks cover both agent-disabled and agent-enabled behavior,
   persisted terminal conversation state, and generated responses rather than STT echo.
-- Provider contract tests use a mocked HTTP transport with the actual OpenAI SDK,
+- Provider contract tests use a mocked HTTP transport with the actual Gemini SDK,
   including structured request format, refusal, incomplete output, and rate limits.
 - Tool tests cover successful reads, unknown tools, malformed/extra/coerced arguments,
   duplicate JSON keys, tenant/call mismatch, safety blocks, cancellation, timeout,

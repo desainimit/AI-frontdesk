@@ -9,7 +9,7 @@ from app.agents.appointment_flow import AppointmentFlow
 from app.agents.context import MUTATION_TOOLS, AgentAuthorizationError, AgentContext
 from app.agents.language import spoken
 from app.agents.prompts import build_request
-from app.agents.providers.base import LLMProvider
+from app.agents.providers.base import LLMProvider, LLMProviderError
 from app.agents.schemas import AgentDecision, AgentResult, Intent
 from app.agents.tools import ToolRegistry, ToolValidationError
 from app.conversation.manager import ConversationStateManager
@@ -140,6 +140,12 @@ class AgentRuntime:
             )
         except (ToolValidationError, ValidationError):
             logger.warning("agent_output_rejected", extra={"call_id": str(context.call.call_id)})
+        except LLMProviderError as error:
+            # A static code only: enough to tell a bad key from a rate limit or an outage.
+            logger.warning(
+                "agent_llm_failed",
+                extra={"call_id": str(context.call.call_id), "error_type": error.code},
+            )
         except Exception:
             # Never log vendor exception bodies, prompts, transcripts or generated arguments.
             logger.warning("agent_turn_unavailable", extra={"call_id": str(context.call.call_id)})

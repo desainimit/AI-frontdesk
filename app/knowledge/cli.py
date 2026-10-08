@@ -11,7 +11,7 @@ from app.config.settings import Settings
 from app.database.session import Database
 from app.events.store import verify_worker_role
 from app.integrations.resolver import TenantIntegrationResolver
-from app.knowledge.embeddings import OpenAIEmbedder, open_embedder
+from app.knowledge.embeddings import GeminiEmbedder, open_embedder
 from app.knowledge.storage import build_storage
 from app.knowledge.worker import KnowledgeWorker
 
@@ -24,7 +24,7 @@ async def run(settings: Settings, *, once: bool = False, check: bool = False) ->
     config = settings.model_copy(update={"database_url": settings.worker_database_url})
     database = Database(config)
     # Mixed-tenant keys: each job embeds with its own tenant's connection.
-    embedder = None if settings.tenant_integrations_enabled else OpenAIEmbedder(settings)
+    embedder = None if settings.tenant_integrations_enabled else GeminiEmbedder(settings)
     resolver = TenantIntegrationResolver(
         database.session_factory, settings, role_check=verify_worker_role
     )

@@ -96,14 +96,16 @@ class ElevenLabsConfig(_Config):
     voice_id: str = Field(default="21m00Tcm4TlvDq8ikWAM", pattern=r"^[A-Za-z0-9]{20}$")
 
 
-class OpenAIChatConfig(_Config):
+class GeminiChatConfig(_Config):
     # The platform allowlist (TENANT_LLM_MODELS) is enforced by the service.
     model: str = Field(pattern=r"^[a-z0-9][a-z0-9.\-]{1,62}$")
+    # Lower levels answer sooner; None omits it for models that do not accept one.
+    thinking_level: Literal["low", "medium", "high"] | None = "low"
 
 
-class OpenAIEmbeddingsConfig(_Config):
-    # The vector index is fixed at 1536 dimensions; another model needs a rebuild.
-    model: Literal["text-embedding-3-small"] = "text-embedding-3-small"
+class GeminiEmbeddingsConfig(_Config):
+    # The vector index is fixed at 1536 dimensions; another size needs a rebuild.
+    model: Literal["gemini-embedding-2"] = "gemini-embedding-2"
 
 
 class TwilioSecrets(_Secrets):
@@ -194,8 +196,10 @@ _SPECS = (
         locked_fields=frozenset({"region"}),
         suffix_field="speech_key",
     ),
-    ProviderSpec("openai", Purpose.LLM, "OpenAI", OpenAIChatConfig, ApiKeySecrets),
-    ProviderSpec("openai", Purpose.EMBEDDINGS, "OpenAI", OpenAIEmbeddingsConfig, ApiKeySecrets),
+    ProviderSpec("gemini", Purpose.LLM, "Google Gemini", GeminiChatConfig, ApiKeySecrets),
+    ProviderSpec(
+        "gemini", Purpose.EMBEDDINGS, "Google Gemini", GeminiEmbeddingsConfig, ApiKeySecrets
+    ),
 )
 CATALOG: dict[tuple[Purpose, str], ProviderSpec] = {
     (spec.purpose, spec.provider): spec for spec in _SPECS
@@ -249,7 +253,7 @@ def catalog_entries(llm_models: tuple[str, ...]) -> list[ProviderCatalogEntry]:
     entries: list[ProviderCatalogEntry] = []
     for spec in _SPECS:
         schema = spec.config.model_json_schema()
-        if spec.config is OpenAIChatConfig:
+        if spec.config is GeminiChatConfig:
             schema["properties"]["model"]["enum"] = list(llm_models)
         entries.append(
             ProviderCatalogEntry(

@@ -469,7 +469,7 @@ async def test_only_tenant_admins_and_explicit_platform_actions_manage_connectio
         await harness.service.create(
             admin,
             CreateIntegration(
-                purpose=Purpose.LLM, provider="openai", config={"model": "not-allowed"}
+                purpose=Purpose.LLM, provider="gemini", config={"model": "not-allowed"}
             ),
         )
     with pytest.raises(IntegrationValidationError):
@@ -680,7 +680,7 @@ async def test_two_twilio_accounts_route_to_two_tenants_over_http(
             "deepgram",
             "azure_speech",
             "elevenlabs",
-            "openai",
+            "gemini",
         }
         readiness = await client.get("/api/v1/tenants/current/readiness", headers=headers)
         assert readiness.status_code == 200 and readiness.json()["ready"] is True

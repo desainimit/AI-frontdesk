@@ -66,8 +66,8 @@ Supported connections:
 | `telephony` | `twilio` | `auth_token`; optional `api_key_sid` + `api_key_secret` for REST | `account_identifier` (Account SID) |
 | `stt` | `deepgram`, `azure_speech` | `api_key` / `speech_key` | model and language / region and language |
 | `tts` | `elevenlabs`, `azure_speech` | `api_key` / `speech_key` | model and voice / region and voices |
-| `llm` | `openai` | `api_key` | `model`, limited to `TENANT_LLM_MODELS` |
-| `embeddings` | `openai` | `api_key` | `text-embedding-3-small` only (the index is 1536-dimensional) |
+| `llm` | `gemini` | `api_key` | `model`, limited to `TENANT_LLM_MODELS`; optional `thinking_level` |
+| `embeddings` | `gemini` | `api_key` | `gemini-embedding-2` only, at 1536 dimensions to match the index |
 
 `stt` and `tts` accept a `primary` and an optional `fallback` slot.
 

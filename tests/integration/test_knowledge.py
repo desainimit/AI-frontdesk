@@ -19,7 +19,7 @@ from tests.integration.test_tenancy import tenancy as tenancy
 
 
 class FakeEmbedder:
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], *, kind: str = "document") -> list[list[float]]:
         return [[1.0] + [0.0] * (EMBEDDING_DIMENSIONS - 1) for _ in texts]
 
 

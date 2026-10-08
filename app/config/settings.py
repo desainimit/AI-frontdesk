@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     stream_token_key: SecretStr = SecretStr("")
     integration_cache_seconds: float = Field(default=15, ge=0, le=300)
     integration_verify_timeout_seconds: float = Field(default=8, gt=0, le=30)
-    tenant_llm_models: str = "gpt-4o-mini,gpt-4o,gpt-4.1-mini,gpt-4.1"
+    tenant_llm_models: str = "gemini-3.8-flash,gemini-3.5-flash-lite"
     smtp_enabled: bool = False
     smtp_host: str = ""
     smtp_port: int = Field(default=587, ge=1, le=65535)
@@ -146,11 +146,12 @@ class Settings(BaseSettings):
     conversation_language_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     conversation_confirmation_timeout_seconds: float = Field(default=120.0, ge=10.0, le=600.0)
     agent_enabled: bool = False
-    llm_provider: Literal["mock", "openai"] = "mock"
-    openai_api_key: SecretStr = SecretStr("")
-    llm_model: str = ""
+    llm_provider: Literal["mock", "gemini"] = "mock"
+    gemini_api_key: SecretStr = SecretStr("")
+    llm_model: str = "gemini-3.8-flash"
     llm_timeout_seconds: float = Field(default=10, ge=1, le=30)
-    llm_max_output_tokens: int = Field(default=800, ge=128, le=4096)
+    # Thinking tokens count against this budget, so it leaves room for the reply.
+    llm_max_output_tokens: int = Field(default=2048, ge=128, le=8192)
     agent_max_steps: int = Field(default=3, ge=1, le=5)
     agent_max_tool_calls: int = Field(default=4, ge=1, le=8)
     agent_turn_timeout_seconds: float = Field(default=20, ge=1, le=60)
@@ -167,8 +168,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_knowledge(self) -> Self:
         if self.knowledge_enabled:
-            if not self.tenant_integrations_enabled and not self.openai_api_key.get_secret_value():
-                raise ValueError("Knowledge requires OPENAI_API_KEY for embeddings")
+            if not self.tenant_integrations_enabled and not self.gemini_api_key.get_secret_value():
+                raise ValueError("Knowledge requires GEMINI_API_KEY for embeddings")
             if self.knowledge_storage_backend == "s3" and not self.knowledge_s3_bucket:
                 raise ValueError("S3 knowledge storage requires KNOWLEDGE_S3_BUCKET")
             if (
@@ -214,11 +215,11 @@ class Settings(BaseSettings):
     def validate_agent(self) -> Self:
         if (
             self.agent_enabled
-            and self.llm_provider == "openai"
+            and self.llm_provider == "gemini"
             and not self.tenant_integrations_enabled
-            and (not self.openai_api_key.get_secret_value() or not self.llm_model.strip())
+            and (not self.gemini_api_key.get_secret_value() or not self.llm_model.strip())
         ):
-            raise ValueError("OpenAI agent requires OPENAI_API_KEY and LLM_MODEL")
+            raise ValueError("Gemini agent requires GEMINI_API_KEY and LLM_MODEL")
         if (
             self.agent_enabled
             and self.llm_provider == "mock"

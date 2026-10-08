@@ -150,7 +150,7 @@ class KnowledgeService:
             pass
         if self.embedder is None:
             raise RuntimeError("Knowledge embedder is unavailable")
-        vector = (await self.embedder.embed([question]))[0]
+        vector = (await self.embedder.embed([question], kind="query"))[0]
         async with self.uow.transaction(context) as tx:
             rows = await tx.knowledge.retrieve(context.tenant_id, vector, limit)
             sources = [
