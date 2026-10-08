@@ -131,15 +131,6 @@ class Settings(BaseSettings):
     knowledge_max_upload_bytes: int = Field(default=10_000_000, ge=1024, le=25_000_000)
     knowledge_worker_poll_seconds: float = Field(default=2.0, gt=0, le=60)
 
-    # Phase 15: optional Temporal orchestration outside the live voice path.
-    temporal_enabled: bool = False
-    temporal_address: str = "localhost:7233"
-    temporal_namespace: str = "default"
-    temporal_task_queue: str = "ai-frontdesk-workflows"
-    temporal_api_key: SecretStr = SecretStr("")
-    temporal_tls: bool = False
-    temporal_dispatch_poll_seconds: float = Field(default=2.0, gt=0, le=60)
-
     # Phase 7 — Conversation State
     conversation_state_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
     conversation_default_language: Literal["en", "es", "fr", "de", "pt", "hi"] = "en"
@@ -177,17 +168,6 @@ class Settings(BaseSettings):
                 and self.knowledge_storage_backend != "s3"
             ):
                 raise ValueError("Production knowledge storage requires S3")
-        return self
-
-    @model_validator(mode="after")
-    def validate_temporal(self) -> Self:
-        if self.temporal_enabled:
-            if not self.worker_database_url:
-                raise ValueError("Temporal worker requires WORKER_DATABASE_URL")
-            if not self.temporal_address.strip() or not self.temporal_namespace.strip():
-                raise ValueError("Temporal address and namespace are required")
-            if self.temporal_api_key.get_secret_value() and not self.temporal_tls:
-                raise ValueError("Temporal API key requires TLS")
         return self
 
     @model_validator(mode="after")

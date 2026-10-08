@@ -16,7 +16,6 @@ from app.database.rls import set_tenant_scope
 from app.errors import ConflictError, NotFoundError
 from app.tenants.models import Tenant
 from app.users.models import User
-from app.workflows.intent import add_intent
 
 
 class BootstrapTenant(BaseModel):
@@ -127,7 +126,6 @@ class TenantBootstrapService:
         audit.record(context, AuditAction.TENANT_CREATED, "tenant", tenant.id)
         audit.record(context, AuditAction.USER_CREATED, "user", user.id)
         audit.record(context, AuditAction.CREDENTIAL_ISSUED, "api_credential", credential_id)
-        add_intent(session, tenant.id, "tenant_onboarding", tenant.id)
         return BootstrapResult(tenant.id, user.id, credential_id, token)
 
     async def revoke(self, tenant_id: UUID, credential_id: UUID) -> None:

@@ -21,7 +21,6 @@ from app.tenants.models import Tenant
 from app.tenants.repository import TenantRepository
 from app.users.models import User
 from app.users.repository import UserRepository
-from app.workflows.intent import WorkflowIntentRepository
 
 
 @dataclass(frozen=True)
@@ -37,7 +36,6 @@ class Transaction:
     appointments: AppointmentRepository
     idempotency: IdempotencyRepository
     outbox: OutboxRepository
-    workflows: WorkflowIntentRepository
 
 
 async def enter_tenant_scope(session: AsyncSession, context: RequestContext) -> None:
@@ -128,5 +126,4 @@ class UnitOfWork:
                 appointments=AppointmentRepository(session, context),
                 idempotency=IdempotencyRepository(session, context),
                 outbox=OutboxRepository(session, context),
-                workflows=WorkflowIntentRepository(session, context.tenant_id),
             )

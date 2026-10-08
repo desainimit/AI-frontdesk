@@ -1,7 +1,6 @@
-"""Small transactional workflow intents and non-sensitive workflow outcomes."""
+"""Small transactional job intents claimed and run by the worker."""
 
 from datetime import datetime
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
@@ -14,18 +13,12 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
 from app.database.types import IdentityMixin
 
-WORKFLOW_KINDS = (
-    "document_ingestion",
-    "post_call",
-    "tenant_onboarding",
-    "appointment_reminder",
-)
+WORKFLOW_KINDS = ("post_call",)
 
 
 class WorkflowIntent(IdentityMixin, Base):
@@ -34,10 +27,7 @@ class WorkflowIntent(IdentityMixin, Base):
         UniqueConstraint(
             "tenant_id", "kind", "resource_id", "generation", name="uq_workflow_intent"
         ),
-        CheckConstraint(
-            "kind IN ('document_ingestion','post_call','tenant_onboarding','appointment_reminder')",
-            name="kind_allowed",
-        ),
+        CheckConstraint("kind IN ('post_call')", name="kind_allowed"),
         CheckConstraint(
             "status IN ('pending','dispatching','dispatched','dead')", name="status_allowed"
         ),
@@ -57,17 +47,3 @@ class WorkflowIntent(IdentityMixin, Base):
     lease_token: Mapped[UUID | None]
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(40))
-
-
-class WorkflowResult(IdentityMixin, Base):
-    __tablename__ = "workflow_results"
-    __table_args__ = (
-        UniqueConstraint(
-            "tenant_id", "kind", "resource_id", "generation", name="uq_workflow_result"
-        ),
-    )
-    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False)
-    kind: Mapped[str] = mapped_column(String(40), nullable=False)
-    resource_id: Mapped[UUID] = mapped_column(nullable=False)
-    generation: Mapped[int] = mapped_column(Integer, nullable=False)
-    outcome: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

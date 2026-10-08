@@ -59,4 +59,3 @@ from app.rbac.models import TenantRole as TenantRole
 from app.tenants.models import Tenant as Tenant
 from app.users.models import User as User
 from app.workflows.models import WorkflowIntent as WorkflowIntent
-from app.workflows.models import WorkflowResult as WorkflowResult

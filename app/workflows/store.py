@@ -1,4 +1,4 @@
-"""Lease-based dispatch of committed workflow intents to Temporal."""
+"""Lease-based claiming of committed job intents by the worker."""
 
 from dataclasses import dataclass
 from datetime import timedelta
@@ -54,7 +54,10 @@ class WorkflowIntentStore:
             row.lease_until = await session.scalar(select(func.now() + timedelta(seconds=60)))
             row.attempts += 1
             if row.kind not in WORKFLOW_KINDS:
-                raise ValueError("Unsupported workflow intent")
+                # Retire it here: raising would roll back and reclaim the same row forever.
+                row.status, row.last_error = "dead", "unsupported_kind"
+                row.lease_token, row.lease_until = None, None
+                return None
             return ClaimedIntent(
                 id=row.id,
                 kind=row.kind,  # type: ignore[arg-type]
@@ -63,9 +66,19 @@ class WorkflowIntentStore:
                 attempts=row.attempts,
             )
 
-    async def finish(self, intent: ClaimedIntent, *, error: str | None = None) -> bool:
+    async def finish(
+        self, intent: ClaimedIntent, *, error: str | None = None, dead: bool = False
+    ) -> bool:
+        """Complete the claim, or with ``error`` retry later; ``dead`` stops retrying."""
         async with self._sessions.begin() as session:
-            if error is None:
+            if dead:
+                values = {
+                    "status": "dead",
+                    "last_error": error,
+                    "lease_token": None,
+                    "lease_until": None,
+                }
+            elif error is None:
                 values = {
                     "status": "dispatched",
                     "dispatched_at": func.now(),

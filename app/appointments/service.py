@@ -67,7 +67,6 @@ class AppointmentService:
                 )
                 result = AppointmentView.model_validate(entity)
                 tx.outbox.appointment(EventType.APPOINTMENT_CREATED, result)
-                tx.workflows.enqueue("appointment_reminder", entity.id, entity.version)
                 return tx.idempotency.save(result)
         except IntegrityError as exc:
             if getattr(exc.orig, "sqlstate", None) == "23P01":
@@ -193,7 +192,6 @@ class AppointmentService:
                 )
                 result = AppointmentView.model_validate(entity)
                 tx.outbox.appointment(EventType.APPOINTMENT_RESCHEDULED, result)
-                tx.workflows.enqueue("appointment_reminder", entity.id, entity.version)
                 return tx.idempotency.save(result)
         except IntegrityError as exc:
             if getattr(exc.orig, "sqlstate", None) == "23P01":

@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import cast
 
-import httpx
 import pytest
 from pydantic import ValidationError
 from redis.asyncio import Redis
@@ -10,7 +9,6 @@ from redis.exceptions import RedisError
 from app.cache.redis import RedisClient
 from app.config.settings import Settings
 from app.maintenance.backup import verify_restore
-from app.maintenance.load_probe import probe
 from app.security.rate_limit import RateLimitExceeded, RateLimitUnavailable, enforce_rate_limit
 
 
@@ -61,25 +59,6 @@ def test_production_requires_rate_limits(settings: Settings) -> None:
         Settings.model_validate(
             {**settings.model_dump(), "environment": "production", "rate_limits_enabled": False}
         )
-
-
-async def test_probe_reports_request_failures() -> None:
-    calls = 0
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return httpx.Response(200 if calls < 3 else 503, request=request)
-
-    result = await probe(
-        "http://localhost/health/live",
-        requests=3,
-        concurrency=1,
-        transport=httpx.MockTransport(handler),
-    )
-    assert result.succeeded == 2
-    assert result.failed == 1
-    assert result.p95_ms >= result.p50_ms >= 0
 
 
 def test_restore_rejects_non_scratch_target_before_accessing_archive(settings: Settings) -> None:

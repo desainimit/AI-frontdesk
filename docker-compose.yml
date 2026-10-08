@@ -248,50 +248,6 @@ services:
       start_period: 30s
       retries: 3
 
-  workflow-worker:
-    profiles: [workflows]
-    build:
-      context: .
-      target: workflow-worker
-    image: ai-frontdesk-workflows:local
-    pull_policy: build
-    environment:
-      <<: *app-environment
-      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
-      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
-      KNOWLEDGE_ENABLED: ${KNOWLEDGE_ENABLED:-false}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      TEMPORAL_ENABLED: "true"
-      TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS:-host.docker.internal:7233}
-      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
-      TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE:-ai-frontdesk-workflows}
-      TEMPORAL_API_KEY: ${TEMPORAL_API_KEY:-}
-      TEMPORAL_TLS: ${TEMPORAL_TLS:-false}
-      TEMPORAL_DISPATCH_POLL_SECONDS: ${TEMPORAL_DISPATCH_POLL_SECONDS:-2}
-      HF_HOME: /srv/app/data/models
-      SERVICE_NAME: ai-frontdesk-workflows
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - knowledge-objects:/srv/app/data/knowledge
-      - knowledge-models:/srv/app/data/models
-    init: true
-    read_only: true
-    tmpfs: [/tmp]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    restart: unless-stopped
-    stop_grace_period: 60s
-    healthcheck:
-      test: ["CMD", "python", "-m", "app.workflows.worker", "--check"]
-      interval: 30s
-      timeout: 15s
-      start_period: 30s
-      retries: 3
-
   configuration-worker:
     build:
       context: .

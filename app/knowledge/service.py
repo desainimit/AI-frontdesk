@@ -65,7 +65,8 @@ class KnowledgeService:
         await self.storage.put(key, body, CONTENT_TYPES[source_type])
         try:
             async with self.uow.transaction(context) as tx:
-                document, version = await tx.knowledge.create_version(
+                # The repository queues the ingestion job with the new version.
+                document, _ = await tx.knowledge.create_version(
                     context.tenant_id,
                     name,
                     source_type,
@@ -76,7 +77,6 @@ class KnowledgeService:
                 AuditService(tx.audit).record(
                     context, AuditAction.DOCUMENT_UPLOADED, "document", document.id
                 )
-                tx.workflows.enqueue("document_ingestion", version.id)
                 return DocumentView.model_validate(document)
         except Exception:
             await self.storage.delete(key)

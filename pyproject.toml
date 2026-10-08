@@ -34,9 +34,6 @@ dependencies = [
 knowledge = [
     "docling>=2,<3",
 ]
-workflows = [
-    "temporalio>=1.10,<2",
-]
 
 [dependency-groups]
 dev = [

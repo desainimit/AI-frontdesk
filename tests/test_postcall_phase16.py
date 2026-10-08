@@ -1,15 +1,14 @@
+from typing import cast
 from uuid import uuid4
-
-from temporalio import activity
-from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import Worker
 
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import TranscriptTurn
 from app.conversation.store import encode
 from app.postcall.schemas import PostCallInput, analyze_post_call
-from app.workflows.definitions import PostCallWorkflow
+from app.workflows.activities import WorkflowActivities
 from app.workflows.intent import WorkflowRequest
+from app.workflows.runner import JobRunner
+from app.workflows.store import ClaimedIntent, WorkflowIntentStore
 
 
 def test_transcript_capture_redacts_identifiers_and_stays_bounded() -> None:
@@ -65,29 +64,57 @@ def test_post_call_emergency_and_missing_snapshot_require_review() -> None:
     assert absent.outcome.follow_up == "human_review"
 
 
-async def test_post_call_workflow_waits_for_late_snapshot() -> None:
-    attempts = 0
+class ScriptedStore:
+    """One queued intent whose attempts grow each time it is retried."""
 
-    @activity.defn(name="record_post_call")
-    async def record_post_call(_request: WorkflowRequest) -> str:
-        nonlocal attempts
-        attempts += 1
-        return "pending" if attempts < 3 else "recorded"
+    def __init__(self) -> None:
+        self.queued, self.attempts = True, 0
+        self.finished: list[tuple[str | None, bool]] = []
 
-    async with (
-        await WorkflowEnvironment.start_time_skipping() as environment,
-        Worker(
-            environment.client,
-            task_queue="post-call-late-snapshot",
-            workflows=[PostCallWorkflow],
-            activities=[record_post_call],
-        ),
-    ):
-        result = await environment.client.execute_workflow(
-            PostCallWorkflow.run,
-            WorkflowRequest(str(uuid4()), str(uuid4())),
-            id="post-call-late-snapshot-" + uuid4().hex,
-            task_queue="post-call-late-snapshot",
-        )
-        assert result == "recorded"
-    assert attempts == 3
+    async def claim(self) -> ClaimedIntent | None:
+        if not self.queued:
+            return None
+        self.queued, self.attempts = False, self.attempts + 1
+        request = WorkflowRequest(str(uuid4()), str(uuid4()))
+        return ClaimedIntent(uuid4(), "post_call", request, uuid4(), self.attempts)
+
+    async def finish(
+        self, intent: ClaimedIntent, *, error: str | None = None, dead: bool = False
+    ) -> bool:
+        self.finished.append((error, dead))
+        self.queued = error is not None and not dead
+        return True
+
+
+class ScriptedActivities:
+    def __init__(self, outcomes: list[str | Exception]) -> None:
+        self.outcomes = outcomes
+
+    async def record_post_call(self, _request: WorkflowRequest) -> str:
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def runner(store: ScriptedStore, outcomes: list[str | Exception], attempts: int = 8) -> JobRunner:
+    return JobRunner(
+        cast(WorkflowIntentStore, store),
+        cast(WorkflowActivities, ScriptedActivities(outcomes)),
+        max_attempts=attempts,
+    )
+
+
+async def test_post_call_job_waits_for_late_snapshot_then_completes() -> None:
+    store = ScriptedStore()
+    jobs = runner(store, ["pending", "pending", "recorded"])
+    assert [await jobs.process_one() for _ in range(4)] == [True, True, True, False]
+    assert store.finished == [("pending", False), ("pending", False), (None, False)]
+
+
+async def test_failing_job_is_retried_and_then_retired() -> None:
+    store = ScriptedStore()
+    jobs = runner(store, [RuntimeError("private detail"), ValueError("private detail")], 2)
+    assert [await jobs.process_one() for _ in range(3)] == [True, True, False]
+    # The second failure reaches the attempt limit, so it stops being retried.
+    assert store.finished == [("failed", False), ("failed", True)]

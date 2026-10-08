@@ -34,15 +34,3 @@ RUN apt-get update && apt-get install --no-install-recommends -y libgl1 libglib2
 COPY --from=knowledge-builder --chown=frontdesk:frontdesk /srv/app/.venv ./.venv
 USER frontdesk
 CMD ["python", "-m", "app.knowledge.cli"]
-
-# Temporal and document parsing are isolated from the API image and voice path.
-FROM builder AS workflow-builder
-RUN uv sync --locked --no-dev --extra knowledge --extra workflows --no-editable
-
-FROM runtime AS workflow-worker
-USER root
-RUN apt-get update && apt-get install --no-install-recommends -y libgl1 libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=workflow-builder --chown=frontdesk:frontdesk /srv/app/.venv ./.venv
-USER frontdesk
-CMD ["python", "-m", "app.workflows.worker"]
