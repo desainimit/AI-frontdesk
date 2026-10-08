@@ -72,7 +72,6 @@ def integration_settings(base: Settings, **overrides: object) -> Settings:
             "twilio_auth_token": SecretStr(""),
             "agent_enabled": False,
             "knowledge_enabled": False,
-            "rate_limits_enabled": False,
             **overrides,
         }
     )
@@ -583,7 +582,7 @@ async def test_two_twilio_accounts_route_to_two_tenants_over_http(
     sid_a, token_a, number_a = accounts[tenancy.a.tenant_id]
     sid_b, token_b, number_b = accounts[tenancy.b.tenant_id]
 
-    app = create_app(settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     path = "/webhooks/v1/twilio/incoming"
 
     def signed(token: str, params: dict[str, str], route: str = path) -> dict[str, str]:
@@ -699,7 +698,7 @@ async def test_missing_connection_never_falls_back_to_platform_or_other_tenants(
     )
     from app.api.telephony import resolve_call_providers, tenant_candidates
 
-    app = create_app(harness.settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(harness.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     async with app.router.lifespan_context(app):
         # Tenant A has no connection and is not allowlisted: no account may sign for it.
         assert await tenant_candidates(app, tenancy.a.tenant_id) == []

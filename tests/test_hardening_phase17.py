@@ -2,12 +2,12 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from pydantic import ValidationError
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.cache.redis import RedisClient
 from app.config.settings import Settings
+from app.main import create_app
 from app.maintenance.backup import verify_restore
 from app.security.rate_limit import RateLimitExceeded, RateLimitUnavailable, enforce_rate_limit
 
@@ -54,11 +54,11 @@ async def test_rate_limit_is_atomic_per_verified_identity_and_fails_closed() -> 
     )
 
 
-def test_production_requires_rate_limits(settings: Settings) -> None:
-    with pytest.raises(ValidationError):
-        Settings.model_validate(
-            {**settings.model_dump(), "environment": "production", "rate_limits_enabled": False}
-        )
+def test_rate_limits_are_on_unless_a_test_substitutes_redis(settings: Settings) -> None:
+    # No setting can switch them off; only the factory argument used by tests can.
+    assert "rate_limits_enabled" not in Settings.model_fields
+    assert create_app(settings).state.rate_limits is True
+    assert create_app(settings, rate_limits=False).state.rate_limits is False
 
 
 def test_restore_rejects_non_scratch_target_before_accessing_archive(settings: Settings) -> None:

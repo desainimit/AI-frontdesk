@@ -69,7 +69,9 @@ async def test_bootstrap_is_concurrent_idempotent_and_never_resets(tenancy: Tena
 async def test_platform_http_login_manage_tenants_logout(tenancy: TenancyFixture) -> None:
     command = seed_command()
     await seed_super_admin(tenancy.admin, command)
-    app = create_app(mfa_settings(tenancy.settings), redis_factory=lambda _: FakeDependency())
+    app = create_app(
+        mfa_settings(tenancy.settings), redis_factory=lambda _: FakeDependency(), rate_limits=False
+    )
 
     async def allow() -> None:
         pass  # Shared Redis throttling is tested separately below.

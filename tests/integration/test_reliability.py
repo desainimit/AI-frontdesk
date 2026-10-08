@@ -168,7 +168,7 @@ async def test_keys_and_outbox_remain_tenant_isolated(
 async def test_http_idempotency_header_replay_and_mismatch(
     tenancy: TenancyFixture, domain: DomainFixture
 ) -> None:
-    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     headers = {
         "Authorization": f"Bearer {tenancy.a.token.get_secret_value()}",
         "Idempotency-Key": "http-book",

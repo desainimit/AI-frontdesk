@@ -17,6 +17,7 @@ def test_trace_parent_propagation_and_sensitive_data_exclusion(settings: Setting
         settings,
         database_factory=lambda _: FakeDependency(),
         redis_factory=lambda _: FakeDependency(),
+        rate_limits=False,
     )
 
     @app.get("/records/{record_id}")

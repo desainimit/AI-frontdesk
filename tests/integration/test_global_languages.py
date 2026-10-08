@@ -29,6 +29,7 @@ async def test_language_policy_api_rbac_audit_and_isolation(tenancy: TenancyFixt
     app = create_app(
         tenancy.settings.model_copy(update={"conversation_default_language": "pt"}),
         redis_factory=lambda _: FakeDependency(),
+        rate_limits=False,
     )
     headers = {"Authorization": f"Bearer {tenancy.a.token.get_secret_value()}"}
     policy = {"default_language": "es", "enabled_languages": ["es", "en"], "auto_detect": True}

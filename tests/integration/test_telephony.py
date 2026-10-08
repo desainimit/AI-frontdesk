@@ -51,7 +51,7 @@ async def test_incoming_retry_expires_before_stream(tenancy: TenancyFixture) -> 
 async def test_signed_http_lifecycle_and_isolation(tenancy: TenancyFixture) -> None:
     number = await seed_phone(tenancy)
     config = voice_settings(tenancy.settings)
-    app = create_app(config, redis_factory=lambda _: FakeDependency())
+    app = create_app(config, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     path = "/webhooks/v1/twilio/incoming"
     params = {"AccountSid": config.twilio_account_sid, "CallSid": "CA" + uuid4().hex, "To": number}
     headers = {"X-Twilio-Signature": sign(config, path, params)}

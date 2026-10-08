@@ -75,7 +75,7 @@ async def get_platform_context(
     settings = request.app.state.settings
     await enforce_rate_limit(
         get_resources(request).redis,
-        enabled=settings.rate_limits_enabled,
+        enabled=request.app.state.rate_limits,
         scope="platform_api",
         identity=str(context.user_id),
         limit=settings.platform_api_requests_per_minute,

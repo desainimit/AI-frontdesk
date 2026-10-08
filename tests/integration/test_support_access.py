@@ -79,6 +79,7 @@ async def test_support_can_read_knowledge_when_processing_is_disabled(
     app = create_app(
         tenancy.settings.model_copy(update={"knowledge_enabled": False}),
         redis_factory=lambda _: FakeDependency(),
+        rate_limits=False,
     )
 
     async with (
@@ -146,7 +147,7 @@ async def test_support_scope_isolation_audit_revocation_and_expiry(tenancy: Tena
         await session.flush()
         a_patient_id, b_patient_id = first.id, second.id
 
-    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
 
     async def allow() -> None:
         pass
@@ -321,7 +322,7 @@ async def test_support_can_manage_tenant_with_attributed_writes_and_idempotency(
     await seed_super_admin(tenancy.admin, command)
     auth = PlatformAuthenticationService(tenancy.database.session_factory)
     parent = (await mfa_login(auth, command, tenancy.settings)).access_token
-    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     async with (
         app.router.lifespan_context(app),
         AsyncClient(transport=ASGITransport(app=app), base_url="http://test/api/v1/") as client,
@@ -499,7 +500,7 @@ async def test_support_can_issue_call_patient_access_without_becoming_a_tenant_u
             tenancy.settings,
         )
     ).access_token
-    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     async with (
         app.router.lifespan_context(app),
         AsyncClient(transport=ASGITransport(app=app), base_url="http://test/api/v1/") as client,

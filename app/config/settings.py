@@ -35,7 +35,6 @@ class Settings(BaseSettings):
     db_command_timeout_seconds: float = Field(default=10, gt=0, le=120)
     dependency_timeout_seconds: float = Field(default=2, gt=0, le=30)
     redis_max_connections: int = Field(default=20, ge=1, le=1000)
-    rate_limits_enabled: bool = False
     tenant_onboarding_enabled: bool = False
     tenant_human_auth_enabled: bool = False
     tenant_auth_public_origin: str = ""
@@ -153,12 +152,6 @@ class Settings(BaseSettings):
     agent_tool_timeout_seconds: float = Field(default=3, ge=0.1, le=10)
     safety_semantic_enabled: bool = True
     safety_classifier_timeout_seconds: float = Field(default=2.0, ge=0.2, le=5.0)
-
-    @model_validator(mode="after")
-    def validate_rate_limits(self) -> Self:
-        if self.environment == Environment.PRODUCTION and not self.rate_limits_enabled:
-            raise ValueError("Production requires RATE_LIMITS_ENABLED=true")
-        return self
 
     @model_validator(mode="after")
     def validate_knowledge(self) -> Self:

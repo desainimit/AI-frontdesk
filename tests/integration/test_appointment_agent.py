@@ -386,7 +386,7 @@ async def test_reception_access_endpoint_requires_tenant_admin(tenancy: TenancyF
     from tests.fakes import FakeDependency
 
     domain, context, _state, _registry, _flow = await setup_call(tenancy)
-    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     async with (
         app.router.lifespan_context(app),
         AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,

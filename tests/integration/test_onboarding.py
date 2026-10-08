@@ -172,10 +172,9 @@ async def test_onboarding_http_flag_validation_and_credential_boundaries(
             "tenant_onboarding_enabled": False,
             "telephony_enabled": False,
             "agent_enabled": False,
-            "rate_limits_enabled": False,
         }
     )
-    app = create_app(settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
 
     async def allow() -> None:
         pass

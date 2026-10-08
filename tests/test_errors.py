@@ -12,6 +12,7 @@ def make_error_app(settings: Settings) -> FastAPI:
         settings,
         database_factory=lambda _: FakeDependency(),
         redis_factory=lambda _: FakeDependency(),
+        rate_limits=False,
     )
 
     @app.get("/explode")

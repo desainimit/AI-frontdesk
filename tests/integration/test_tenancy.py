@@ -280,7 +280,7 @@ async def test_inactive_or_expired_identity_denied(tenancy: TenancyFixture, disa
 
 
 async def test_api_tenant_resolution_permissions_and_audit(tenancy: TenancyFixture) -> None:
-    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     headers = {"Authorization": f"Bearer {tenancy.a.token.get_secret_value()}"}
     request_id = str(uuid4())
     async with (

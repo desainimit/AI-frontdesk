@@ -209,7 +209,7 @@ async def read_form(request: Request) -> dict[str, str]:
         # checked, so unauthenticated senders are bounded first.
         await enforce_rate_limit(
             request.app.state.resources.redis,
-            enabled=settings.rate_limits_enabled,
+            enabled=request.app.state.rate_limits,
             scope="twilio_unverified",
             identity=request.client.host if request.client else "unknown",
             limit=settings.webhook_requests_per_call_per_minute * 20,
@@ -256,7 +256,7 @@ async def authenticate_form(
         raise HTTPException(400, "Invalid call identifier")
     await enforce_rate_limit(
         request.app.state.resources.redis,
-        enabled=settings.rate_limits_enabled,
+        enabled=request.app.state.rate_limits,
         scope="twilio_webhook",
         identity=f"{params['AccountSid']}:{params['CallSid']}",
         limit=settings.webhook_requests_per_call_per_minute,

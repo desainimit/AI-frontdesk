@@ -59,7 +59,7 @@ def test_malformed_login_email_is_validation_error(email: Any) -> None:
 
 
 def test_platform_and_tenant_tokens_cannot_be_interchanged(settings: Settings) -> None:
-    app = create_app(settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     with TestClient(app) as client:
         response = client.get(
             "/api/v1/platform/me",

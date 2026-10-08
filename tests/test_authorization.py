@@ -64,7 +64,7 @@ def test_invalid_token_format(token: str) -> None:
 
 
 def test_missing_and_malformed_auth_never_connect_to_database(settings: Settings) -> None:
-    app = create_app(settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     with TestClient(app) as client:
         for headers in (
             {},

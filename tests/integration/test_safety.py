@@ -18,7 +18,7 @@ from tests.integration.test_tenancy import tenancy as tenancy
 
 
 async def test_transfer_destination_admin_api_and_call_scope(tenancy: TenancyFixture) -> None:
-    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     endpoint = "/api/v1/tenants/current/transfer"
     headers = {"Authorization": f"Bearer {tenancy.a.token.get_secret_value()}"}
     async with (

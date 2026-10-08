@@ -40,6 +40,7 @@ def create_app(
     *,
     database_factory: ResourceFactory = Database,
     redis_factory: ResourceFactory = RedisClient,
+    rate_limits: bool = True,
 ) -> FastAPI:
     config = settings if settings is not None else Settings.from_environment()
     configure_logging(config.log_level)
@@ -105,6 +106,8 @@ def create_app(
         openapi_url="/openapi.json" if expose_docs else None,
     )
     app.state.settings = config
+    # Always on. Only a test that substitutes Redis passes False; no setting can.
+    app.state.rate_limits = rate_limits
     app.add_middleware(RequestTelemetryMiddleware)
     register_error_handlers(app)
     app.include_router(health_router)

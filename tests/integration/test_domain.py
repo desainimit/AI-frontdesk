@@ -106,7 +106,7 @@ async def events(domain: DomainFixture, action: AuditAction) -> list[AuditEvent]
 
 
 async def test_http_booking_lifecycle_and_audit(tenancy: TenancyFixture) -> None:
-    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     headers = {"Authorization": f"Bearer {tenancy.a.token.get_secret_value()}"}
     async with (
         app.router.lifespan_context(app),
@@ -197,7 +197,7 @@ async def test_http_validation_permissions_and_cross_tenant(
     tenancy: TenancyFixture, domain: DomainFixture
 ) -> None:
     other = await seed(domain.uow, tenancy.context(tenancy.b))
-    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     headers = {"Authorization": f"Bearer {tenancy.a.token.get_secret_value()}"}
     async with (
         app.router.lifespan_context(app),

@@ -261,7 +261,7 @@ async def test_business_list_http_query_validation_and_boundaries(tenancy: Tenan
             "secret_encryption_active_key": "test",
         }
     )
-    app = create_app(settings, redis_factory=lambda _: FakeDependency())
+    app = create_app(settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     async with (
         app.router.lifespan_context(app),
         AsyncClient(

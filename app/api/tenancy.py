@@ -59,7 +59,7 @@ async def get_context(
     settings: Settings = request.app.state.settings
     await enforce_rate_limit(
         get_resources(request).redis,
-        enabled=settings.rate_limits_enabled,
+        enabled=request.app.state.rate_limits,
         scope="tenant_api",
         identity=f"{context.tenant_id}:{context.support_session_id or context.actor_id}",
         limit=settings.tenant_api_requests_per_minute,
