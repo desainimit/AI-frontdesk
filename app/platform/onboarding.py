@@ -31,7 +31,6 @@ from app.errors import ApplicationError, ConflictError, NotFoundError
 from app.events.idempotency import IdempotencyConflictError, InvalidIdempotencyKeyError
 from app.locations.models import Location
 from app.locations.schemas import CreateLocation
-from app.onboarding.models import SetupProgress
 from app.platform.models import PlatformAuditEvent
 from app.platform.onboarding_models import TenantOnboarding
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
@@ -207,9 +206,6 @@ class TenantOnboardingService:
                         is_active=False,
                     ),
                     Location(id=location_id, tenant_id=tenant_id, **command.location.model_dump()),
-                    SetupProgress(
-                        tenant_id=tenant_id, revision=1, current_step="business", reviewed={}
-                    ),
                 ]
             )
             await session.flush()

@@ -64,7 +64,6 @@ UNAVAILABLE_FEATURES = {
     "messaging.sms_enabled": "Transactional SMS dispatch has not been verified.",
     "messaging.email_enabled": "Business email dispatch has not been verified.",
     "privacy.recording_enabled": "Carrier disclosure and recording consent are not verified.",
-    "budget.auto_recharge": "Payment authorization and reconciliation are not verified.",
     **{
         f"workflows.{name}": "Durable dispatch and immediate revocation checks are not verified."
         for name in (
@@ -622,15 +621,8 @@ class ConfigurationService:
                     "connection_unavailable",
                     "Every referenced connection must belong to this workspace and be verified.",
                 )
-        if document.voice.enabled:
-            if document.voice.primary_connection_id is None:
-                issue(
-                    "voice.primary_connection_id", "required", "Select a verified phone connection."
-                )
-            if document.budget.monthly_budget_paisa <= 0:
-                issue(
-                    "budget.monthly_budget_paisa", "required", "Set an explicit paid-usage budget."
-                )
+        if document.voice.enabled and document.voice.primary_connection_id is None:
+            issue("voice.primary_connection_id", "required", "Select a verified phone connection.")
         # A draft may describe pending capabilities; it cannot activate an absent adapter.
         values = document.model_dump()
         for field, reason in UNAVAILABLE_FEATURES.items():

@@ -18,7 +18,6 @@ ConfigurationSection = Literal[
     "messaging",
     "workflows",
     "privacy",
-    "budget",
     "notifications",
     "scopes",
 ]
@@ -65,9 +64,6 @@ SECTION_AUTHORITY: dict[str, SectionAuthority] = {
     ),
     "privacy": SectionAuthority(
         Permission.PRIVACY_READ, Permission.PRIVACY_UPDATE, Permission.PRIVACY_PUBLISH
-    ),
-    "budget": SectionAuthority(
-        Permission.BILLING_READ, Permission.BILLING_MANAGE, Permission.BILLING_PUBLISH
     ),
     "notifications": SectionAuthority(
         Permission.NOTIFICATION_READ,

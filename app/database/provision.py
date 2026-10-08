@@ -86,18 +86,6 @@ async def provision_runtime_role(settings: Settings) -> None:
                 f"GRANT SELECT, INSERT, UPDATE ON configuration_drafts TO {quoted_role}"
             )
             await connection.exec_driver_sql(
-                f"GRANT SELECT, INSERT, UPDATE ON tenant_setup_progress TO {quoted_role}"
-            )
-            # The ordinary API login cannot create funds, prices or financial history.
-            await connection.exec_driver_sql(
-                f"REVOKE ALL ON billing_accounts, billing_ledger, billing_mutations, "
-                f"billing_plan_versions, usage_reservations, usage_commands FROM {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                f"GRANT SELECT ON billing_accounts, billing_ledger, billing_mutations, "
-                f"billing_plan_versions, usage_reservations, usage_commands TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON business_hours_policies, "
                 f"business_opening_windows, business_holidays TO {quoted_role}"
             )

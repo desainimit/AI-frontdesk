@@ -14,7 +14,6 @@ from app.configuration.models import ConfigurationDraft, PublishedConfiguration
 from app.configuration.schemas import OperationalConfiguration, SaveConfiguration
 from app.configuration.service import ConfigurationService, seed_configuration
 from app.database.rls import set_tenant_scope
-from app.onboarding.models import SetupProgress
 from app.platform.onboarding import TenantOnboardingService, onboarding_defaults
 from app.platform.support import EnterSupportCommand, SupportAccessService
 from app.rbac.catalog import template_permissions
@@ -22,7 +21,7 @@ from app.rbac.models import RolePermission, TenantRole
 from app.rbac.service import seed_roles
 from app.tenants.models import Tenant
 from app.users.models import User
-from tests.integration.test_billing_accounts import platform
+from tests.integration.platform_mfa_helpers import platform
 from tests.integration.test_onboarding import draft
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as pytestmark
@@ -60,21 +59,17 @@ async def test_new_workspace_defaults_are_persisted_safe_and_idempotent(
         assert (
             config.privacy.recording_retention_days == 30 and not config.privacy.recording_enabled
         )
-        assert not config.budget.auto_recharge and config.budget.monthly_budget_paisa == 0
         assert not config.messaging.sms_enabled and not config.messaging.email_enabled
         assert not config.chat.enabled and not config.scheduling.enabled
         assert config.voice.primary_connection_id is None
         assert config.hours.windows == []  # No invented opening hours for a real business.
         assert await session.scalar(select(func.count()).select_from(HoursPolicy)) == 1
-        progress = await session.scalar(select(SetupProgress))
-        assert progress and progress.current_step == "business" and progress.reviewed == {}
-        assert progress.revision == 1
         assert await session.scalar(select(func.count()).select_from(PublishedConfiguration)) == 0
         assert await session.scalar(select(func.count()).select_from(ApiCredential)) == 0
         member = await session.get(User, created.admin_id)
         assert member and not member.is_active
         roles = list(await session.scalars(select(TenantRole)))
-        assert len(roles) == 6
+        assert len(roles) == 5
         for role in roles:
             grants = list(
                 await session.scalars(
@@ -91,7 +86,7 @@ async def test_new_workspace_defaults_are_persisted_safe_and_idempotent(
         assert member.role_id == owner.id
         # Re-running the helpers does not add rows or reset any tenant values.
         assert (await seed_configuration(session, tenant)).document == original
-        assert len(await seed_roles(session, tenant.id)) == 6
+        assert len(await seed_roles(session, tenant.id)) == 5
 
 
 async def test_new_defaults_never_replace_saved_tenant_configuration(

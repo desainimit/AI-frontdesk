@@ -33,7 +33,7 @@ async def seed_roles(session: AsyncSession, tenant_id: UUID) -> dict[str, UUID]:
         await session.scalars(select(TenantRole).where(TenantRole.tenant_id == tenant_id))
     ).all()
     roles = {row.template_key: row.id for row in existing if row.template_key}
-    for key in ("owner", "admin", "operator", "analyst", "billing", "member"):
+    for key in ("owner", "admin", "operator", "analyst", "member"):
         if key in roles:
             continue
         identity = uuid5(tenant_id, f"role:{key}")

@@ -27,7 +27,6 @@ class Settings(BaseSettings):
     database_url: SecretStr
     migration_database_url: SecretStr | None = None
     worker_database_url: SecretStr | None = None
-    financial_database_url: SecretStr | None = None
     redis_url: SecretStr
     db_pool_size: int = Field(default=5, ge=1, le=100)
     db_max_overflow: int = Field(default=5, ge=0, le=100)
@@ -310,7 +309,7 @@ class Settings(BaseSettings):
     def migration_url(self) -> str:
         return (self.migration_database_url or self.database_url).get_secret_value()
 
-    @field_validator("migration_database_url", "worker_database_url", "financial_database_url")
+    @field_validator("migration_database_url", "worker_database_url")
     @classmethod
     def validate_migration_url(cls, value: SecretStr | None) -> SecretStr | None:
         return cls.validate_database_url(value) if value and value.get_secret_value() else None

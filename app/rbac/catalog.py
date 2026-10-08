@@ -29,14 +29,6 @@ def template_permissions(key: str) -> frozenset[str]:
         )
     if key == "analyst":
         return frozenset({Permission.TENANT_READ.value, Permission.AUDIT_READ.value})
-    if key == "billing":
-        return frozenset(
-            {
-                Permission.TENANT_READ.value,
-                Permission.BILLING_READ.value,
-                Permission.BILLING_MANAGE.value,
-            }
-        )
     if key == "member":
         return frozenset(
             {

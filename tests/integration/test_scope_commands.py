@@ -51,7 +51,7 @@ async def test_module_owned_scope_commands_are_atomic_and_revision_checked(
     own = await service.get_scope(actor, "agent", agent.id)
     assert own.value == saved.changes[0].value and own.section == "agent"
     assert set(own.inherited_values) == set((await service.catalog(actor))["scope_fields"]["agent"])  # type: ignore[index]
-    assert "budget" not in own.model_dump() and "privacy" not in own.inherited_values
+    assert "privacy" not in own.inherited_values
     with pytest.raises(RevisionConflictError):
         await service.save_scopes(actor, command)
     with pytest.raises(InvalidConfigurationSectionError):

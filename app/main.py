@@ -7,8 +7,6 @@ from opentelemetry.metrics import Observation
 from sqlalchemy.pool import QueuePool
 
 from app.agents.factory import build_llm_provider
-from app.api.billing import platform_router as platform_billing_router
-from app.api.billing import router as billing_router
 from app.api.domain import router as domain_router
 from app.api.errors import register_error_handlers
 from app.api.health import router as health_router
@@ -22,7 +20,6 @@ from app.api.postcall import router as postcall_router
 from app.api.saas import router as saas_router
 from app.api.telephony import router as telephony_router
 from app.api.tenancy import router as tenancy_router
-from app.billing.database import FinancialDatabase
 from app.cache.redis import RedisClient
 from app.config.logging import configure_logging
 from app.config.settings import Environment, Settings
@@ -55,12 +52,6 @@ def create_app(
             app.state.telemetry = telemetry
             database = database_factory(config)
             stack.push_async_callback(database.close)
-            app.state.financial_database = None
-            if isinstance(database, Database) and config.financial_database_url:
-                financial_database = FinancialDatabase(config)
-                stack.push_async_callback(financial_database.close)
-                await financial_database.ping()
-                app.state.financial_database = financial_database
             if isinstance(database, Database) and isinstance(database.engine.pool, QueuePool):
                 pool = database.engine.pool
                 telemetry.meter.create_observable_gauge(
@@ -127,6 +118,4 @@ def create_app(
     app.include_router(postcall_router)
     app.include_router(telephony_router)
     app.include_router(saas_router)
-    app.include_router(billing_router)
-    app.include_router(platform_billing_router)
     return app

@@ -41,8 +41,6 @@ from app.configuration.schemas import (
 )
 from app.configuration.sections import ConfigurationSection
 from app.configuration.service import ConfigurationService
-from app.onboarding.schemas import SetupCommand, SetupView
-from app.onboarding.service import SetupService
 from app.platform.support import SUPPORT_ROUTES
 from app.rbac.catalog import permission_catalog
 from app.rbac.schemas import (
@@ -118,18 +116,6 @@ async def capabilities(context: Context) -> CapabilitiesView:
             permission for permission in Permission if permission.value in context.capabilities
         ],
     )
-
-
-@router.get("/onboarding")
-async def setup_progress(context: Context, database: DatabaseDependency) -> SetupView:
-    return await SetupService(database.session_factory).get_setup(context)
-
-
-@router.put("/onboarding")
-async def save_setup_progress(
-    command: SetupCommand, context: Context, database: DatabaseDependency
-) -> SetupView:
-    return await SetupService(database.session_factory).save_setup(context, command)
 
 
 @router.get("/catalog")

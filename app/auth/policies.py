@@ -51,7 +51,6 @@ class Permission(StrEnum):
     NOTIFICATION_UPDATE = "notification:update"
     NOTIFICATION_PUBLISH = "notification:publish"
     WORKFLOW_PUBLISH = "workflow:publish"
-    BILLING_PUBLISH = "billing:publish"
     TENANT_PUBLISH = "tenant:publish"
     BUSINESS_READ = "business:read"
     BUSINESS_WRITE = "business:write"
@@ -61,8 +60,6 @@ class Permission(StrEnum):
     TICKET_WRITE = "ticket:write"
     WORKFLOW_READ = "workflow:read"
     WORKFLOW_WRITE = "workflow:write"
-    BILLING_READ = "billing:read"
-    BILLING_MANAGE = "billing:manage"
     PRIVACY_EXPORT = "privacy:export"
     PRIVACY_DELETE = "privacy:delete"
 

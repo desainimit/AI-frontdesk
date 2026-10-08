@@ -17,8 +17,6 @@ class PlatformPermission(StrEnum):
     SUPPORT_ENTER = "platform:support:enter"
     SUPPORT_REVOKE = "platform:support:revoke"
     SUPPORT_AUDIT_READ = "platform:support:audit:read"
-    PRICING_MANAGE = "platform:pricing:manage"
-    FINANCIAL_ADJUST = "platform:financial:adjust"
 
 
 @dataclass(frozen=True)

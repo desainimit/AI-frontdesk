@@ -282,6 +282,7 @@ async def test_pending_owner_configuration_and_deleted_roles_survive_invitations
         next(check for check in checks if check.key == "accepted_administrator").status
         == "blocking"
     )
-    assert next(check for check in checks if check.key == "billing_activation").status == "blocking"
+    # Billing is not part of readiness: nothing but the real checks can block going live.
+    assert all(check.key != "billing_activation" for check in checks)
     with pytest.raises(NotReadyError):
         await readiness.set_live(context, True)

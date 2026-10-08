@@ -22,18 +22,11 @@ TENANT_TABLES = (
     "document_chunks",
     "knowledge_jobs",
     "workflow_intents",
-    "workflow_results",
     "call_transcripts",
     "post_call_reports",
     "follow_up_events",
     "support_sessions",
     "tenant_onboardings",
-    "tenant_setup_progress",
-    "billing_accounts",
-    "billing_ledger",
-    "billing_mutations",
-    "usage_reservations",
-    "usage_commands",
     "human_accounts",
     "human_sessions",
     "auth_challenges",
@@ -65,7 +58,6 @@ class UnsafeDatabaseRoleError(RuntimeError):
 
 
 GLOBAL_IDENTITY_TABLES = ("human_identities", "identity_memberships", "identity_sessions")
-GLOBAL_FINANCIAL_TABLES = ("billing_plan_versions",)
 
 
 async def verify_runtime_role(session: AsyncSession) -> None:
@@ -85,11 +77,9 @@ async def verify_runtime_role(session: AsyncSession) -> None:
           AND c.relrowsecurity AND c.relforcerowsecurity
           AND NOT pg_has_role(current_user, c.relowner, 'MEMBER')
         """),
-        {"tables": [*TENANT_TABLES, *GLOBAL_IDENTITY_TABLES, *GLOBAL_FINANCIAL_TABLES]},
+        {"tables": [*TENANT_TABLES, *GLOBAL_IDENTITY_TABLES]},
     )
-    if safe_tables != len(TENANT_TABLES) + len(GLOBAL_IDENTITY_TABLES) + len(
-        GLOBAL_FINANCIAL_TABLES
-    ):
+    if safe_tables != len(TENANT_TABLES) + len(GLOBAL_IDENTITY_TABLES):
         raise UnsafeDatabaseRoleError("Migrate the schema and use a non-owner application role")
     can_read_domain = await session.scalar(
         text("SELECT has_table_privilege(current_user, 'public.patients', 'SELECT')")

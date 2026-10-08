@@ -52,19 +52,6 @@ async def provision_worker(settings: Settings) -> None:
                 raise ValueError("Existing worker role has elevated privileges")
             quoted = engine.dialect.identifier_preparer.quote(role)
             await connection.exec_driver_sql(f"GRANT USAGE ON SCHEMA public TO {quoted}")
-            # Global expiry discovery exposes only scheduling metadata. Financial
-            # contents and all mutation rights remain with the separate writer login.
-            await connection.exec_driver_sql(
-                f"GRANT SELECT (tenant_id, state, lease_expires_at) "
-                f"ON usage_reservations TO {quoted}"
-            )
-            await connection.exec_driver_sql(
-                "DROP POLICY IF EXISTS usage_expiry_discovery ON usage_reservations"
-            )
-            await connection.exec_driver_sql(
-                f"CREATE POLICY usage_expiry_discovery ON usage_reservations "
-                f"FOR SELECT TO {quoted} USING (state IN ('held', 'running'))"
-            )
             await connection.exec_driver_sql(f"REVOKE ALL ON auth_mail FROM {quoted}")
             await connection.exec_driver_sql(f"GRANT SELECT ON auth_mail TO {quoted}")
             await connection.exec_driver_sql(

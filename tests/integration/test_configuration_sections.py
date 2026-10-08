@@ -70,11 +70,11 @@ async def test_section_access_validation_revision_and_immediate_revocation(
     context = await editor(tenancy)
     view = await service.get_section(context, "agent")
     assert isinstance(view.value, dict) and "greeting" in view.value
-    assert "budget" not in view.model_dump() and "document" not in view.model_dump()
+    assert "privacy" not in view.model_dump() and "document" not in view.model_dump()
     with pytest.raises(AuthorizationError):
         await service.get(context)
     with pytest.raises(AuthorizationError):
-        await service.get_section(context, "budget")
+        await service.get_section(context, "privacy")
     with pytest.raises(AuthorizationError):
         await service.save_section(
             context, "privacy", SaveConfigurationSection(revision=view.revision, value={})
@@ -128,7 +128,7 @@ async def test_section_publication_cannot_release_another_admins_changes(
     assert result.version == 2 and result.document.agent.greeting == "Only this tenant changed"
     current = await service.get(owner)
     document = current.document.model_copy(deep=True)
-    document.budget.alert_percentages = [25, 50, 90]
+    document.privacy.transcript_retention_days = 60
     dirty = await service.save(
         owner, SaveConfiguration(revision=current.revision, document=document)
     )
@@ -136,7 +136,7 @@ async def test_section_publication_cannot_release_another_admins_changes(
         await service.publish(context, dirty.revision, section="agent")
     review = await service.section_diff(context, "agent", dirty.revision)
     assert not review.validation.valid
-    assert all(not change.field.startswith("budget.") for change in review.changes)
+    assert all(not change.field.startswith("privacy.") for change in review.changes)
     assert [issue.code for issue in review.validation.issues] == ["section_publication_conflict"]
     assert (await service.get_section(context, "agent")).published_version == 2
     foreign = await service.get_section(await authenticate(tenancy, second=True), "agent")

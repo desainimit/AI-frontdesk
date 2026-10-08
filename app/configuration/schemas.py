@@ -174,23 +174,6 @@ class PrivacySettings(Section):
         return self
 
 
-class BudgetSettings(Section):
-    monthly_budget_paisa: int = Field(default=0, ge=0, le=1000000000)
-    alert_percentages: list[int] = Field(default_factory=lambda: [50, 80, 100], max_length=5)
-    auto_recharge: bool = False
-    recharge_amount_paisa: int = Field(default=0, ge=0, le=10000000)
-
-    @model_validator(mode="after")
-    def valid_budget(self) -> "BudgetSettings":
-        if len(set(self.alert_percentages)) != len(self.alert_percentages) or any(
-            not 1 <= value <= 100 for value in self.alert_percentages
-        ):
-            raise ValueError("Alert thresholds must be unique percentages")
-        if self.auto_recharge and self.recharge_amount_paisa <= 0:
-            raise ValueError("Auto recharge requires an explicit positive amount")
-        return self
-
-
 class NotificationSettings(Section):
     recipients: list[str] = Field(default_factory=list, max_length=20)
     booking_template: str = Field(
@@ -309,7 +292,6 @@ class OperationalConfiguration(Section):
     messaging: MessagingSettings = Field(default_factory=MessagingSettings)
     workflows: WorkflowSettings = Field(default_factory=WorkflowSettings)
     privacy: PrivacySettings = Field(default_factory=PrivacySettings)
-    budget: BudgetSettings = Field(default_factory=BudgetSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     scopes: ConfigurationScopes = Field(default_factory=ConfigurationScopes)
     directory: DirectorySnapshot = Field(default_factory=DirectorySnapshot)

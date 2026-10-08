@@ -11,12 +11,6 @@ from app.auth.human_models import HumanSession as HumanSession
 from app.auth.models import ApiCredential as ApiCredential
 from app.auth.workspace_models import IdentityMembership as IdentityMembership
 from app.auth.workspace_models import IdentitySession as IdentitySession
-from app.billing.models import BillingAccount as BillingAccount
-from app.billing.models import BillingLedger as BillingLedger
-from app.billing.models import BillingMutation as BillingMutation
-from app.billing.models import PlanVersion as PlanVersion
-from app.billing.usage_models import UsageCommand as UsageCommand
-from app.billing.usage_models import UsageReservation as UsageReservation
 from app.business.models import BusinessResource as BusinessResource
 from app.business.models import BusinessService as BusinessService
 from app.business.models import BusinessStaff as BusinessStaff
@@ -43,7 +37,6 @@ from app.knowledge.models import DocumentChunk as DocumentChunk
 from app.knowledge.models import DocumentVersion as DocumentVersion
 from app.knowledge.models import KnowledgeJob as KnowledgeJob
 from app.locations.models import Location as Location
-from app.onboarding.models import SetupProgress as SetupProgress
 from app.patients.models import Patient as Patient
 from app.platform.models import PlatformAuditEvent as PlatformAuditEvent
 from app.platform.models import PlatformSession as PlatformSession

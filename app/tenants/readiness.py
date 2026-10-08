@@ -161,13 +161,6 @@ class TenantReadinessService:
                         "Send the setup invitation and complete administrator acceptance.",
                     )
                 )
-            checks.append(
-                _blocking(
-                    "billing_activation",
-                    "Usage reservations and runtime admission are not implemented.",
-                    "Keep channels disabled until usage admission and dispatch are verified.",
-                )
-            )
         checks.append(
             _ready("public_callbacks")
             if settings.telephony_enabled and settings.telephony_public_base_url
