@@ -1,0 +1,18 @@
+# Explicit CI-only overlay. Normal local Compose uses the installed PostgreSQL server.
+services:
+  migrate:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: pgvector/pgvector:pg17-bookworm
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set CI POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set CI POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?Set CI POSTGRES_DB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10

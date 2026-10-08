@@ -1,0 +1,11 @@
+# Phase 14 — Integration interfaces
+
+Appointment services still commit only domain data, audit records, and a versioned outbox event. Phase 14 adds provider-neutral contracts in `app/integrations/ports.py` for calendar, CRM, EHR, email, and SMS. `AppointmentOutboxAdapter` translates a committed appointment event into a calendar change without a patient identifier and, when configured, a customer appointment change containing the patient ID for CRM/EHR. No appointment service imports a vendor SDK.
+
+The adapter implements the existing outbox worker's `NotificationProvider` contract. `TenantOutboxRouter` requires an explicit adapter for each tenant; it rejects an event for an unconfigured or mismatched tenant before sending any data. Calendar changes use a stable tenant-and-appointment UID. Each destination receives the stable outbox event UUID as its idempotency key and the appointment version. A destination adapter must deduplicate retries and ignore stale versions. Provider failures should use the existing typed `ProviderError` classes so the worker can retry temporary failures and retain permanent failures for review. The worker already applies a bounded timeout and records delivery metrics.
+
+The CLI worker remains configured with `NOTIFICATION_PROVIDER=console`. It logs simulated delivery and performs no external calendar, CRM, EHR, email, or SMS request. This phase does not invent vendor APIs or tenant credentials. To activate a specific vendor later, implement the relevant port, configure tenant-specific credentials and routing, and compose that adapter into `TenantOutboxRouter` as the provider passed to `EventProcessor`. Email and SMS ports are available for future reminder and follow-up workflows; appointment outbox snapshots contain no recipient address or phone number, so the adapter does not attempt a message delivery.
+
+The outbox is at least once. If one destination succeeds and another fails, the event may be retried; every external adapter must enforce the supplied idempotency key at the side-effect boundary. A permanent failure remains visible in the outbox for operator review. No migration is required for Phase 14.
+
+Run the focused contract checks with `python -m pytest tests/test_integrations_phase14.py -q`. They cover tenant isolation, minimal calendar data, event validation, and stable retry keys.

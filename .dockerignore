@@ -1,0 +1,11 @@
+*
+!app/
+!app/**
+!migrations/
+!migrations/**
+!pyproject.toml
+!uv.lock
+!alembic.ini
+!README.md
+**/__pycache__/
+**/*.pyc

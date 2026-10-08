@@ -1,0 +1,48 @@
+FROM ghcr.io/astral-sh/uv:0.12.19 AS uv
+FROM python:3.12-slim-bookworm AS builder
+COPY --from=uv /uv /uvx /bin/
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
+WORKDIR /srv/app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project
+COPY app ./app
+COPY README.md ./README.md
+RUN uv sync --locked --no-dev --no-editable
+
+FROM python:3.12-slim-bookworm AS runtime
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/srv/app/.venv/bin:$PATH"
+RUN groupadd --gid 10001 frontdesk && useradd --uid 10001 --gid frontdesk --no-create-home frontdesk
+WORKDIR /srv/app
+RUN mkdir -p /srv/app/data/knowledge /srv/app/data/models && chown -R frontdesk:frontdesk /srv/app/data
+COPY --from=builder --chown=frontdesk:frontdesk /srv/app/.venv ./.venv
+COPY --chown=frontdesk:frontdesk app ./app
+COPY --chown=frontdesk:frontdesk migrations ./migrations
+COPY --chown=frontdesk:frontdesk alembic.ini ./alembic.ini
+USER frontdesk
+EXPOSE 8000
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"
+CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--no-proxy-headers", "--timeout-graceful-shutdown", "20", "--ws-max-size", "16384", "--ws-max-queue", "16"]
+
+# Heavy document parsing dependencies live only in the opt-in knowledge worker image.
+FROM builder AS knowledge-builder
+RUN uv sync --locked --no-dev --extra knowledge --no-editable
+
+FROM runtime AS knowledge-worker
+USER root
+RUN apt-get update && apt-get install --no-install-recommends -y libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=knowledge-builder --chown=frontdesk:frontdesk /srv/app/.venv ./.venv
+USER frontdesk
+CMD ["python", "-m", "app.knowledge.cli"]
+
+# Temporal and document parsing are isolated from the API image and voice path.
+FROM builder AS workflow-builder
+RUN uv sync --locked --no-dev --extra knowledge --extra workflows --no-editable
+
+FROM runtime AS workflow-worker
+USER root
+RUN apt-get update && apt-get install --no-install-recommends -y libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=workflow-builder --chown=frontdesk:frontdesk /srv/app/.venv ./.venv
+USER frontdesk
+CMD ["python", "-m", "app.workflows.worker"]

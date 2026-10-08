@@ -1,0 +1,302 @@
+"""Operator command: provision a least-privilege login after running migrations."""
+
+import asyncio
+import re
+
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
+
+from app.config.settings import Settings
+from app.database.session import Database
+from app.events.provision import provision_worker
+
+
+class ProvisioningConfigurationError(ValueError):
+    """Static operator-facing guidance; never include connection URLs or passwords."""
+
+
+def validate_role_configuration(settings: Settings) -> str:
+    runtime = make_url(settings.database_url.get_secret_value())
+    migration = make_url(settings.migration_url)
+    role = runtime.username or ""
+    if not settings.migration_database_url:
+        raise ProvisioningConfigurationError(
+            "Set MIGRATION_DATABASE_URL to the schema owner connection."
+        )
+    if role == migration.username:
+        raise ProvisioningConfigurationError(
+            "DATABASE_URL and MIGRATION_DATABASE_URL must use different PostgreSQL users. "
+            "Use a restricted application login for DATABASE_URL and the schema owner "
+            "for MIGRATION_DATABASE_URL."
+        )
+    if runtime.database != migration.database:
+        raise ProvisioningConfigurationError("Both connection URLs must name the same database.")
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", role):
+        raise ProvisioningConfigurationError(
+            "The runtime username must start with a lowercase letter or underscore and contain "
+            "only lowercase letters, digits, or underscores (maximum 63 characters)."
+        )
+    if not runtime.password:
+        raise ProvisioningConfigurationError("Set the runtime login password in DATABASE_URL.")
+    return role
+
+
+async def provision_runtime_role(settings: Settings) -> None:
+    role = validate_role_configuration(settings)
+    runtime = make_url(settings.database_url.get_secret_value())
+    engine = create_async_engine(settings.migration_url, poolclass=NullPool, hide_parameters=True)
+    try:
+        async with engine.begin() as connection:
+            existing = (
+                await connection.execute(
+                    text(
+                        "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolreplication "
+                        "FROM pg_roles WHERE rolname = :name"
+                    ),
+                    {"name": role},
+                )
+            ).first()
+            if existing is None:
+                # PostgreSQL formats identifiers/literals safely; secrets never enter log messages.
+                statement = await connection.scalar(
+                    text(
+                        "SELECT format('CREATE ROLE %I LOGIN NOSUPERUSER NOBYPASSRLS "
+                        "NOCREATEROLE NOCREATEDB NOREPLICATION PASSWORD %L', "
+                        "CAST(:name AS text), CAST(:password AS text))"
+                    ),
+                    {"name": role, "password": runtime.password},
+                )
+                if not isinstance(statement, str):
+                    raise RuntimeError("Could not prepare role creation")
+                await connection.exec_driver_sql(statement)
+            elif any(existing):
+                raise ProvisioningConfigurationError(
+                    "Existing runtime role has elevated privileges; choose a dedicated role"
+                )
+            quoted_role = engine.dialect.identifier_preparer.quote(role)
+            await connection.exec_driver_sql(f"GRANT USAGE ON SCHEMA public TO {quoted_role}")
+            await connection.exec_driver_sql(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON tenant_roles, role_permissions "
+                f"TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT, UPDATE ON configuration_drafts TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT, UPDATE ON tenant_setup_progress TO {quoted_role}"
+            )
+            # The ordinary API login cannot create funds, prices or financial history.
+            await connection.exec_driver_sql(
+                f"REVOKE ALL ON billing_accounts, billing_ledger, billing_mutations, "
+                f"billing_plan_versions, usage_reservations, usage_commands FROM {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT ON billing_accounts, billing_ledger, billing_mutations, "
+                f"billing_plan_versions, usage_reservations, usage_commands TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON business_hours_policies, "
+                f"business_opening_windows, business_holidays TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT SELECT, INSERT, UPDATE ON business_services, business_staff, "
+                f"business_resources TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON business_service_staff, "
+                "business_service_resources, business_staff_windows, "
+                f"business_staff_holidays TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON business_directory_mutations TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON configuration_resources TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (name, is_active, revision, updated_at) "
+                f"ON configuration_resources TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT SELECT, INSERT ON published_configurations, configuration_events "
+                f"TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"REVOKE ALL ON tenants, users, api_credentials, audit_events FROM {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT ON tenants, users, api_credentials, audit_events TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(f"GRANT INSERT ON audit_events TO {quoted_role}")
+            await connection.exec_driver_sql(
+                f"GRANT INSERT ON tenants, users, api_credentials TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (name, is_active, updated_at, language_policy, "
+                "human_transfer_number, verification_policy, service_state) "
+                f"ON tenants TO {quoted_role}"
+            )
+            integration_tables = "tenant_integrations, integration_credential_versions"
+            await connection.exec_driver_sql(
+                f"REVOKE ALL ON {integration_tables} FROM {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON {integration_tables} TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (provider, account_identifier, config, status, revision, "
+                f"active_version_id, last_checked_at, updated_at) "
+                f"ON tenant_integrations TO {quoted_role}"
+            )
+            # Version rows are immutable apart from lifecycle state and secret erasure.
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (state, ciphertext, error_code, validated_at, lease_token, "
+                f"lease_until) ON integration_credential_versions TO {quoted_role}"
+            )
+            knowledge_tables = "documents, document_versions, document_chunks, knowledge_jobs"
+            await connection.exec_driver_sql(f"REVOKE ALL ON {knowledge_tables} FROM {quoted_role}")
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON {knowledge_tables} TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (name, source_type, status, active_version, updated_at) "
+                f"ON documents TO {quoted_role}"
+            )
+            domain_tables = "locations, providers, patients, availability, appointments"
+            await connection.exec_driver_sql(
+                f"REVOKE ALL ON phone_numbers, calls FROM {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT, UPDATE ON phone_numbers, calls TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(f"REVOKE ALL ON {domain_tables} FROM {quoted_role}")
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON {domain_tables} TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(f"GRANT UPDATE ON appointments TO {quoted_role}")
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (name, timezone, updated_at) ON locations TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (email, display_name, is_active, role, role_id, updated_at) "
+                f"ON users TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(f"REVOKE ALL ON tenant_onboardings FROM {quoted_role}")
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON tenant_onboardings TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (draft, revision, status, updated_at) "
+                f"ON tenant_onboardings TO {quoted_role}"
+            )
+            auth_tables = "human_accounts, human_sessions, auth_challenges, auth_mail"
+            await connection.exec_driver_sql(f"REVOKE ALL ON {auth_tables} FROM {quoted_role}")
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON {auth_tables} TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON human_identities TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON identity_memberships, identity_sessions TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (revoked_at) ON identity_sessions TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (password_hash, credential_revision) "
+                f"ON human_identities TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (revoked_at) ON human_sessions TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (consumed_at, attempts) ON auth_challenges TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (status, ciphertext) ON auth_mail TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (date_of_birth, account_identifier, updated_at) "
+                f"ON patients TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"REVOKE ALL ON idempotency_records, outbox_events FROM {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON idempotency_records, outbox_events TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON workflow_intents TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(f"GRANT SELECT ON workflow_results TO {quoted_role}")
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON call_transcripts TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (snapshot) ON call_transcripts TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT ON post_call_reports, follow_up_events TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (status, acknowledged_at) ON follow_up_events TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "REVOKE ALL ON platform_users, platform_sessions, platform_audit_events "
+                f"FROM {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT ON platform_users, platform_sessions TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT INSERT ON platform_sessions, platform_audit_events TO {quoted_role}"
+            )
+            # ORM INSERT RETURNING reads only the server-generated audit timestamp.
+            await connection.exec_driver_sql(
+                f"GRANT SELECT (created_at) ON platform_audit_events TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (revoked_at, mfa_verified_at) ON platform_sessions TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"REVOKE ALL ON platform_authenticators FROM {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT, UPDATE ON platform_authenticators TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(f"REVOKE ALL ON support_sessions FROM {quoted_role}")
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON support_sessions TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (revoked_at) ON support_sessions TO {quoted_role}"
+            )
+    finally:
+        await engine.dispose()
+    database = Database(settings)
+    try:
+        await database.ping()
+    finally:
+        await database.close()
+    await provision_worker(settings)
+
+
+def main() -> None:
+    try:
+        asyncio.run(provision_runtime_role(Settings.from_environment()))
+    except ProvisioningConfigurationError as exc:
+        raise SystemExit(f"Role provisioning failed: {exc}") from None
+    except (SQLAlchemyError, ValueError, RuntimeError):
+        raise SystemExit(
+            "Role provisioning failed. Verify separate credentials, role privileges, "
+            "database connectivity, and applied migrations. No existing password is rotated."
+        ) from None
+    print("Restricted runtime role provisioned and verified.")
+
+
+if __name__ == "__main__":
+    main()

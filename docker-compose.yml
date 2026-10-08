@@ -1,0 +1,382 @@
+name: ai-frontdesk
+
+x-app-environment: &app-environment
+  ENVIRONMENT: ${ENVIRONMENT:-local}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  SERVICE_NAME: ${SERVICE_NAME:-ai-frontdesk}
+  DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+  REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+  DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+  DB_POOL_TIMEOUT_SECONDS: ${DB_POOL_TIMEOUT_SECONDS:-5}
+  DB_POOL_RECYCLE_SECONDS: ${DB_POOL_RECYCLE_SECONDS:-1800}
+  DB_COMMAND_TIMEOUT_SECONDS: ${DB_COMMAND_TIMEOUT_SECONDS:-10}
+  DEPENDENCY_TIMEOUT_SECONDS: ${DEPENDENCY_TIMEOUT_SECONDS:-2}
+  REDIS_MAX_CONNECTIONS: ${REDIS_MAX_CONNECTIONS:-20}
+  RATE_LIMITS_ENABLED: ${RATE_LIMITS_ENABLED:-false}
+  TENANT_API_REQUESTS_PER_MINUTE: ${TENANT_API_REQUESTS_PER_MINUTE:-240}
+  PLATFORM_API_REQUESTS_PER_MINUTE: ${PLATFORM_API_REQUESTS_PER_MINUTE:-120}
+  WEBHOOK_REQUESTS_PER_CALL_PER_MINUTE: ${WEBHOOK_REQUESTS_PER_CALL_PER_MINUTE:-60}
+  TENANT_ONBOARDING_ENABLED: ${TENANT_ONBOARDING_ENABLED:-false}
+  TENANT_HUMAN_AUTH_ENABLED: ${TENANT_HUMAN_AUTH_ENABLED:-false}
+  TENANT_AUTH_PUBLIC_ORIGIN: ${TENANT_AUTH_PUBLIC_ORIGIN:-}
+  TENANT_INTEGRATIONS_ENABLED: ${TENANT_INTEGRATIONS_ENABLED:-false}
+  LEGACY_PROVIDER_TENANT_IDS: ${LEGACY_PROVIDER_TENANT_IDS:-}
+  TENANT_LLM_MODELS: ${TENANT_LLM_MODELS:-gpt-4o-mini,gpt-4o,gpt-4.1-mini,gpt-4.1}
+  INTEGRATION_CACHE_SECONDS: ${INTEGRATION_CACHE_SECONDS:-15}
+  INTEGRATION_VERIFY_TIMEOUT_SECONDS: ${INTEGRATION_VERIFY_TIMEOUT_SECONDS:-8}
+  # Injected by the deployment secret manager; never stored in PostgreSQL or its backups.
+  SECRET_ENCRYPTION_KEYS: ${SECRET_ENCRYPTION_KEYS:-}
+  SECRET_ENCRYPTION_ACTIVE_KEY: ${SECRET_ENCRYPTION_ACTIVE_KEY:-}
+  OTP_HMAC_KEY: ${OTP_HMAC_KEY:-}
+  STREAM_TOKEN_KEY: ${STREAM_TOKEN_KEY:-}
+  SMTP_ENABLED: ${SMTP_ENABLED:-false}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_TLS_MODE: ${SMTP_TLS_MODE:-starttls}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_SENDER: ${SMTP_SENDER:-}
+  SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-15}
+  OTEL_ENABLED: ${OTEL_ENABLED:-false}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}
+  OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+  OTEL_TRACE_SAMPLE_RATIO: ${OTEL_TRACE_SAMPLE_RATIO:-0.1}
+  OTEL_METRIC_EXPORT_INTERVAL_SECONDS: ${OTEL_METRIC_EXPORT_INTERVAL_SECONDS:-30}
+  KNOWLEDGE_STORAGE_BACKEND: ${KNOWLEDGE_STORAGE_BACKEND:-local}
+  KNOWLEDGE_LOCAL_PATH: /srv/app/data/knowledge
+  KNOWLEDGE_S3_BUCKET: ${KNOWLEDGE_S3_BUCKET:-}
+  KNOWLEDGE_S3_REGION: ${KNOWLEDGE_S3_REGION:-}
+  KNOWLEDGE_S3_ENDPOINT: ${KNOWLEDGE_S3_ENDPOINT:-}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+
+services:
+  api:
+    build:
+      context: .
+      target: runtime
+    image: ai-frontdesk:local
+    pull_policy: build
+    environment:
+      <<: *app-environment
+      KNOWLEDGE_ENABLED: ${KNOWLEDGE_ENABLED:-false}
+      FINANCIAL_DATABASE_URL: ${FINANCIAL_DATABASE_URL:-}
+      TELEPHONY_ENABLED: ${TELEPHONY_ENABLED:-false}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TELEPHONY_PUBLIC_BASE_URL: ${TELEPHONY_PUBLIC_BASE_URL:-}
+      TELEPHONY_IDLE_SECONDS: ${TELEPHONY_IDLE_SECONDS:-30}
+      TELEPHONY_MAX_CALL_SECONDS: ${TELEPHONY_MAX_CALL_SECONDS:-600}
+      TELEPHONY_MODE: ${TELEPHONY_MODE:-pipeline}
+      PRIMARY_STT_PROVIDER: ${PRIMARY_STT_PROVIDER:-deepgram}
+      FALLBACK_STT_PROVIDER: ${FALLBACK_STT_PROVIDER:-azure}
+      PRIMARY_TTS_PROVIDER: ${PRIMARY_TTS_PROVIDER:-elevenlabs}
+      FALLBACK_TTS_PROVIDER: ${FALLBACK_TTS_PROVIDER:-azure}
+      MULTILINGUAL_ENABLED: ${MULTILINGUAL_ENABLED:-false}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      DEEPGRAM_MODEL: ${DEEPGRAM_MODEL:-nova-2}
+      DEEPGRAM_LANGUAGE: ${DEEPGRAM_LANGUAGE:-en}
+      DEEPGRAM_BASE_URL: ${DEEPGRAM_BASE_URL:-https://api.deepgram.com}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      ELEVENLABS_MODEL_ID: ${ELEVENLABS_MODEL_ID:-eleven_turbo_v2_5}
+      ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
+      ELEVENLABS_OUTPUT_FORMAT: ${ELEVENLABS_OUTPUT_FORMAT:-pcm_8000}
+      ELEVENLABS_BASE_URL: ${ELEVENLABS_BASE_URL:-https://api.elevenlabs.io}
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY:-}
+      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION:-eastus}
+      AZURE_SPEECH_LANGUAGE: ${AZURE_SPEECH_LANGUAGE:-en-US}
+      AZURE_SPEECH_VOICE: ${AZURE_SPEECH_VOICE:-en-US-JennyNeural}
+      AZURE_HINDI_VOICE: ${AZURE_HINDI_VOICE:-hi-IN-SwaraNeural}
+      AZURE_SPEECH_OUTPUT_FORMAT: ${AZURE_SPEECH_OUTPUT_FORMAT:-raw-8khz-16bit-mono-pcm}
+      STT_TIMEOUT_SECONDS: ${STT_TIMEOUT_SECONDS:-5}
+      TTS_TIMEOUT_SECONDS: ${TTS_TIMEOUT_SECONDS:-5}
+      VOICE_CIRCUIT_BREAKER_FAILURES: ${VOICE_CIRCUIT_BREAKER_FAILURES:-3}
+      VOICE_CIRCUIT_BREAKER_RESET_SECONDS: ${VOICE_CIRCUIT_BREAKER_RESET_SECONDS:-60}
+      BARGE_IN_ENABLED: ${BARGE_IN_ENABLED:-true}
+      BARGE_IN_ENERGY_THRESHOLD: ${BARGE_IN_ENERGY_THRESHOLD:-400}
+      BARGE_IN_CONSECUTIVE_FRAMES: ${BARGE_IN_CONSECUTIVE_FRAMES:-2}
+      CONVERSATION_STATE_TTL_SECONDS: ${CONVERSATION_STATE_TTL_SECONDS:-3600}
+      CONVERSATION_DEFAULT_LANGUAGE: ${CONVERSATION_DEFAULT_LANGUAGE:-en}
+      CONVERSATION_LANGUAGE_CONFIDENCE_THRESHOLD: ${CONVERSATION_LANGUAGE_CONFIDENCE_THRESHOLD:-0.6}
+      CONVERSATION_CONFIRMATION_TIMEOUT_SECONDS: ${CONVERSATION_CONFIRMATION_TIMEOUT_SECONDS:-120}
+      AGENT_ENABLED: ${AGENT_ENABLED:-false}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-10}
+      LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-800}
+      AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-3}
+      AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-4}
+      AGENT_TURN_TIMEOUT_SECONDS: ${AGENT_TURN_TIMEOUT_SECONDS:-20}
+      AGENT_TOOL_TIMEOUT_SECONDS: ${AGENT_TOOL_TIMEOUT_SECONDS:-3}
+      SAFETY_SEMANTIC_ENABLED: ${SAFETY_SEMANTIC_ENABLED:-true}
+      SAFETY_CLASSIFIER_TIMEOUT_SECONDS: ${SAFETY_CLASSIFIER_TIMEOUT_SECONDS:-2}
+    volumes:
+      - knowledge-objects:/srv/app/data/knowledge
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+
+  migrate:
+    build:
+      context: .
+      target: runtime
+    image: ai-frontdesk:local
+    pull_policy: build
+    environment:
+      <<: *app-environment
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL to the schema owner connection}
+      FINANCIAL_DATABASE_URL: ${FINANCIAL_DATABASE_URL:-}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:-}
+      SUPER_ADMIN_NAME: ${SUPER_ADMIN_NAME:-Super Admin}
+    command: ["python", "-m", "app.database.initialize"]
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  worker:
+    build:
+      context: .
+      target: runtime
+    image: ai-frontdesk:local
+    pull_policy: build
+    command: ["python", "-m", "app.events.worker"]
+    environment:
+      <<: *app-environment
+      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
+      SERVICE_NAME: ai-frontdesk-worker
+      NOTIFICATION_PROVIDER: ${NOTIFICATION_PROVIDER:-console}
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-5}
+      OUTBOX_PROVIDER_TIMEOUT_SECONDS: ${OUTBOX_PROVIDER_TIMEOUT_SECONDS:-10}
+      OUTBOX_LEASE_SECONDS: ${OUTBOX_LEASE_SECONDS:-90}
+      OUTBOX_POLL_SECONDS: ${OUTBOX_POLL_SECONDS:-1}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 75s
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.events.worker", "--check"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  # Delivers invitation and password-reset email. Start with: --profile mail
+  mail-worker:
+    profiles: [mail]
+    build:
+      context: .
+      target: runtime
+    image: ai-frontdesk:local
+    pull_policy: build
+    command: ["python", "-m", "app.auth.mail_worker"]
+    environment:
+      <<: *app-environment
+      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
+      SERVICE_NAME: ai-frontdesk-mail-worker
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.auth.mail_worker", "--check"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  knowledge-worker:
+    profiles: [knowledge]
+    build:
+      context: .
+      target: knowledge-worker
+    image: ai-frontdesk-knowledge:local
+    pull_policy: build
+    environment:
+      <<: *app-environment
+      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
+      KNOWLEDGE_ENABLED: ${KNOWLEDGE_ENABLED:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      HF_HOME: /srv/app/data/models
+      SERVICE_NAME: ai-frontdesk-knowledge
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - knowledge-objects:/srv/app/data/knowledge
+      - knowledge-models:/srv/app/data/models
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.knowledge.cli", "--check"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
+  workflow-worker:
+    profiles: [workflows]
+    build:
+      context: .
+      target: workflow-worker
+    image: ai-frontdesk-workflows:local
+    pull_policy: build
+    environment:
+      <<: *app-environment
+      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
+      KNOWLEDGE_ENABLED: ${KNOWLEDGE_ENABLED:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS:-host.docker.internal:7233}
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
+      TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE:-ai-frontdesk-workflows}
+      TEMPORAL_API_KEY: ${TEMPORAL_API_KEY:-}
+      TEMPORAL_TLS: ${TEMPORAL_TLS:-false}
+      TEMPORAL_DISPATCH_POLL_SECONDS: ${TEMPORAL_DISPATCH_POLL_SECONDS:-2}
+      HF_HOME: /srv/app/data/models
+      SERVICE_NAME: ai-frontdesk-workflows
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - knowledge-objects:/srv/app/data/knowledge
+      - knowledge-models:/srv/app/data/models
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workflows.worker", "--check"]
+      interval: 30s
+      timeout: 15s
+      start_period: 30s
+      retries: 3
+
+  configuration-worker:
+    build:
+      context: .
+      target: runtime
+    image: ai-frontdesk:local
+    pull_policy: build
+    command: ["python", "-m", "app.configuration.worker"]
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SERVICE_NAME: ai-frontdesk-configuration-worker
+      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
+      DEPENDENCY_TIMEOUT_SECONDS: ${DEPENDENCY_TIMEOUT_SECONDS:-2}
+      DB_COMMAND_TIMEOUT_SECONDS: ${DB_COMMAND_TIMEOUT_SECONDS:-10}
+      DB_POOL_SIZE: 2
+      DB_MAX_OVERFLOW: 0
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 15s
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.configuration.worker", "--check"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  usage-expiry-worker:
+    profiles: [billing]
+    build:
+      context: .
+      target: runtime
+    image: ai-frontdesk:local
+    pull_policy: build
+    command: ["python", "-m", "app.billing.worker"]
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SERVICE_NAME: ai-frontdesk-usage-expiry
+      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
+      FINANCIAL_DATABASE_URL: ${FINANCIAL_DATABASE_URL:-}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
+      DEPENDENCY_TIMEOUT_SECONDS: ${DEPENDENCY_TIMEOUT_SECONDS:-2}
+      DB_COMMAND_TIMEOUT_SECONDS: ${DB_COMMAND_TIMEOUT_SECONDS:-10}
+      DB_POOL_SIZE: 2
+      DB_MAX_OVERFLOW: 0
+      OTEL_ENABLED: "false"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 20s
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.billing.worker", "--check"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  redis:
+    image: valkey/valkey:8.1.10-alpine@sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  knowledge-objects:
+  knowledge-models:

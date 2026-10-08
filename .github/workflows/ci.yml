@@ -1,0 +1,80 @@
+name: backend-ci
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17-bookworm
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-ephemeral-only
+          POSTGRES_DB: frontdesk_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d frontdesk_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: valkey/valkey:8.1.10-alpine@sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://frontdesk_app:ci-runtime-only@localhost:5432/frontdesk_test
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://ci:ci-ephemeral-only@localhost:5432/frontdesk_test
+      WORKER_DATABASE_URL: postgresql+asyncpg://frontdesk_worker:ci-worker-only@localhost:5432/frontdesk_test
+      FINANCIAL_DATABASE_URL: postgresql+asyncpg://frontdesk_financial:ci-financial-only@localhost:5432/frontdesk_test
+      REDIS_URL: redis://localhost:6379/15
+      ENVIRONMENT: development
+      OTEL_ENABLED: "false"
+      RUN_INTEGRATION: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.19"
+          enable-cache: true
+      - run: uv sync --locked --extra workflows
+      - run: uv run --locked --extra workflows ruff check .
+      - run: uv run --locked --extra workflows ruff format --check .
+      - run: uv run --locked --extra workflows pyright
+      - run: uv run --locked --extra workflows python -m app.database.initialize
+      - run: uv run --locked --extra workflows python -m app.database.initialize
+      - run: uv run --locked --extra workflows alembic check
+      - run: uv run --locked --extra workflows pytest
+      - run: uv build
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
+      COMPOSE_PROFILES: billing
+      POSTGRES_USER: ci
+      POSTGRES_PASSWORD: ci-ephemeral-only
+      POSTGRES_DB: frontdesk_test
+      DATABASE_URL: postgresql+asyncpg://frontdesk_app:ci-runtime-only@postgres:5432/frontdesk_test
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://ci:ci-ephemeral-only@postgres:5432/frontdesk_test
+      WORKER_DATABASE_URL: postgresql+asyncpg://frontdesk_worker:ci-worker-only@postgres:5432/frontdesk_test
+      FINANCIAL_DATABASE_URL: postgresql+asyncpg://frontdesk_financial:ci-financial-only@postgres:5432/frontdesk_test
+      REDIS_URL: redis://redis:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - run: docker compose up --build -d --wait --wait-timeout 120
+      - run: |
+          curl --fail --retry 5 --retry-all-errors http://127.0.0.1:8000/health/live
+          curl --fail --retry 5 --retry-all-errors http://127.0.0.1:8000/health/ready
+          docker compose run --rm --no-deps migrate alembic current
+      - if: failure()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down --volumes
