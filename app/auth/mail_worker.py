@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 def send_smtp(settings: Settings, payload: dict[str, str], identity: str) -> None:
-    if not settings.smtp_enabled:
-        raise ValueError("SMTP is disabled")
+    if not settings.mail_enabled:
+        raise ValueError("SMTP is not configured")
     message = EmailMessage()
     message["From"] = settings.smtp_sender
     message["To"] = payload["to"]

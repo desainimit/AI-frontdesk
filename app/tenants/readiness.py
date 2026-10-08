@@ -231,7 +231,7 @@ class TenantReadinessService:
                 )
             )
         knowledge = integrations.get((Purpose.EMBEDDINGS, "primary"))
-        if settings.knowledge_enabled and not (
+        if not (
             (knowledge is not None and knowledge.status == "verified")
             or (knowledge is None and legacy and settings.platform_llm_key.get_secret_value())
         ):

@@ -29,7 +29,6 @@ from app.config.settings import Settings
 from app.database.rls import set_tenant_scope, verify_runtime_role
 from app.errors import AuthenticationError, AuthorizationError
 from app.platform.passwords import DUMMY_HASH, verify_password
-from app.platform.throttle import AuthenticationUnavailableError
 from app.rbac.models import TenantRole
 from app.tenants.models import Tenant
 from app.users.models import User
@@ -39,14 +38,9 @@ class WorkspaceIdentityService:
     def __init__(self, sessions: async_sessionmaker[AsyncSession], settings: Settings) -> None:
         self.sessions, self.settings = sessions, settings
 
-    def enabled(self) -> None:
-        if not self.settings.tenant_human_auth_enabled:
-            raise AuthenticationUnavailableError()
-
     async def validate(
         self, session: AsyncSession, credential: IdentityCredential, *, lock: bool = False
     ) -> tuple[IdentitySession, HumanIdentity]:
-        self.enabled()
         token = credential.token.get_secret_value()
         try:
             prefix, identifier, secret = token.split(".")
@@ -77,7 +71,6 @@ class WorkspaceIdentityService:
         return row, owner
 
     async def login(self, command: IdentityLogin, request_id: UUID) -> IdentitySessionView:
-        self.enabled()
         async with self.sessions.begin() as session:
             await verify_runtime_role(session)
             owner = await identity_for_email(session, command.email)

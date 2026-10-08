@@ -69,14 +69,12 @@ async def tenancy() -> AsyncGenerator[TenancyFixture]:
         and os.environ.get("RUN_POSTGRES_INTEGRATION") != "true"
     ):
         pytest.skip("requires explicit opt-in to disposable PostgreSQL")
-    # Feature flags come from the test, never from a developer's local .env.
+    # Provider keys, mail and public addresses are blanked in tests/conftest.py, so
+    # nothing here comes from a developer's local .env.
     settings = Settings.from_environment(
         db_pool_size=1,
         db_max_overflow=0,
         tenant_integrations_enabled=False,
-        tenant_human_auth_enabled=False,
-        tenant_onboarding_enabled=False,
-        smtp_enabled=False,
     )
     assert settings.migration_database_url is not None, "Explicit admin test credentials required"
     engine = create_async_engine(settings.migration_url, poolclass=NullPool, hide_parameters=True)

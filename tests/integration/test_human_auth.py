@@ -53,13 +53,10 @@ def auth_settings(base: Settings) -> Settings:
     key = base64.b64encode(secrets.token_bytes(32)).decode()
     return base.model_copy(
         update={
-            "tenant_onboarding_enabled": True,
-            "tenant_human_auth_enabled": True,
             "tenant_auth_public_origin": "https://app.example.test",
             "secret_encryption_keys": SecretStr(json.dumps({"k1": key})),
             "secret_encryption_active_key": "k1",
             "otp_hmac_key": SecretStr(secrets.token_urlsafe(48)),
-            "smtp_enabled": True,
             "smtp_host": "smtp.example.test",
             "smtp_sender": "noreply@example.test",
         }

@@ -71,7 +71,6 @@ def integration_settings(base: Settings, **overrides: object) -> Settings:
             "twilio_account_sid": "",
             "twilio_auth_token": SecretStr(""),
             "agent_enabled": False,
-            "knowledge_enabled": False,
             **overrides,
         }
     )

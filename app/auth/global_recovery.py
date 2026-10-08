@@ -42,7 +42,7 @@ class GlobalRecoveryService:
         self.human = HumanAuthenticationService(sessions, settings)
 
     def cipher(self) -> SecretCipher:
-        if not self.settings.tenant_human_auth_enabled or not self.settings.smtp_enabled:
+        if not self.settings.account_mail_ready:
             raise AuthenticationUnavailableError()
         try:
             return SecretCipher(

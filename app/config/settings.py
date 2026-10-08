@@ -35,8 +35,6 @@ class Settings(BaseSettings):
     db_command_timeout_seconds: float = Field(default=10, gt=0, le=120)
     dependency_timeout_seconds: float = Field(default=2, gt=0, le=30)
     redis_max_connections: int = Field(default=20, ge=1, le=1000)
-    tenant_onboarding_enabled: bool = False
-    tenant_human_auth_enabled: bool = False
     tenant_auth_public_origin: str = ""
     secret_encryption_keys: SecretStr = SecretStr("")
     secret_encryption_active_key: str = ""
@@ -53,7 +51,6 @@ class Settings(BaseSettings):
         "gemini-3.8-flash,gemini-3.5-flash-lite,"
         "google/gemini-3.8-flash,google/gemini-3.5-flash-lite"
     )
-    smtp_enabled: bool = False
     smtp_host: str = ""
     smtp_port: int = Field(default=587, ge=1, le=65535)
     smtp_tls_mode: Literal["starttls", "tls", "plain"] = "starttls"
@@ -123,7 +120,6 @@ class Settings(BaseSettings):
     barge_in_consecutive_frames: int = Field(default=2, ge=1, le=20)
 
     # Phase 11 knowledge base. API and ingestion worker share object storage.
-    knowledge_enabled: bool = False
     knowledge_storage_backend: Literal["local", "s3"] = "local"
     knowledge_local_path: str = ".local/knowledge-objects"
     knowledge_s3_bucket: str = ""
@@ -155,17 +151,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_knowledge(self) -> Self:
-        if self.knowledge_enabled:
-            platform_key = self.platform_llm_key.get_secret_value()
-            if not self.tenant_integrations_enabled and not platform_key:
-                raise ValueError("Knowledge requires the platform model key for embeddings")
-            if self.knowledge_storage_backend == "s3" and not self.knowledge_s3_bucket:
-                raise ValueError("S3 knowledge storage requires KNOWLEDGE_S3_BUCKET")
-            if (
-                self.environment in {Environment.STAGING, Environment.PRODUCTION}
-                and self.knowledge_storage_backend != "s3"
-            ):
-                raise ValueError("Production knowledge storage requires S3")
+        if self.knowledge_storage_backend == "s3" and not self.knowledge_s3_bucket:
+            raise ValueError("S3 knowledge storage requires KNOWLEDGE_S3_BUCKET")
+        if self.deployed and self.knowledge_storage_backend != "s3":
+            raise ValueError("Production knowledge storage requires S3")
         return self
 
     @model_validator(mode="after")
@@ -273,19 +262,25 @@ class Settings(BaseSettings):
         return cls(_env_file=env_file, **overrides)  # pyright: ignore[reportCallIssue]
 
     @model_validator(mode="after")
-    def validate_human_auth(self) -> Self:
-        if self.tenant_human_auth_enabled:
+    def validate_accounts_and_mail(self) -> Self:
+        """Sign-in, invitations and stored secrets are always part of the product.
+
+        Their keys are mandatory once deployed. Locally a missing value only makes the
+        feature that needs it unavailable, so the API can still start.
+        """
+        if self.deployed or self.secret_encryption_keys.get_secret_value():
             from app.security.encryption import SecretCipher
 
             SecretCipher(self.secret_encryption_keys, self.secret_encryption_active_key)
-            if len(self.otp_hmac_key.get_secret_value()) < 43:
-                raise ValueError(
-                    "Configure an independent random OTP_HMAC_KEY of at least 43 characters"
-                )
+        code_key = self.otp_hmac_key.get_secret_value()
+        if (self.deployed or code_key) and len(code_key) < 43:
+            raise ValueError(
+                "Configure an independent random OTP_HMAC_KEY of at least 43 characters"
+            )
+        if self.deployed or self.tenant_auth_public_origin:
             url = urlsplit(self.tenant_auth_public_origin)
-            local = self.environment in {Environment.LOCAL, Environment.DEVELOPMENT}
             if (
-                url.scheme not in ({"https", "http"} if local else {"https"})
+                url.scheme not in ({"https"} if self.deployed else {"https", "http"})
                 or not url.hostname
                 or url.username
                 or url.password
@@ -294,20 +289,35 @@ class Settings(BaseSettings):
                 or url.fragment
             ):
                 raise ValueError("Configure TENANT_AUTH_PUBLIC_ORIGIN as a trusted frontend origin")
-        if self.smtp_enabled:
+        if self.mail_enabled:
             if (
-                not self.smtp_host.strip()
-                or "@" not in self.smtp_sender
+                "@" not in self.smtp_sender
                 or any(c in self.smtp_host + self.smtp_sender + self.smtp_username for c in "\r\n")
                 or bool(self.smtp_username) != bool(self.smtp_password.get_secret_value())
             ):
-                raise ValueError("Configure SMTP host, sender and matching username/password")
-            if self.smtp_tls_mode == "plain" and self.environment not in {
-                Environment.LOCAL,
-                Environment.DEVELOPMENT,
-            }:
+                raise ValueError("Configure SMTP sender and matching username/password")
+            if self.smtp_tls_mode == "plain" and self.deployed:
                 raise ValueError("SMTP requires TLS outside local/development")
         return self
+
+    @property
+    def deployed(self) -> bool:
+        return self.environment in {Environment.STAGING, Environment.PRODUCTION}
+
+    @property
+    def mail_enabled(self) -> bool:
+        """Mail is delivered whenever an SMTP server is configured."""
+        return bool(self.smtp_host.strip())
+
+    @property
+    def account_mail_ready(self) -> bool:
+        """Invitations and resets need SMTP, the keyring, the code key and the link origin."""
+        return bool(
+            self.mail_enabled
+            and self.secret_encryption_keys.get_secret_value()
+            and len(self.otp_hmac_key.get_secret_value()) >= 43
+            and self.tenant_auth_public_origin
+        )
 
     @property
     def migration_url(self) -> str:

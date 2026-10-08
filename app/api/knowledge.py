@@ -17,12 +17,8 @@ router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
 FileName = Annotated[str, Header(alias="X-File-Name", min_length=1, max_length=200)]
 
 
-def service(
-    request: Request, database: DatabaseDependency, *, require_processing: bool = True
-) -> KnowledgeService:
+def service(request: Request, database: DatabaseDependency) -> KnowledgeService:
     settings: Settings = request.app.state.settings
-    if require_processing and not settings.knowledge_enabled:
-        raise HTTPException(503, "Knowledge base is disabled")
     return KnowledgeService(UnitOfWork(database.session_factory), build_storage(settings))
 
 
@@ -83,7 +79,7 @@ async def list_documents(
     q: Search = None,
 ) -> list[DocumentView]:
     # Listing existing records needs no embedding provider or ingestion worker.
-    return await service(request, database, require_processing=False).list_documents(
+    return await service(request, database).list_documents(
         context, limit, offset, status=status, q=q
     )
 
@@ -92,7 +88,7 @@ async def list_documents(
 async def list_versions(
     document_id: UUID, request: Request, context: Context, database: DatabaseDependency
 ) -> list[VersionView]:
-    return await service(request, database, require_processing=False).versions(context, document_id)
+    return await service(request, database).versions(context, document_id)
 
 
 @router.post("/documents/{document_id}/approve")
@@ -114,8 +110,6 @@ async def search_knowledge(
     query: KnowledgeQuery, request: Request, context: Context, database: DatabaseDependency
 ) -> KnowledgeResult:
     settings: Settings = request.app.state.settings
-    if not settings.knowledge_enabled:
-        raise HTTPException(503, "Knowledge base is disabled")
     provider = await open_embedder(
         settings, getattr(request.app.state, "integration_resolver", None), context.tenant_id
     )

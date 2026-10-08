@@ -34,7 +34,7 @@ from tests.integration.test_tenancy import pytestmark as pytestmark
 from tests.integration.test_tenancy import tenancy as tenancy
 
 
-async def test_support_can_read_knowledge_when_processing_is_disabled(
+async def test_support_can_read_knowledge(
     tenancy: TenancyFixture,
 ) -> None:
     first = Document(
@@ -77,7 +77,7 @@ async def test_support_can_read_knowledge_when_processing_is_disabled(
         )
     ).access_token
     app = create_app(
-        tenancy.settings.model_copy(update={"knowledge_enabled": False}),
+        tenancy.settings,
         redis_factory=lambda _: FakeDependency(),
         rate_limits=False,
     )
@@ -130,7 +130,7 @@ async def test_support_can_read_knowledge_when_processing_is_disabled(
                 content=b"# Test",
                 headers={**write_headers, "X-File-Name": "test.md"},
             )
-        ).status_code == 503
+        ).status_code == 202  # A session granted knowledge:write may upload.
 
 
 async def test_support_scope_isolation_audit_revocation_and_expiry(tenancy: TenancyFixture) -> None:

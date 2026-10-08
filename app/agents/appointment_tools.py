@@ -98,7 +98,7 @@ def appointment_tools(
             ),
         ]
     )
-    if knowledge_settings is not None and knowledge_settings.knowledge_enabled:
+    if knowledge_settings is not None:
 
         async def get_knowledge(context: AgentContext, payload: BaseModel) -> BaseModel:
             query = KnowledgeQuery.model_validate(payload.model_dump())

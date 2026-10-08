@@ -169,7 +169,6 @@ async def test_onboarding_http_flag_validation_and_credential_boundaries(
     )
     settings = tenancy.settings.model_copy(
         update={
-            "tenant_onboarding_enabled": False,
             "telephony_enabled": False,
             "agent_enabled": False,
         }
@@ -189,8 +188,6 @@ async def test_onboarding_http_flag_validation_and_credential_boundaries(
         client.headers["Authorization"] = f"Bearer {login.access_token}"
         client.headers["Idempotency-Key"] = str(uuid4())
         payload = draft().model_dump(mode="json")
-        assert (await client.post("tenant-onboardings", json=payload)).status_code == 503
-        settings.tenant_onboarding_enabled = True
         for token in ("", tenancy.a.token.get_secret_value(), support.access_token):
             assert (
                 await client.post(

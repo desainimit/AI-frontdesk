@@ -27,7 +27,7 @@ from app.configuration.models import ConfigurationDraft
 from app.configuration.schemas import OperationalConfiguration
 from app.conversation.locales import LanguagePolicy
 from app.database.rls import set_tenant_scope
-from app.errors import ApplicationError, ConflictError, NotFoundError
+from app.errors import ConflictError, NotFoundError
 from app.events.idempotency import IdempotencyConflictError, InvalidIdempotencyKeyError
 from app.locations.models import Location
 from app.locations.schemas import CreateLocation
@@ -37,12 +37,6 @@ from app.platform.policies import PlatformContext, PlatformPermission, require_p
 from app.platform.tenants import platform_scope
 from app.tenants.models import Tenant
 from app.users.models import User
-
-
-class OnboardingUnavailableError(ApplicationError):
-    status_code = 503
-    code = "onboarding_unavailable"
-    public_message = "Tenant onboarding is not enabled."
 
 
 class PendingAdministrator(BaseModel):

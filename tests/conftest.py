@@ -5,9 +5,11 @@ from pydantic import SecretStr
 
 from app.config.settings import Settings
 
-# A developer's .env may hold real provider keys. No test may ever pick them up: a
-# test that built a real client would place billed calls. The process environment
-# overrides .env, so these are blanked before any Settings object is created.
+# A developer's .env may hold real provider keys, a real mail server and public
+# addresses. No test may ever pick them up: a test that built a real client would
+# place billed calls or send real email. The process environment overrides .env, so
+# these are blanked before any Settings object is created; a test that needs one
+# sets its own value.
 for _secret in (
     "GEMINI_API_KEY",
     "OPENROUTER_API_KEY",
@@ -16,11 +18,22 @@ for _secret in (
     "AZURE_SPEECH_KEY",
     "TWILIO_ACCOUNT_SID",
     "TWILIO_AUTH_TOKEN",
+    "SMTP_HOST",
+    "SMTP_SENDER",
     "SMTP_USERNAME",
     "SMTP_PASSWORD",
+    "SECRET_ENCRYPTION_KEYS",
+    "SECRET_ENCRYPTION_ACTIVE_KEY",
+    "OTP_HMAC_KEY",
+    "STREAM_TOKEN_KEY",
+    "TENANT_AUTH_PUBLIC_ORIGIN",
+    "TELEPHONY_PUBLIC_BASE_URL",
 ):
     os.environ[_secret] = ""
 os.environ["LLM_PROVIDER"] = "mock"
+# Remaining switches are fixed here too, so a test never inherits one from .env.
+for _switch in ("TENANT_INTEGRATIONS_ENABLED", "TELEPHONY_ENABLED", "AGENT_ENABLED"):
+    os.environ[_switch] = "false"
 
 
 @pytest.fixture

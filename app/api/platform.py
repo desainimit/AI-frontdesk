@@ -22,7 +22,6 @@ from app.platform.mfa import (
 from app.platform.onboarding import (
     OnboardingDefaults,
     OnboardingDraft,
-    OnboardingUnavailableError,
     OnboardingView,
     TenantOnboardingService,
     UpdateOnboardingDraft,
@@ -224,16 +223,7 @@ async def set_tenant_active(
     )
 
 
-def require_onboarding_enabled(request: Request) -> None:
-    if not request.app.state.settings.tenant_onboarding_enabled:
-        raise OnboardingUnavailableError()
-
-
-@router.post(
-    "/tenants/{tenant_id}/admin-invitations",
-    status_code=201,
-    dependencies=[Depends(require_onboarding_enabled)],
-)
+@router.post("/tenants/{tenant_id}/admin-invitations", status_code=201)
 async def invite_tenant_admin(
     tenant_id: UUID,
     request: Request,
@@ -246,15 +236,13 @@ async def invite_tenant_admin(
     ).invite_initial_admin(context, tenant_id, idempotency_key)
 
 
-@router.get("/tenant-onboardings/defaults", dependencies=[Depends(require_onboarding_enabled)])
+@router.get("/tenant-onboardings/defaults")
 async def tenant_onboarding_defaults(context: PlatformIdentity) -> OnboardingDefaults:
     require_platform_permission(context, PlatformPermission.TENANT_CREATE)
     return onboarding_defaults()
 
 
-@router.post(
-    "/tenant-onboardings", status_code=201, dependencies=[Depends(require_onboarding_enabled)]
-)
+@router.post("/tenant-onboardings", status_code=201)
 async def create_onboarding(
     command: OnboardingDraft,
     context: PlatformIdentity,
@@ -267,14 +255,14 @@ async def create_onboarding(
     )
 
 
-@router.get("/tenants/{tenant_id}/onboarding", dependencies=[Depends(require_onboarding_enabled)])
+@router.get("/tenants/{tenant_id}/onboarding")
 async def get_onboarding(
     tenant_id: UUID, context: PlatformIdentity, database: DatabaseDependency
 ) -> OnboardingView:
     return await TenantOnboardingService(database.session_factory).get(context, tenant_id)
 
 
-@router.patch("/tenants/{tenant_id}/onboarding", dependencies=[Depends(require_onboarding_enabled)])
+@router.patch("/tenants/{tenant_id}/onboarding")
 async def update_onboarding(
     tenant_id: UUID,
     command: UpdateOnboardingDraft,

@@ -260,7 +260,7 @@ class HumanAuthenticationService:
         self._sessions, self.settings = sessions, settings
 
     def _enabled(self, *, mail: bool = False) -> None:
-        if not self.settings.tenant_human_auth_enabled or (mail and not self.settings.smtp_enabled):
+        if mail and not self.settings.account_mail_ready:
             raise AuthenticationUnavailableError()
 
     def _cipher(self) -> SecretCipher:
