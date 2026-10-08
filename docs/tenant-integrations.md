@@ -8,7 +8,7 @@ This covers three features that are off by default and enabled independently:
 | `TENANT_HUMAN_AUTH_ENABLED` | Email/password login for tenant users, emailed invitations, OTP password reset, team management. |
 | `TENANT_INTEGRATIONS_ENABLED` | Each tenant connects its own Twilio, speech, AI-model and embeddings accounts. Calls and jobs use only that tenant's credentials. |
 
-Run `python -m app.database.initialize` before starting the updated API and workers. It migrates through `0036_usage_accounting_guards`, provisions runtime/worker privileges and the separate financial login when configured, and runs the optional Super Admin bootstrap. Billing reads use the API login; financial commands require `FINANCIAL_DATABASE_URL`. The API login cannot write financial records. Identity, permission, recovery and financial migrations preserve immutable history: rehearse them on a backup and verify recovery before production use. See [fresh installation](fresh-install.md) and [implementation status](saas-implementation.md).
+Run `python -m app.database.initialize` before starting the API and the worker. It applies every migration, provisions the restricted API and worker logins, and runs the optional Super Admin bootstrap. See [fresh installation](fresh-install.md).
 
 ## Required secrets
 
@@ -19,7 +19,7 @@ All of these are platform infrastructure. Inject them from the deployment secret
 | `SECRET_ENCRYPTION_KEYS`, `SECRET_ENCRYPTION_ACTIVE_KEY` | Human auth, integrations | JSON keyring `{"key-id": "<base64 of 32 random bytes>"}`. New data is encrypted with the active key. Keep older key IDs in the keyring until nothing references them. A lost key makes its ciphertext unrecoverable, so back the keyring up separately from the database. |
 | `OTP_HMAC_KEY` | Human auth | Independent random value, at least 43 characters. |
 | `STREAM_TOKEN_KEY` | Integrations with telephony | Independent random value, at least 43 characters. Signs media-stream tokens so a provider secret is never used as an application key. |
-| `SMTP_*` | Invitations and password reset | TLS is required outside local/development. Run the mail worker: `python -m app.auth.mail_worker` (Compose profile `mail`). |
+| `SMTP_*` | Invitations and password reset | TLS is required outside local/development. Mail is delivered by the worker (`python -m app.worker`). |
 | `TENANT_AUTH_PUBLIC_ORIGIN` | Invitation links | The frontend origin. HTTPS outside local/development. |
 
 The API and every worker that touches tenant credentials (knowledge worker, workflow worker, mail worker) need the keyring.
