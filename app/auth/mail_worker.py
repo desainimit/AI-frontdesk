@@ -1,19 +1,16 @@
 """SMTP delivery for encrypted invitation/reset messages using the restricted worker role.
 
-Run: python -m app.auth.mail_worker. SMTP is at-least-once; retries reuse the same
-message ID and challenge, and never mint another valid token/code.
+Drained by app.worker. SMTP is at-least-once; retries reuse the same message ID and
+challenge, and never mint another valid token/code.
 """
 
-import argparse
 import asyncio
 import json
 import logging
-import signal
 import smtplib
 import ssl
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
-from types import FrameType
 from uuid import uuid4
 
 from sqlalchemy import or_, select
@@ -21,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.human_models import AuthMail
 from app.config.settings import Settings
-from app.database.session import Database
 from app.events.store import verify_worker_role
 from app.security.encryption import SecretCipher
 
@@ -117,46 +113,3 @@ async def deliver_one(sessions: async_sessionmaker[AsyncSession], settings: Sett
                 row.available_at = datetime.now(UTC) + timedelta(seconds=30 * 2**row.attempts)
             row.lease_id, row.lease_until = None, None
     return True
-
-
-async def run(*, once: bool = False, check: bool = False) -> None:
-    settings = Settings.from_environment()
-    if not settings.smtp_enabled or not settings.worker_database_url:
-        raise SystemExit("Configure SMTP_ENABLED and a separate WORKER_DATABASE_URL")
-    SecretCipher(settings.secret_encryption_keys, settings.secret_encryption_active_key)
-    database = Database(settings.model_copy(update={"database_url": settings.worker_database_url}))
-    stop = asyncio.Event()
-
-    def request_stop(signum: int, frame: FrameType | None) -> None:
-        stop.set()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, request_stop)
-    try:
-        async with database.session_factory.begin() as session:
-            await verify_worker_role(session)
-        if check:
-            return
-        while not stop.is_set():
-            delivered = await deliver_one(database.session_factory, settings)
-            if once:
-                return
-            if not delivered:
-                try:
-                    await asyncio.wait_for(stop.wait(), 2)
-                except TimeoutError:
-                    continue
-    finally:
-        await database.close()
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--once", action="store_true")
-    parser.add_argument("--check", action="store_true")
-    args = parser.parse_args()
-    asyncio.run(run(once=args.once, check=args.check))
-
-
-if __name__ == "__main__":
-    main()

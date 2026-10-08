@@ -31,6 +31,8 @@ class WorkflowIntentStore:
             row = await session.scalar(
                 select(WorkflowIntent)
                 .where(
+                    # Only kinds this build can run; the table constraint allows no others.
+                    WorkflowIntent.kind.in_(WORKFLOW_KINDS),
                     or_(
                         and_(
                             WorkflowIntent.status == "pending",
@@ -40,7 +42,7 @@ class WorkflowIntentStore:
                             WorkflowIntent.status == "dispatching",
                             WorkflowIntent.lease_until <= func.now(),
                         ),
-                    )
+                    ),
                 )
                 .order_by(WorkflowIntent.available_at, WorkflowIntent.created_at, WorkflowIntent.id)
                 .with_for_update(skip_locked=True)
@@ -53,11 +55,6 @@ class WorkflowIntentStore:
             row.lease_token = token
             row.lease_until = await session.scalar(select(func.now() + timedelta(seconds=60)))
             row.attempts += 1
-            if row.kind not in WORKFLOW_KINDS:
-                # Retire it here: raising would roll back and reclaim the same row forever.
-                row.status, row.last_error = "dead", "unsupported_kind"
-                row.lease_token, row.lease_until = None, None
-                return None
             return ClaimedIntent(
                 id=row.id,
                 kind=row.kind,  # type: ignore[arg-type]

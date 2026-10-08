@@ -62,7 +62,6 @@ services:
     environment:
       <<: *app-environment
       KNOWLEDGE_ENABLED: ${KNOWLEDGE_ENABLED:-false}
-      FINANCIAL_DATABASE_URL: ${FINANCIAL_DATABASE_URL:-}
       TELEPHONY_ENABLED: ${TELEPHONY_ENABLED:-false}
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
@@ -139,7 +138,6 @@ services:
     environment:
       <<: *app-environment
       MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL to the schema owner connection}
-      FINANCIAL_DATABASE_URL: ${FINANCIAL_DATABASE_URL:-}
       WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
       SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
       SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:-}
@@ -149,88 +147,32 @@ services:
       disable: true
     restart: "no"
 
+  # The single background process: notifications, post-call jobs, email, knowledge
+  # ingestion and configuration events. It holds the worker login only.
   worker:
     build:
       context: .
-      target: runtime
-    image: ai-frontdesk:local
+      target: worker
+    image: ai-frontdesk-worker:local
     pull_policy: build
-    command: ["python", "-m", "app.events.worker"]
     environment:
       <<: *app-environment
       DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
       SERVICE_NAME: ai-frontdesk-worker
       NOTIFICATION_PROVIDER: ${NOTIFICATION_PROVIDER:-console}
       OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-5}
       OUTBOX_PROVIDER_TIMEOUT_SECONDS: ${OUTBOX_PROVIDER_TIMEOUT_SECONDS:-10}
       OUTBOX_LEASE_SECONDS: ${OUTBOX_LEASE_SECONDS:-90}
       OUTBOX_POLL_SECONDS: ${OUTBOX_POLL_SECONDS:-1}
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    init: true
-    read_only: true
-    tmpfs: [/tmp]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    stop_grace_period: 75s
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-m", "app.events.worker", "--check"]
-      interval: 30s
-      timeout: 10s
-      start_period: 10s
-      retries: 3
-
-  # Delivers invitation and password-reset email. Start with: --profile mail
-  mail-worker:
-    profiles: [mail]
-    build:
-      context: .
-      target: runtime
-    image: ai-frontdesk:local
-    pull_policy: build
-    command: ["python", "-m", "app.auth.mail_worker"]
-    environment:
-      <<: *app-environment
-      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
-      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
-      SERVICE_NAME: ai-frontdesk-mail-worker
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    init: true
-    read_only: true
-    tmpfs: [/tmp]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    stop_grace_period: 30s
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-m", "app.auth.mail_worker", "--check"]
-      interval: 30s
-      timeout: 10s
-      start_period: 10s
-      retries: 3
-
-  knowledge-worker:
-    profiles: [knowledge]
-    build:
-      context: .
-      target: knowledge-worker
-    image: ai-frontdesk-knowledge:local
-    pull_policy: build
-    environment:
-      <<: *app-environment
-      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
-      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
       KNOWLEDGE_ENABLED: ${KNOWLEDGE_ENABLED:-false}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       HF_HOME: /srv/app/data/models
-      SERVICE_NAME: ai-frontdesk-knowledge
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     volumes:
       - knowledge-objects:/srv/app/data/knowledge
       - knowledge-models:/srv/app/data/models
@@ -239,87 +181,13 @@ services:
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    stop_grace_period: 75s
     restart: unless-stopped
-    stop_grace_period: 60s
     healthcheck:
-      test: ["CMD", "python", "-m", "app.knowledge.cli", "--check"]
+      test: ["CMD", "python", "-m", "app.worker", "--check"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       start_period: 30s
-      retries: 3
-
-  configuration-worker:
-    build:
-      context: .
-      target: runtime
-    image: ai-frontdesk:local
-    pull_policy: build
-    command: ["python", "-m", "app.configuration.worker"]
-    environment:
-      ENVIRONMENT: ${ENVIRONMENT:-local}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      SERVICE_NAME: ai-frontdesk-configuration-worker
-      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
-      REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
-      DEPENDENCY_TIMEOUT_SECONDS: ${DEPENDENCY_TIMEOUT_SECONDS:-2}
-      DB_COMMAND_TIMEOUT_SECONDS: ${DB_COMMAND_TIMEOUT_SECONDS:-10}
-      DB_POOL_SIZE: 2
-      DB_MAX_OVERFLOW: 0
-      OTEL_ENABLED: ${OTEL_ENABLED:-false}
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-    init: true
-    read_only: true
-    tmpfs: [/tmp]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    stop_grace_period: 15s
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-m", "app.configuration.worker", "--check"]
-      interval: 30s
-      timeout: 10s
-      start_period: 10s
-      retries: 3
-
-  usage-expiry-worker:
-    profiles: [billing]
-    build:
-      context: .
-      target: runtime
-    image: ai-frontdesk:local
-    pull_policy: build
-    command: ["python", "-m", "app.billing.worker"]
-    environment:
-      ENVIRONMENT: ${ENVIRONMENT:-local}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      SERVICE_NAME: ai-frontdesk-usage-expiry
-      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
-      FINANCIAL_DATABASE_URL: ${FINANCIAL_DATABASE_URL:-}
-      REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
-      DEPENDENCY_TIMEOUT_SECONDS: ${DEPENDENCY_TIMEOUT_SECONDS:-2}
-      DB_COMMAND_TIMEOUT_SECONDS: ${DB_COMMAND_TIMEOUT_SECONDS:-10}
-      DB_POOL_SIZE: 2
-      DB_MAX_OVERFLOW: 0
-      OTEL_ENABLED: "false"
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    init: true
-    read_only: true
-    tmpfs: [/tmp]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    stop_grace_period: 20s
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-m", "app.billing.worker", "--check"]
-      interval: 30s
-      timeout: 10s
-      start_period: 10s
       retries: 3
 
   redis:

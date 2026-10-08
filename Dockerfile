@@ -23,14 +23,14 @@ EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"
 CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--no-proxy-headers", "--timeout-graceful-shutdown", "20", "--ws-max-size", "16384", "--ws-max-queue", "16"]
 
-# Heavy document parsing dependencies live only in the opt-in knowledge worker image.
-FROM builder AS knowledge-builder
+# The worker also parses uploaded documents, so only its image carries those libraries.
+FROM builder AS worker-builder
 RUN uv sync --locked --no-dev --extra knowledge --no-editable
 
-FROM runtime AS knowledge-worker
+FROM runtime AS worker
 USER root
-RUN apt-get update && apt-get install --no-install-recommends -y libgl1 libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=knowledge-builder --chown=frontdesk:frontdesk /srv/app/.venv ./.venv
+RUN apt-get update && apt-get install --no-install-recommends -y libgl1 libglib2.0-0     && rm -rf /var/lib/apt/lists/*
+COPY --from=worker-builder --chown=frontdesk:frontdesk /srv/app/.venv ./.venv
 USER frontdesk
-CMD ["python", "-m", "app.knowledge.cli"]
+HEALTHCHECK NONE
+CMD ["python", "-m", "app.worker"]

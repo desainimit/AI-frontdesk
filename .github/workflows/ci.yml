@@ -31,7 +31,6 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://frontdesk_app:ci-runtime-only@localhost:5432/frontdesk_test
       MIGRATION_DATABASE_URL: postgresql+asyncpg://ci:ci-ephemeral-only@localhost:5432/frontdesk_test
       WORKER_DATABASE_URL: postgresql+asyncpg://frontdesk_worker:ci-worker-only@localhost:5432/frontdesk_test
-      FINANCIAL_DATABASE_URL: postgresql+asyncpg://frontdesk_financial:ci-financial-only@localhost:5432/frontdesk_test
       REDIS_URL: redis://localhost:6379/15
       ENVIRONMENT: development
       OTEL_ENABLED: "false"
@@ -57,14 +56,12 @@ jobs:
     timeout-minutes: 15
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
-      COMPOSE_PROFILES: billing
       POSTGRES_USER: ci
       POSTGRES_PASSWORD: ci-ephemeral-only
       POSTGRES_DB: frontdesk_test
       DATABASE_URL: postgresql+asyncpg://frontdesk_app:ci-runtime-only@postgres:5432/frontdesk_test
       MIGRATION_DATABASE_URL: postgresql+asyncpg://ci:ci-ephemeral-only@postgres:5432/frontdesk_test
       WORKER_DATABASE_URL: postgresql+asyncpg://frontdesk_worker:ci-worker-only@postgres:5432/frontdesk_test
-      FINANCIAL_DATABASE_URL: postgresql+asyncpg://frontdesk_financial:ci-financial-only@postgres:5432/frontdesk_test
       REDIS_URL: redis://redis:6379/0
     steps:
       - uses: actions/checkout@v4
