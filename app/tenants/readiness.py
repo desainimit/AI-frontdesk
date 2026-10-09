@@ -14,8 +14,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.audit.models import AuditEvent
-from app.auth.human_models import HumanAccount
-from app.auth.models import ApiCredential
 from app.auth.policies import Permission
 from app.calls.models import PhoneNumber
 from app.configuration.models import ConfigurationDraft
@@ -107,29 +105,17 @@ class TenantReadinessService:
         )
         accepted = await session.scalar(
             select(User.id)
-            .join(HumanAccount, HumanAccount.user_id == User.id)
             .where(
                 User.tenant_id == tenant_id,
                 User.is_active.is_(True),
+                User.accepted_at.is_not(None),
                 User.role_id.in_(administrator_roles),
-            )
-            .limit(1)
-        )
-        service_admin = await session.scalar(
-            select(User.id)
-            .join(ApiCredential, ApiCredential.user_id == User.id)
-            .where(
-                User.tenant_id == tenant_id,
-                User.is_active.is_(True),
-                User.role_id.in_(administrator_roles),
-                ApiCredential.revoked_at.is_(None),
-                ApiCredential.expires_at > datetime.now(UTC),
             )
             .limit(1)
         )
         checks.append(
             _ready("administrator")
-            if accepted or service_admin
+            if accepted
             else _blocking(
                 "administrator",
                 "No administrator has accepted an invitation.",

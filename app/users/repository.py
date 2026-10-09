@@ -5,7 +5,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.context import RequestContext
-from app.auth.human_models import HumanAccount
 from app.core.database.search import contains
 from app.rbac.models import TenantRole
 from app.users.models import User
@@ -19,19 +18,6 @@ class UserRepository:
     async def get(self, user_id: UUID) -> User | None:
         return await self._session.scalar(
             select(User).where(User.tenant_id == self._context.tenant_id, User.id == user_id)
-        )
-
-    async def with_password(self, user_ids: Sequence[UUID]) -> set[UUID]:
-        """Members who accepted an invitation and can sign in with a password."""
-        if not user_ids:
-            return set()
-        return set(
-            await self._session.scalars(
-                select(HumanAccount.user_id).where(
-                    HumanAccount.tenant_id == self._context.tenant_id,
-                    HumanAccount.user_id.in_(user_ids),
-                )
-            )
         )
 
     async def role_names(self) -> dict[UUID, str]:

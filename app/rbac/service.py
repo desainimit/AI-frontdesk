@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.audit.models import AuditEvent
 from app.auth.context import ActorType, RequestContext
-from app.auth.human_models import HumanAccount
 from app.auth.policies import Permission, require_permission
 from app.core.database.unit_of_work import enter_tenant_scope
 from app.core.errors import AuthorizationError, ConflictError, NotFoundError
@@ -141,15 +140,11 @@ async def assert_custodian(session: AsyncSession, tenant_id: UUID) -> None:
                 & (RolePermission.tenant_id == User.tenant_id),
             )
             .join(Tenant, Tenant.id == User.tenant_id)
-            .outerjoin(
-                HumanAccount,
-                and_(HumanAccount.tenant_id == User.tenant_id, HumanAccount.user_id == User.id),
-            )
             .where(
                 User.tenant_id == tenant_id,
                 or_(
                     User.is_active.is_(True),
-                    and_(Tenant.service_state == "setup", HumanAccount.id.is_(None)),
+                    and_(Tenant.service_state == "setup", User.accepted_at.is_(None)),
                 ),
                 RolePermission.allowed.is_(True),
             )

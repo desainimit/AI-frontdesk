@@ -3,14 +3,6 @@
 from app.appointments.models import Appointment as Appointment
 from app.appointments.models import Availability as Availability
 from app.audit.models import AuditEvent as AuditEvent
-from app.auth.human_models import AuthChallenge as AuthChallenge
-from app.auth.human_models import AuthMail as AuthMail
-from app.auth.human_models import HumanAccount as HumanAccount
-from app.auth.human_models import HumanIdentity as HumanIdentity
-from app.auth.human_models import HumanSession as HumanSession
-from app.auth.models import ApiCredential as ApiCredential
-from app.auth.workspace_models import IdentityMembership as IdentityMembership
-from app.auth.workspace_models import IdentitySession as IdentitySession
 from app.business.models import BusinessResource as BusinessResource
 from app.business.models import BusinessService as BusinessService
 from app.business.models import BusinessStaff as BusinessStaff
@@ -30,6 +22,11 @@ from app.configuration.models import ConfigurationResource as ConfigurationResou
 from app.configuration.models import PublishedConfiguration as PublishedConfiguration
 from app.events.models import IdempotencyRecord as IdempotencyRecord
 from app.events.models import OutboxEvent as OutboxEvent
+from app.identity.models import Account as Account
+from app.identity.models import AccountMfa as AccountMfa
+from app.identity.models import AccountSession as AccountSession
+from app.identity.models import AuthChallenge as AuthChallenge
+from app.identity.models import AuthMail as AuthMail
 from app.integrations.models import CredentialVersion as CredentialVersion
 from app.integrations.models import TenantIntegration as TenantIntegration
 from app.knowledge.models import Document as Document
@@ -39,9 +36,6 @@ from app.knowledge.models import KnowledgeJob as KnowledgeJob
 from app.locations.models import Location as Location
 from app.patients.models import Patient as Patient
 from app.platform.models import PlatformAuditEvent as PlatformAuditEvent
-from app.platform.models import PlatformSession as PlatformSession
-from app.platform.models import PlatformUser as PlatformUser
-from app.platform.models import SupportSession as SupportSession
 from app.platform.onboarding_models import TenantOnboarding as TenantOnboarding
 from app.postcall.models import CallTranscript as CallTranscript
 from app.postcall.models import FollowUpEvent as FollowUpEvent

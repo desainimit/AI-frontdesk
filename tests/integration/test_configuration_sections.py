@@ -24,6 +24,7 @@ from tests.integration.test_saas import authenticate
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as pytestmark
 from tests.integration.test_tenancy import tenancy as tenancy
+from tests.integration.workspaces import add_member
 
 
 async def editor(tenancy: TenancyFixture) -> RequestContext:
@@ -43,17 +44,14 @@ async def editor(tenancy: TenancyFixture) -> RequestContext:
             ],
         ),
     )
-    user = User(
-        id=uuid4(),
-        tenant_id=owner.tenant_id,
-        email=f"{uuid4()}@example.test",
-        display_name="Agent editor",
-        role="member",
-        role_id=role.id,
-        is_active=True,
-    )
     async with tenancy.admin.begin() as session:
-        session.add(user)
+        user = await add_member(
+            session,
+            tenant_id=owner.tenant_id,
+            email=f"{uuid4()}@example.test",
+            display_name="Agent editor",
+            role_id=role.id,
+        )
     async with tenancy.database.session_factory.begin() as session:
         await set_tenant_scope(session, owner.tenant_id)
         return await bind_user_permissions(

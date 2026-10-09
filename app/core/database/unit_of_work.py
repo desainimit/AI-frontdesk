@@ -61,13 +61,13 @@ async def enter_tenant_scope(session: AsyncSession, context: RequestContext) -> 
             .with_for_update(read=True, of=User)
         )
         if authorized is None:
-            if context.human_session_id is not None:
+            if context.session_id is not None:
                 raise AuthenticationError()
             raise AuthorizationError()
-        if context.human_session_id is not None:
-            from app.auth.human import validate_human_context
+        if context.session_id is not None:
+            from app.identity.sessions import validate_user_session
 
-            await validate_human_context(session, context)
+            await validate_user_session(session, context, authorized)
         if context.role_id is not None:
             from app.rbac.service import bind_user_permissions
 
@@ -79,7 +79,7 @@ async def enter_tenant_scope(session: AsyncSession, context: RequestContext) -> 
             ):
                 raise AuthorizationError()
     if context.actor_type == ActorType.PLATFORM_SUPPORT:
-        from app.platform.support import validate_support_context
+        from app.identity.sessions import validate_support_context
 
         await validate_support_context(session, context)
     if context.actor_type == ActorType.CALLER:

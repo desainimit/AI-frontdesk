@@ -372,7 +372,6 @@ def test_settings_need_secrets_once_deployed_and_check_what_is_set(
     complete = build(
         **deployed,
         **ring,
-        otp_hmac_key=SecretStr(secrets.token_urlsafe(48)),
         stream_token_key=SecretStr(secrets.token_urlsafe(48)),
         tenant_auth_public_origin="https://app.example.test",
         telephony_public_base_url="https://voice.example.test",

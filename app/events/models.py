@@ -27,11 +27,6 @@ class IdempotencyRecord(IdentityMixin, Base):
         ForeignKeyConstraint(
             ["tenant_id", "call_id"], ["calls.tenant_id", "calls.id"], name="fk_idempotency_call"
         ),
-        ForeignKeyConstraint(
-            ["tenant_id", "support_session_id"],
-            ["support_sessions.tenant_id", "support_sessions.id"],
-            name="fk_idempotency_support_session",
-        ),
         UniqueConstraint("tenant_id", "call_id", "key_digest", name="uq_idempotency_call_key"),
         UniqueConstraint(
             "tenant_id", "support_session_id", "key_digest", name="uq_idempotency_support_key"
@@ -49,7 +44,8 @@ class IdempotencyRecord(IdentityMixin, Base):
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id"), index=True)
     actor_id: Mapped[UUID | None]
     call_id: Mapped[UUID | None]
-    platform_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("platform_users.id"))
+    platform_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("accounts.id"))
+    # One visit by a platform administrator; the same key in another visit is a new request.
     support_session_id: Mapped[UUID | None]
     key_digest: Mapped[str] = mapped_column(String(64))
     request_digest: Mapped[str] = mapped_column(String(64))

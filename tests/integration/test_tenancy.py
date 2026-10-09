@@ -17,19 +17,20 @@ from app.audit.events import AuditAction
 from app.audit.models import AuditEvent
 from app.audit.service import AuditService
 from app.auth.context import ActorType, RequestContext, Role
-from app.auth.models import ApiCredential
 from app.auth.policies import Permission
-from app.auth.service import AuthenticationService
 from app.core.database.rls import UnsafeDatabaseRoleError, set_tenant_scope
 from app.core.database.session import Database
 from app.core.database.unit_of_work import UnitOfWork
-from app.core.errors import AuthenticationError, AuthorizationError, ConflictError
+from app.core.errors import AuthenticationError, AuthorizationError
 from app.core.settings import Settings
+from app.identity.models import Account, AccountSession, AuthChallenge
+from app.identity.service import IdentityService
+from app.identity.sessions import WorkspaceRequiredError, authenticate_workspace
 from app.main import create_app
-from app.tenants.bootstrap import BootstrapResult, BootstrapTenant, TenantBootstrapService
 from app.tenants.models import Tenant
 from app.users.models import User
 from tests.fakes import FakeDependency
+from tests.integration.workspaces import Workspace, create_workspace
 
 pytestmark = [
     pytest.mark.integration,
@@ -46,10 +47,10 @@ class TenancyFixture:
     settings: Settings
     database: Database
     admin: async_sessionmaker[AsyncSession]
-    a: BootstrapResult
-    b: BootstrapResult
+    a: Workspace
+    b: Workspace
 
-    def context(self, tenant: BootstrapResult) -> RequestContext:
+    def context(self, tenant: Workspace) -> RequestContext:
         return RequestContext(
             uuid4(),
             tenant.tenant_id,
@@ -80,23 +81,11 @@ async def tenancy() -> AsyncGenerator[TenancyFixture]:
     admin = async_sessionmaker(engine, expire_on_commit=False)
     database = Database(settings)
     try:
-        service = TenantBootstrapService(admin)
-        a = await service.create(
-            BootstrapTenant(
-                tenant_id=uuid4(),
-                name="Tenant A",
-                email="same@example.test",
-                display_name="Admin A",
-            )
-        )
-        b = await service.create(
-            BootstrapTenant(
-                tenant_id=uuid4(),
-                name="Tenant B",
-                email="same@example.test",
-                display_name="Admin B",
-            )
-        )
+        # One person owns both workspaces: the same account with two memberships.
+        # A new account for every test, so one test cannot disable the next one's owner.
+        owner = f"owner-{uuid4().hex}@example.test"
+        a = await create_workspace(admin, name="Tenant A", email=owner, display_name="Admin A")
+        b = await create_workspace(admin, name="Tenant B", email=owner, display_name="Admin B")
         yield TenancyFixture(settings, database, admin, a, b)
     finally:
         await database.close()
@@ -112,9 +101,8 @@ async def test_rls_blocks_cross_tenant_reads_without_repository_filters(
             # Acceptance gate: deliberately NO WHERE clauses on any tenant table.
             assert (await session.scalars(select(Tenant.id))).all() == [tenant.tenant_id]
             assert (await session.scalars(select(User.id))).all() == [tenant.user_id]
-            assert (await session.scalars(select(ApiCredential.id))).all() == [tenant.credential_id]
             events = (await session.scalars(select(AuditEvent))).all()
-            assert len(events) == 3
+            assert len(events) == 2
             assert all(event.tenant_id == tenant.tenant_id for event in events)
 
 
@@ -161,9 +149,12 @@ async def test_composite_foreign_key_rejects_cross_tenant_user(tenancy: TenancyF
     with pytest.raises(IntegrityError):
         async with tenancy.admin.begin() as session:
             session.add(
-                ApiCredential(
+                AuthChallenge(
+                    account_id=tenancy.a.account_id,
                     tenant_id=tenancy.a.tenant_id,
                     user_id=tenancy.b.user_id,
+                    purpose="invitation",
+                    key_digest="1" * 64,
                     token_digest="0" * 64,
                     expires_at=datetime.now(UTC) + timedelta(days=1),
                 )
@@ -194,7 +185,7 @@ async def test_uow_commit_rollback_and_audit_immutability(tenancy: TenancyFixtur
             raise RuntimeError("rollback")
     async with uow.transaction(context) as tx:
         events = await tx.audit.list(100, 0)
-        assert len(events) == 4
+        assert len(events) == 3
         assert any(
             e.request_id == context.request_id and e.actor_id == context.actor_id for e in events
         )
@@ -212,7 +203,7 @@ async def test_uow_commit_rollback_and_audit_immutability(tenancy: TenancyFixtur
 async def test_concurrent_contexts_are_independent(tenancy: TenancyFixture) -> None:
     uow = UnitOfWork(tenancy.database.session_factory)
 
-    async def read(tenant: BootstrapResult) -> list[UUID]:
+    async def read(tenant: Workspace) -> list[UUID]:
         async with uow.transaction(tenancy.context(tenant)) as tx:
             return [user.id for user in await tx.users.list(100, 0)]
 
@@ -220,40 +211,36 @@ async def test_concurrent_contexts_are_independent(tenancy: TenancyFixture) -> N
     assert results == [[tenancy.a.user_id], [tenancy.b.user_id], [tenancy.a.user_id]]
 
 
-async def test_authentication_forgery_revocation_and_idempotent_bootstrap(
-    tenancy: TenancyFixture,
-) -> None:
-    auth = AuthenticationService(tenancy.database.session_factory)
+async def test_session_forgery_and_sign_out(tenancy: TenancyFixture) -> None:
+    sessions = tenancy.database.session_factory
     token = tenancy.a.token.get_secret_value()
-    assert (await auth.authenticate(token, uuid4())).tenant_id == tenancy.a.tenant_id
+    context = await authenticate_workspace(sessions, token, uuid4())
+    assert (context.tenant_id, context.actor_id) == (tenancy.a.tenant_id, tenancy.a.user_id)
+    assert context.session_id == tenancy.a.session_id
+    other = tenancy.b.token.get_secret_value()
     for forged in (
-        token.replace(str(tenancy.a.tenant_id), str(tenancy.b.tenant_id)),
+        # Another session's identifier with this session's secret.
+        token.replace(str(tenancy.a.session_id), str(tenancy.b.session_id)),
         token + "x",
         token[:-1] + ("A" if token[-1] != "A" else "B"),
+        other.rsplit(".", 1)[0] + "." + token.rsplit(".", 1)[1],
     ):
         with pytest.raises(AuthenticationError):
-            await auth.authenticate(forged, uuid4())
-    service = TenantBootstrapService(tenancy.admin)
-    with pytest.raises(ConflictError):
-        await service.create(
-            BootstrapTenant(
-                tenant_id=tenancy.a.tenant_id,
-                name="Duplicate",
-                email="a@example.test",
-                display_name="A",
-            )
-        )
-    await service.revoke(tenancy.a.tenant_id, tenancy.a.credential_id)
-    await service.revoke(tenancy.a.tenant_id, tenancy.a.credential_id)
+            await authenticate_workspace(sessions, forged, uuid4())
+    identity = IdentityService(sessions, tenancy.settings)
+    await identity.logout(token, uuid4())
+    await identity.logout(token, uuid4())  # Signing out twice is harmless.
     with pytest.raises(AuthenticationError):
-        await auth.authenticate(token, uuid4())
-    async with UnitOfWork(tenancy.database.session_factory).transaction(
-        tenancy.context(tenancy.a)
-    ) as tx:
-        assert len(await tx.audit.list(100, 0)) == 4
+        await authenticate_workspace(sessions, token, uuid4())
+    # The same person's other session, in the other workspace, is untouched.
+    assert (await authenticate_workspace(sessions, other, uuid4())).tenant_id == tenancy.b.tenant_id
+    # A context built before the sign-out is refused inside its next transaction.
+    with pytest.raises(AuthenticationError):
+        async with UnitOfWork(sessions).transaction(context):
+            pass
 
 
-@pytest.mark.parametrize("disabled", ["user", "tenant", "expired"])
+@pytest.mark.parametrize("disabled", ["user", "tenant", "expired", "account", "password"])
 async def test_inactive_or_expired_identity_denied(tenancy: TenancyFixture, disabled: str) -> None:
     async with tenancy.admin.begin() as session:
         if disabled == "user":
@@ -264,15 +251,29 @@ async def test_inactive_or_expired_identity_denied(tenancy: TenancyFixture, disa
             await session.execute(
                 update(Tenant).where(Tenant.id == tenancy.a.tenant_id).values(is_active=False)
             )
-        else:
+        elif disabled == "expired":
             await session.execute(
-                update(ApiCredential)
-                .where(ApiCredential.id == tenancy.a.credential_id)
+                update(AccountSession)
+                .where(AccountSession.id == tenancy.a.session_id)
                 .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
             )
-    with pytest.raises(AuthenticationError):
-        await AuthenticationService(tenancy.database.session_factory).authenticate(
-            tenancy.a.token.get_secret_value(), uuid4()
+        elif disabled == "account":
+            await session.execute(
+                update(Account).where(Account.id == tenancy.a.account_id).values(is_active=False)
+            )
+        else:
+            # A password change makes every earlier session stale.
+            await session.execute(
+                update(Account)
+                .where(Account.id == tenancy.a.account_id)
+                .values(credential_revision=Account.credential_revision + 1)
+            )
+    # A lost membership or closed workspace leaves the sign-in valid but with no workspace;
+    # anything wrong with the session or the account itself is an authentication failure.
+    expected = WorkspaceRequiredError if disabled in {"user", "tenant"} else AuthenticationError
+    with pytest.raises(expected):
+        await authenticate_workspace(
+            tenancy.database.session_factory, tenancy.a.token.get_secret_value(), uuid4()
         )
 
 
@@ -296,9 +297,9 @@ async def test_api_tenant_resolution_permissions_and_audit(tenancy: TenancyFixtu
         assert [user["id"] for user in response.json()] == [str(tenancy.a.user_id)]
         assert "token_digest" not in response.text
         assert (await client.get("/api/v1/users?limit=101")).status_code == 422
-        assert (
-            await client.get("/api/v1/users", headers={"X-Tenant-ID": str(tenancy.b.tenant_id)})
-        ).status_code == 403
+        # The workspace comes from the session; a workspace named by the browser is ignored.
+        named = await client.get("/api/v1/users", headers={"X-Tenant-ID": str(tenancy.b.tenant_id)})
+        assert [user["id"] for user in named.json()] == [str(tenancy.a.user_id)]
         audits = (await client.get("/api/v1/audit-events")).json()
         assert any(event["request_id"] == request_id for event in audits)
         async with tenancy.admin.begin() as session:

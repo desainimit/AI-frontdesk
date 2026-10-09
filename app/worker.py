@@ -20,7 +20,6 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 # Every table must be registered in this process: queue rows reference tables whose
 # models no queue imports by itself.
 import app.core.database.models  # noqa: F401  # pyright: ignore[reportUnusedImport]
-from app.auth.mail_worker import deliver_one
 from app.configuration.dispatch import ConfigurationDispatcher, ValkeyRevisionPublisher
 from app.core.database.session import Database
 from app.core.logging import configure_logging
@@ -31,6 +30,7 @@ from app.core.telemetry import Telemetry
 from app.events.processor import EventProcessor
 from app.events.providers import ConsoleNotificationProvider, RetryPolicy
 from app.events.store import OutboxStore, verify_worker_role
+from app.identity.mail import deliver_one
 from app.integrations.resolver import TenantIntegrationResolver
 from app.knowledge.embeddings import open_embedder
 from app.knowledge.storage import build_storage

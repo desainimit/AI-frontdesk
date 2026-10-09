@@ -25,7 +25,7 @@ class AuditEvent(IdentityMixin, Base):
 
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id"), index=True)
     actor_id: Mapped[UUID | None]
-    platform_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("platform_users.id"))
+    platform_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("accounts.id"))
     support_session_id: Mapped[UUID | None]
     actor_type: Mapped[str] = mapped_column(String(20))
     action: Mapped[str] = mapped_column(String(80))

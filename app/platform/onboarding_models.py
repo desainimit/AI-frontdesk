@@ -25,7 +25,7 @@ class TenantOnboarding(IdentityMixin, TimestampMixin, Base):
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id"))
     admin_id: Mapped[UUID]
     location_id: Mapped[UUID]
-    creator_id: Mapped[UUID] = mapped_column(ForeignKey("platform_users.id"))
+    creator_id: Mapped[UUID] = mapped_column(ForeignKey("accounts.id"))
     key_digest: Mapped[str] = mapped_column(String(64))
     request_digest: Mapped[str] = mapped_column(String(64))
     revision: Mapped[int] = mapped_column(default=1)

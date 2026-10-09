@@ -7,11 +7,10 @@ from opentelemetry.metrics import Observation
 from sqlalchemy.pool import QueuePool
 
 from app.agents.factory import build_llm_provider
+from app.api.auth import router as auth_router
 from app.api.domain import router as domain_router
 from app.api.errors import register_error_handlers
 from app.api.health import router as health_router
-from app.api.human_auth import router as human_auth_router
-from app.api.identity_auth import router as identity_auth_router
 from app.api.integrations import router as integrations_router
 from app.api.knowledge import router as knowledge_router
 from app.api.middleware import RequestTelemetryMiddleware
@@ -108,8 +107,7 @@ def create_app(
     app.include_router(domain_router)
     app.include_router(knowledge_router)
     app.include_router(platform_router)
-    app.include_router(human_auth_router)
-    app.include_router(identity_auth_router)
+    app.include_router(auth_router)
     app.include_router(integrations_router)
     app.include_router(postcall_router)
     app.include_router(telephony_router)

@@ -17,7 +17,6 @@ from app.patients.schemas import CreatePatient, PatientView
 from app.patients.service import PatientService
 from app.providers.schemas import CreateProvider
 from app.providers.service import ProviderService
-from app.users.models import User
 from app.users.service import UserService
 from tests.fakes import FakeDependency
 from tests.integration.test_domain import DomainFixture
@@ -25,6 +24,7 @@ from tests.integration.test_domain import domain as domain
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as pytestmark
 from tests.integration.test_tenancy import tenancy as tenancy
+from tests.integration.workspaces import add_member
 
 
 async def test_search_and_filters_match_in_the_database(
@@ -107,14 +107,12 @@ async def test_search_and_filters_match_in_the_database(
     member_id = uuid4()
     async with tenancy.admin.begin() as session:
         await set_tenant_scope(session, context.tenant_id)
-        session.add(
-            User(
-                id=member_id,
-                tenant_id=context.tenant_id,
-                email="filters-member@example.test",
-                display_name="Filter Member",
-                role="member",
-            )
+        await add_member(
+            session,
+            tenant_id=context.tenant_id,
+            email="filters-member@example.test",
+            display_name="Filter Member",
+            user_id=member_id,
         )
     users = UserService(uow)
     assert [row.id for row in await users.list(context, 50, 0, q="filter mem")] == [member_id]

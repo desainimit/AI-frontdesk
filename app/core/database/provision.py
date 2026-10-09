@@ -113,15 +113,13 @@ async def provision_runtime_role(settings: Settings) -> None:
                 f"TO {quoted_role}"
             )
             await connection.exec_driver_sql(
-                f"REVOKE ALL ON tenants, users, api_credentials, audit_events FROM {quoted_role}"
+                f"REVOKE ALL ON tenants, users, audit_events FROM {quoted_role}"
             )
             await connection.exec_driver_sql(
-                f"GRANT SELECT ON tenants, users, api_credentials, audit_events TO {quoted_role}"
+                f"GRANT SELECT ON tenants, users, audit_events TO {quoted_role}"
             )
             await connection.exec_driver_sql(f"GRANT INSERT ON audit_events TO {quoted_role}")
-            await connection.exec_driver_sql(
-                f"GRANT INSERT ON tenants, users, api_credentials TO {quoted_role}"
-            )
+            await connection.exec_driver_sql(f"GRANT INSERT ON tenants, users TO {quoted_role}")
             await connection.exec_driver_sql(
                 "GRANT UPDATE (name, is_active, updated_at, language_policy, "
                 "human_transfer_number, verification_policy, service_state) "
@@ -169,7 +167,8 @@ async def provision_runtime_role(settings: Settings) -> None:
                 f"GRANT UPDATE (name, timezone, updated_at) ON locations TO {quoted_role}"
             )
             await connection.exec_driver_sql(
-                "GRANT UPDATE (email, display_name, is_active, role, role_id, updated_at) "
+                "GRANT UPDATE (email, display_name, is_active, role, role_id, updated_at, "
+                "account_id, accepted_at) "
                 f"ON users TO {quoted_role}"
             )
             await connection.exec_driver_sql(f"REVOKE ALL ON tenant_onboardings FROM {quoted_role}")
@@ -180,29 +179,38 @@ async def provision_runtime_role(settings: Settings) -> None:
                 "GRANT UPDATE (draft, revision, status, updated_at) "
                 f"ON tenant_onboardings TO {quoted_role}"
             )
-            auth_tables = "human_accounts, human_sessions, auth_challenges, auth_mail"
+            # Sign-in data. The API login can never make an account a platform
+            # administrator: that column is outside both its INSERT and UPDATE rights.
+            await connection.exec_driver_sql(
+                f"REVOKE ALL ON accounts, account_mfa, sessions FROM {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT ON accounts, account_mfa, sessions TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT INSERT (id, email, display_name, password_hash, credential_revision, "
+                f"is_active) ON accounts TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (display_name, password_hash, credential_revision, updated_at) "
+                f"ON accounts TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT INSERT, UPDATE, DELETE ON account_mfa TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(f"GRANT INSERT ON sessions TO {quoted_role}")
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (expires_at, revoked_at, credential_revision, mfa_pending, "
+                "mfa_verified_at, tenant_id, support_id, support_reason, support_expires_at) "
+                f"ON sessions TO {quoted_role}"
+            )
+            auth_tables = "auth_challenges, auth_mail"
             await connection.exec_driver_sql(f"REVOKE ALL ON {auth_tables} FROM {quoted_role}")
             await connection.exec_driver_sql(
                 f"GRANT SELECT, INSERT ON {auth_tables} TO {quoted_role}"
             )
             await connection.exec_driver_sql(
-                f"GRANT SELECT, INSERT ON human_identities TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                f"GRANT SELECT, INSERT ON identity_memberships, identity_sessions TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                f"GRANT UPDATE (revoked_at) ON identity_sessions TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                "GRANT UPDATE (password_hash, credential_revision) "
-                f"ON human_identities TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                f"GRANT UPDATE (revoked_at) ON human_sessions TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                f"GRANT UPDATE (consumed_at, attempts) ON auth_challenges TO {quoted_role}"
+                f"GRANT UPDATE (consumed_at) ON auth_challenges TO {quoted_role}"
             )
             await connection.exec_driver_sql(
                 f"GRANT UPDATE (status, ciphertext) ON auth_mail TO {quoted_role}"
@@ -232,35 +240,16 @@ async def provision_runtime_role(settings: Settings) -> None:
             await connection.exec_driver_sql(
                 f"GRANT UPDATE (status, acknowledged_at) ON follow_up_events TO {quoted_role}"
             )
+            # Activity log: the API login adds rows and can read nothing back but the
+            # timestamp the database assigns (which an ORM insert returns).
             await connection.exec_driver_sql(
-                "REVOKE ALL ON platform_users, platform_sessions, platform_audit_events "
-                f"FROM {quoted_role}"
+                f"REVOKE ALL ON platform_audit_events FROM {quoted_role}"
             )
             await connection.exec_driver_sql(
-                f"GRANT SELECT ON platform_users, platform_sessions TO {quoted_role}"
+                f"GRANT INSERT ON platform_audit_events TO {quoted_role}"
             )
-            await connection.exec_driver_sql(
-                f"GRANT INSERT ON platform_sessions, platform_audit_events TO {quoted_role}"
-            )
-            # ORM INSERT RETURNING reads only the server-generated audit timestamp.
             await connection.exec_driver_sql(
                 f"GRANT SELECT (created_at) ON platform_audit_events TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                f"GRANT UPDATE (revoked_at, mfa_verified_at) ON platform_sessions TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                f"REVOKE ALL ON platform_authenticators FROM {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                f"GRANT SELECT, INSERT, UPDATE ON platform_authenticators TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(f"REVOKE ALL ON support_sessions FROM {quoted_role}")
-            await connection.exec_driver_sql(
-                f"GRANT SELECT, INSERT ON support_sessions TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                f"GRANT UPDATE (revoked_at) ON support_sessions TO {quoted_role}"
             )
     finally:
         await engine.dispose()

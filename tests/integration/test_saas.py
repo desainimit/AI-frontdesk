@@ -9,9 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import DBAPIError
 
 from app.auth.context import RequestContext
-from app.auth.human_schemas import InviteMember
 from app.auth.policies import Permission, require_permission
-from app.auth.service import AuthenticationService
 from app.configuration.models import ConfigurationEvent, PublishedConfiguration
 from app.configuration.schemas import ConfigurationTest, SaveConfiguration
 from app.configuration.service import ConfigurationService, is_business_open, published_for_tenant
@@ -19,18 +17,19 @@ from app.conversation.locales import LanguagePolicy
 from app.core.database.rls import set_tenant_scope
 from app.core.database.unit_of_work import UnitOfWork
 from app.core.errors import AuthorizationError, ConflictError, NotFoundError
-from app.platform.support import EnterSupportCommand, SupportAccessService
+from app.identity.schemas import InviteMember
+from app.identity.sessions import authenticate_workspace
 from app.rbac.models import TenantRole
 from app.rbac.schemas import PermissionGrant, RoleCommand, UpdateRole
 from app.rbac.service import RevisionConflictError, RoleService
 from app.tenants.readiness import NotReadyError, TenantReadinessService
 from app.tenants.schemas import TenantName, TransferDestination
 from app.tenants.service import TenantService
-from app.users.models import User
-from tests.integration.test_human_auth import Harness
+from tests.integration.identity_harness import IdentityHarness
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as tenancy_marks
 from tests.integration.test_tenancy import tenancy as tenancy_fixture
+from tests.integration.workspaces import add_member
 
 tenancy = tenancy_fixture
 pytestmark = tenancy_marks
@@ -38,8 +37,8 @@ pytestmark = tenancy_marks
 
 async def authenticate(fixture: TenancyFixture, *, second: bool = False) -> RequestContext:
     account = fixture.b if second else fixture.a
-    return await AuthenticationService(fixture.database.session_factory).authenticate(
-        account.token.get_secret_value(), uuid4()
+    return await authenticate_workspace(
+        fixture.database.session_factory, account.token.get_secret_value(), uuid4()
     )
 
 
@@ -168,17 +167,16 @@ async def test_role_names_do_not_grant_access_and_revocation_is_immediate(
             ],
         ),
     )
-    async with tenancy.database.session_factory.begin() as session:
+    async with tenancy.admin.begin() as session:
         await set_tenant_scope(session, context.tenant_id)
-        other = User(
+        await add_member(
+            session,
             tenant_id=context.tenant_id,
-            email="other@example.test",
+            email=f"other-{uuid4().hex}@example.test",
             display_name="Other",
             role="admin",
             role_id=context.role_id,
         )
-        session.add(other)
-        await session.flush()
     assert context.actor_id is not None
     await roles.assign(context, context.actor_id, restricted.id)
     with pytest.raises(AuthorizationError):
@@ -241,14 +239,10 @@ def test_business_hours_are_timezone_aware_and_holidays_take_precedence() -> Non
 async def test_pending_owner_configuration_and_deleted_roles_survive_invitations(
     tenancy: TenancyFixture,
 ) -> None:
-    harness = Harness(tenancy)
-    platform = await harness.platform()
-    tenant = await harness.onboard(platform, f"pending-{uuid4()}@example.test")
-    support = SupportAccessService(tenancy.database.session_factory)
-    entered = await support.enter(
-        platform, EnterSupportCommand(tenant_id=tenant.tenant_id, reason="Configure pending owner")
-    )
-    context = await support.authenticate(entered.access_token, uuid4())
+    harness = IdentityHarness(tenancy)
+    admin = await harness.admin()
+    tenant = await harness.onboard(await harness.platform(admin), f"pending-{uuid4()}@example.test")
+    context = await harness.open(admin, tenant.tenant_id, "Configure pending owner")
     roles = RoleService(tenancy.database.session_factory)
     values = await roles.list(context)
     owner = next(role for role in values if role.name == "Owner")
@@ -260,7 +254,7 @@ async def test_pending_owner_configuration_and_deleted_roles_survive_invitations
     assert updated.revision == 2
     analyst = next(role for role in values if role.name == "Analyst")
     await roles.delete(context, analyst.id, analyst.revision)
-    await harness.auth.invite_member(
+    await harness.invitations.invite_member(
         context,
         InviteMember(
             email=f"invited-{uuid4()}@example.test",

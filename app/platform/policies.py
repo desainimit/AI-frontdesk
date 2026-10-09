@@ -21,15 +21,14 @@ class PlatformPermission(StrEnum):
 
 @dataclass(frozen=True)
 class PlatformContext:
+    """A signed-in platform administrator. `user_id` is their account."""
+
     user_id: UUID
     session_id: UUID
     request_id: UUID
     role: PlatformRole
-    mfa_verified: bool = False
 
 
 def require_platform_permission(context: PlatformContext, permission: PlatformPermission) -> None:
     if context.role != PlatformRole.SUPER_ADMIN or permission not in frozenset(PlatformPermission):
-        raise AuthorizationError()
-    if permission != PlatformPermission.IDENTITY_READ and not context.mfa_verified:
         raise AuthorizationError()

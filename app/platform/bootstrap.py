@@ -11,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.core.settings import Settings
-from app.platform.models import PlatformAuditEvent, PlatformUser
-from app.platform.passwords import hash_password
+from app.identity.models import Account
+from app.identity.passwords import hash_password
+from app.platform.models import PlatformAuditEvent
 from app.platform.schemas import SuperAdminSeed
 
 
@@ -38,18 +39,17 @@ async def seed_super_admin(
     async with sessions.begin() as session:
         # Serialize parallel deployment jobs so exactly one bootstrap audit is written.
         await session.execute(text("SELECT pg_advisory_xact_lock(724318902)"))
-        existing = await session.scalar(
-            select(PlatformUser.id).where(PlatformUser.email == command.email)
-        )
+        existing = await session.scalar(select(Account.id).where(Account.email == command.email))
         if existing is not None:
-            return False  # Never rotate passwords, promote users, or re-enable disabled accounts.
-        user = PlatformUser(
+            # Never change a password, promote an account or re-enable a disabled one.
+            return False
+        user = Account(
             email=command.email,
             display_name=command.display_name,
             password_hash=await asyncio.to_thread(
                 hash_password, command.password.get_secret_value()
             ),
-            role="super_admin",
+            is_platform_admin=True,
         )
         session.add(user)
         await session.flush()

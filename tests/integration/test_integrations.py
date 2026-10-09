@@ -42,22 +42,18 @@ from app.integrations.service import (
 )
 from app.integrations.verifiers import ProviderNumber, Verification
 from app.main import create_app
-from app.platform.bootstrap import seed_super_admin
 from app.platform.models import PlatformAuditEvent
-from app.platform.service import PlatformAuthenticationService
-from app.platform.support import EnterSupportCommand, SupportAccessService
 from app.tenants.models import Tenant
 from app.tenants.readiness import NotReadyError, TenantReadinessService
-from app.users.models import User
 from tests.fake_llm import MockLLMProvider
 from tests.fake_stt import MockSTTProvider
 from tests.fake_tts import MockTTSProvider
 from tests.fakes import FakeDependency
-from tests.integration.platform_mfa_helpers import mfa_login
-from tests.integration.test_platform import seed_command
+from tests.integration.identity_harness import IdentityHarness
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as pytestmark
 from tests.integration.test_tenancy import tenancy as tenancy
+from tests.integration.workspaces import add_member
 
 
 def integration_settings(base: Settings, **overrides: object) -> Settings:
@@ -386,43 +382,28 @@ async def test_only_tenant_admins_and_explicit_platform_actions_manage_connectio
     member_id = uuid4()
     async with tenancy.admin.begin() as session:
         await set_tenant_scope(session, tenant_id)
-        session.add(
-            User(
-                id=member_id,
-                tenant_id=tenant_id,
-                email=f"{uuid4()}@example.test",
-                display_name="Member",
-                role="member",
-            )
+        await add_member(
+            session,
+            tenant_id=tenant_id,
+            email=f"{uuid4()}@example.test",
+            display_name="Member",
+            user_id=member_id,
         )
     member = RequestContext(uuid4(), tenant_id, member_id, ActorType.USER, Role.MEMBER)
-    seed = seed_command()
-    await seed_super_admin(tenancy.admin, seed)
-    platform_auth = PlatformAuthenticationService(harness.sessions)
-    login = await mfa_login(platform_auth, seed, tenancy.settings)
-    platform = await platform_auth.authenticate(login.access_token, uuid4())
-    support_access = SupportAccessService(harness.sessions)
-    entered = await support_access.enter(
-        platform,
-        EnterSupportCommand.model_validate(
-            {
-                "tenant_id": tenant_id,
-                "reason": "Check that support cannot manage credentials",
-                "capabilities": ["tenant:read", "tenant:update"],
-                "confirm_sensitive": True,
-            }
-        ),
-    )
-    support = await support_access.authenticate(entered.access_token, uuid4())
+    identity = IdentityHarness(tenancy)
+    platform_admin = await identity.admin()
+    platform = await identity.platform(platform_admin)
 
     create = CreateIntegration(purpose=Purpose.STT, provider="deepgram")
-    for actor in (member, support):
-        with pytest.raises(AuthorizationError):
-            await harness.service.list_all(actor)
-        with pytest.raises(AuthorizationError):
-            await harness.service.create(actor, create)
-        with pytest.raises(AuthorizationError):
-            await harness.readiness.set_live(actor, True)
+    with pytest.raises(AuthorizationError):
+        await harness.service.list_all(member)
+    with pytest.raises(AuthorizationError):
+        await harness.service.create(member, create)
+    with pytest.raises(AuthorizationError):
+        await harness.readiness.set_live(member, True)
+    # A platform administrator who opens the workspace has an administrator's rights in it.
+    visiting = await identity.open(platform_admin, tenant_id, "Checking provider connections")
+    assert await harness.service.list_all(visiting) == []
 
     # The platform acts on exactly the tenant it names, and both audit trails record it.
     acting = PlatformActor(platform, tenant_id)

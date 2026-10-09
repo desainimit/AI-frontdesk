@@ -1,7 +1,7 @@
-"""SMTP delivery for encrypted invitation/reset messages using the restricted worker role.
+"""Invitation and password-reset email: queued encrypted by the API, sent by the worker.
 
-Drained by app.worker. SMTP is at-least-once; retries reuse the same message ID and
-challenge, and never mint another valid token/code.
+Delivery is at-least-once; a retry reuses the same message ID and the same link, and
+the stored text is erased as soon as the message is sent, fails for good or is cancelled.
 """
 
 import asyncio
@@ -11,19 +11,51 @@ import smtplib
 import ssl
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.auth.human_models import AuthMail
 from app.core.security.encryption import SecretCipher
 from app.core.settings import Settings
 from app.events.store import verify_worker_role
+from app.identity.models import AuthChallenge, AuthMail
 
 logger = logging.getLogger(__name__)
 
 SMTP_TIMEOUT_SECONDS = 15
+
+
+def _context(mail_id: UUID) -> str:
+    return f"auth-mail:{mail_id}"
+
+
+async def queue_mail(
+    db: AsyncSession,
+    settings: Settings,
+    challenge: AuthChallenge,
+    recipient: str,
+    subject: str,
+    body: str,
+) -> None:
+    """Store one encrypted message for the worker, valid as long as its link is."""
+    identity = uuid4()
+    cipher = SecretCipher(settings.secret_encryption_keys, settings.secret_encryption_active_key)
+    key_id, ciphertext = cipher.encrypt(
+        json.dumps({"to": recipient, "subject": subject, "body": body}).encode(),
+        _context(identity),
+    )
+    await db.flush()  # The challenge row must exist before the message that refers to it.
+    db.add(
+        AuthMail(
+            id=identity,
+            challenge_id=challenge.id,
+            key_id=key_id,
+            ciphertext=ciphertext,
+            expires_at=challenge.expires_at,
+            available_at=datetime.now(UTC),
+        )
+    )
 
 
 def send_smtp(settings: Settings, payload: dict[str, str], identity: str) -> None:
@@ -83,15 +115,13 @@ async def deliver_one(sessions: async_sessionmaker[AsyncSession], settings: Sett
         row.status, row.lease_id = "sending", lease_id
         row.lease_until = now + timedelta(seconds=120)
         row.attempts += 1
-        identity, tenant_id, key_id, ciphertext = row.id, row.tenant_id, row.key_id, row.ciphertext
+        identity, key_id, ciphertext = row.id, row.key_id, row.ciphertext
     delivered = False
     try:
         cipher = SecretCipher(
             settings.secret_encryption_keys, settings.secret_encryption_active_key
         )
-        payload = json.loads(
-            cipher.decrypt(key_id, ciphertext, f"auth-mail:{tenant_id}:{identity}")
-        )
+        payload = json.loads(cipher.decrypt(key_id, ciphertext, _context(identity)))
         await asyncio.to_thread(send_smtp, settings, payload, str(identity))
         delivered = True
     except Exception:

@@ -29,6 +29,7 @@ from app.core.errors import ApplicationError, AuthorizationError, ConflictError,
 from app.core.security.encryption import SecretCipher
 from app.core.settings import Settings
 from app.events.idempotency import IdempotencyConflictError, InvalidIdempotencyKeyError
+from app.identity.sessions import platform_scope
 from app.integrations.catalog import (
     ConnectionSlot,
     InvalidIntegrationError,
@@ -53,7 +54,6 @@ from app.integrations.verifiers import (
 )
 from app.platform.models import PlatformAuditEvent
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
-from app.platform.tenants import platform_scope
 from app.tenants.models import Tenant
 
 VERIFICATION_LEASE = timedelta(seconds=60)

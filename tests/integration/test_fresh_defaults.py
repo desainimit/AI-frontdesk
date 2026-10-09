@@ -6,7 +6,6 @@ from uuid import uuid4
 from sqlalchemy import func, select
 
 from app.agents.catalog import MUTATION_TOOLS, SAFE_READ_TOOLS
-from app.auth.models import ApiCredential
 from app.auth.policies import Permission
 from app.configuration.defaults import DEFAULTS_VERSION, tenant_defaults
 from app.configuration.hours import HoursPolicy
@@ -15,13 +14,12 @@ from app.configuration.schemas import OperationalConfiguration, SaveConfiguratio
 from app.configuration.service import ConfigurationService, seed_configuration
 from app.core.database.rls import set_tenant_scope
 from app.platform.onboarding import TenantOnboardingService, onboarding_defaults
-from app.platform.support import EnterSupportCommand, SupportAccessService
 from app.rbac.catalog import template_permissions
 from app.rbac.models import RolePermission, TenantRole
 from app.rbac.service import seed_roles
 from app.tenants.models import Tenant
 from app.users.models import User
-from tests.integration.platform_mfa_helpers import platform
+from tests.integration.identity_harness import IdentityHarness
 from tests.integration.test_onboarding import draft
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as pytestmark
@@ -31,7 +29,7 @@ from tests.integration.test_tenancy import tenancy as tenancy
 async def test_new_workspace_defaults_are_persisted_safe_and_idempotent(
     tenancy: TenancyFixture,
 ) -> None:
-    actor = await platform(tenancy)
+    actor = await IdentityHarness(tenancy).platform()
     service = TenantOnboardingService(tenancy.database.session_factory)
     command = draft()
     defaults = onboarding_defaults()
@@ -65,9 +63,9 @@ async def test_new_workspace_defaults_are_persisted_safe_and_idempotent(
         assert config.hours.windows == []  # No invented opening hours for a real business.
         assert await session.scalar(select(func.count()).select_from(HoursPolicy)) == 1
         assert await session.scalar(select(func.count()).select_from(PublishedConfiguration)) == 0
-        assert await session.scalar(select(func.count()).select_from(ApiCredential)) == 0
         member = await session.get(User, created.admin_id)
-        assert member and not member.is_active
+        # Invited, not yet a member: no way in until the invitation is accepted.
+        assert member and not member.is_active and member.accepted_at is None
         roles = list(await session.scalars(select(TenantRole)))
         assert len(roles) == 5
         for role in roles:
@@ -92,17 +90,13 @@ async def test_new_workspace_defaults_are_persisted_safe_and_idempotent(
 async def test_new_defaults_never_replace_saved_tenant_configuration(
     tenancy: TenancyFixture,
 ) -> None:
-    actor = await platform(tenancy)
+    harness = IdentityHarness(tenancy)
+    admin = await harness.admin()
     onboarding = TenantOnboardingService(tenancy.database.session_factory)
-    created = await onboarding.create(actor, draft(), str(uuid4()))
-    support = SupportAccessService(tenancy.database.session_factory)
-    entered = await support.enter(
-        actor,
-        EnterSupportCommand(
-            tenant_id=created.tenant_id, reason="Verify fresh workspace editable defaults"
-        ),
+    created = await onboarding.create(await harness.platform(admin), draft(), str(uuid4()))
+    context = await harness.open(
+        admin, created.tenant_id, "Verify fresh workspace editable defaults"
     )
-    context = await support.authenticate(entered.access_token, uuid4())
     configuration = ConfigurationService(tenancy.database.session_factory)
     first = await configuration.get(context)
     document = first.document.model_copy(deep=True)

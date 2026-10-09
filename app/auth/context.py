@@ -26,12 +26,13 @@ class RequestContext:
     call_id: UUID | None = None
     patient_id: UUID | None = None
     provider_call_id: str | None = None
+    # A platform administrator working inside this workspace: their account.
     platform_user_id: UUID | None = None
-    platform_session_id: UUID | None = None
     support_session_id: UUID | None = None
     support_expires_at: datetime | None = None
     capabilities: frozenset[str] = frozenset()
-    human_session_id: UUID | None = None
+    # The signed-in session behind this request; rechecked inside every transaction.
+    session_id: UUID | None = None
     role_id: UUID | None = None
     authorization_revision: int = 0
     role_name: str | None = None
@@ -50,7 +51,7 @@ class RequestContext:
             self.actor_id is not None
             or self.role is not None
             or self.platform_user_id is None
-            or self.platform_session_id is None
+            or self.session_id is None
             or self.support_session_id is None
             or self.support_expires_at is None
             or not self.capabilities

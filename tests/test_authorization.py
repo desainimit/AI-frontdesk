@@ -1,15 +1,24 @@
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from app.api.auth import router as auth_router
+from app.api.domain import router as domain_router
+from app.api.knowledge import router as knowledge_router
+from app.api.postcall import router as postcall_router
+from app.api.telephony import router as telephony_router
+from app.api.tenancy import get_context
+from app.api.tenancy import router as tenancy_router
 from app.auth.context import ActorType, RequestContext, Role
 from app.auth.policies import Permission, require_permission, require_tenant
-from app.auth.tokens import digest_token, issue_token, parse_locator
-from app.core.errors import AuthenticationError, AuthorizationError
+from app.core.errors import AuthorizationError
 from app.core.settings import Settings
 from app.main import create_app
+from app.platform.support import SUPPORT_ROUTES
 from tests.fakes import FakeDependency
 
 
@@ -47,31 +56,83 @@ def test_permissions_and_tenant_claims_fail_closed() -> None:
         )
 
 
-def test_random_credentials_are_masked_and_parsed_as_untrusted_locators() -> None:
-    tenant_id = uuid4()
-    credential_id, token, digest = issue_token(tenant_id)
-    parsed = parse_locator(token.get_secret_value())
-    assert parsed.tenant_id == tenant_id and parsed.credential_id == credential_id
-    assert digest == digest_token(token.get_secret_value())
-    assert token.get_secret_value() not in repr(token)
-    assert issue_token(tenant_id)[2] != digest
+def support_context(*capabilities: Permission) -> RequestContext:
+    return RequestContext(
+        request_id=uuid4(),
+        tenant_id=uuid4(),
+        actor_id=None,
+        actor_type=ActorType.PLATFORM_SUPPORT,
+        platform_user_id=uuid4(),
+        session_id=uuid4(),
+        support_session_id=uuid4(),
+        support_expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        capabilities=frozenset(permission.value for permission in capabilities),
+    )
 
 
-@pytest.mark.parametrize("token", ["", "invalid", "fd1.bad.bad.secret", "x" * 200])
-def test_invalid_token_format(token: str) -> None:
-    with pytest.raises(AuthenticationError):
-        parse_locator(token)
+def test_visiting_administrator_keeps_their_own_identity_and_needs_each_permission() -> None:
+    context = support_context(Permission.TENANT_READ, Permission.PATIENT_READ)
+    # Never a workspace member: no member id and no role.
+    assert context.actor_id is None and context.role is None
+    assert context.platform_user_id is not None and context.support_session_id is not None
+    require_permission(context, Permission.PATIENT_READ)
+    with pytest.raises(AuthorizationError):
+        require_permission(context, Permission.PATIENT_WRITE)
+    # The visit must name the account, its session and an end time.
+    with pytest.raises(ValueError, match="Support context"):
+        RequestContext(
+            uuid4(),
+            uuid4(),
+            None,
+            ActorType.PLATFORM_SUPPORT,
+            platform_user_id=uuid4(),
+            support_session_id=uuid4(),
+            capabilities=frozenset({Permission.TENANT_READ.value}),
+        )
 
 
-def test_missing_and_malformed_auth_never_connect_to_database(settings: Settings) -> None:
+def test_every_workspace_route_has_an_explicit_decision_for_visiting_administrators() -> None:
+    def uses_workspace_context(dependant: object) -> bool:
+        dependencies = getattr(dependant, "dependencies", ())
+        return any(
+            item.call == get_context or uses_workspace_context(item) for item in dependencies
+        )
+
+    routes = {
+        (method, route.path)
+        for router in (
+            tenancy_router,
+            auth_router,
+            domain_router,
+            knowledge_router,
+            postcall_router,
+            telephony_router,
+        )
+        for route in router.routes
+        if isinstance(route, APIRoute) and uses_workspace_context(route.dependant)
+        for method in route.methods or ()
+    }
+    # A new route is refused to visiting administrators until it is listed.
+    assert routes - set(SUPPORT_ROUTES) == {("GET", "/api/v1/users/me")}
+
+
+def test_missing_and_malformed_credentials_never_reach_the_database(settings: Settings) -> None:
+    # The database URL in these settings points nowhere; a connection attempt would fail.
     app = create_app(settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
+    old_formats = (
+        f"fd1.{uuid4()}.{uuid4()}.{'a' * 43}",  # API token
+        f"fps1.{uuid4()}.{'a' * 43}",  # platform session
+        f"fhu1.{uuid4()}.{uuid4()}.{'a' * 43}",  # workspace session
+    )
     with TestClient(app) as client:
-        for headers in (
-            {},
-            {"Authorization": "Bearer malformed"},
-            {"Authorization": "Basic secret"},
-        ):
-            response = client.get("/api/v1/users/me", headers=headers)
-            assert response.status_code == 401
-            assert response.headers["www-authenticate"] == "Bearer"
-            assert "secret" not in response.text
+        for path in ("/api/v1/users/me", "/api/v1/platform/tenants", "/api/v1/auth/me"):
+            for headers in (
+                {},
+                {"Authorization": "Bearer malformed"},
+                {"Authorization": "Basic secret"},
+                *({"Authorization": f"Bearer {token}"} for token in old_formats),
+            ):
+                response = client.get(path, headers=headers)
+                assert response.status_code == 401, (path, headers)
+                assert response.headers["www-authenticate"] == "Bearer"
+                assert "secret" not in response.text

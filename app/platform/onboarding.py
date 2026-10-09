@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.audit.models import AuditEvent
 from app.auth.context import ActorType, Role
-from app.auth.human import cancel_challenges, membership_state
 from app.configuration.defaults import (
     DEFAULT_LOCATION_NAME,
     DEFAULTS_VERSION,
@@ -29,12 +28,14 @@ from app.conversation.locales import LanguagePolicy
 from app.core.database.rls import set_tenant_scope
 from app.core.errors import ConflictError, NotFoundError
 from app.events.idempotency import IdempotencyConflictError, InvalidIdempotencyKeyError
+from app.identity.invitations import ensure_account, membership_state
+from app.identity.service import cancel_challenges
+from app.identity.sessions import platform_scope
 from app.locations.models import Location
 from app.locations.schemas import CreateLocation
 from app.platform.models import PlatformAuditEvent
 from app.platform.onboarding_models import TenantOnboarding
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
-from app.platform.tenants import platform_scope
 from app.tenants.models import Tenant
 from app.users.models import User
 
@@ -188,11 +189,15 @@ class TenantOnboardingService:
             document = OperationalConfiguration.model_validate(configuration.document)
             document.business.timezone = command.location.timezone
             configuration.document = document.model_dump(mode="json")
+            account = await ensure_account(
+                session, command.administrator.email, command.administrator.display_name
+            )
             session.add_all(
                 [
                     User(
                         id=admin_id,
                         tenant_id=tenant_id,
+                        account_id=account.id,
                         email=command.administrator.email,
                         display_name=command.administrator.display_name,
                         role=Role.ADMIN,
@@ -291,7 +296,11 @@ class TenantOnboardingService:
             tenant.language_policy = command.language_policy.model_dump(mode="json")
             if admin.email != command.administrator.email:
                 # A link mailed to the old address must not open the new membership.
-                await cancel_challenges(session, tenant_id, admin.id, "invitation")
+                await cancel_challenges(session, purpose="invitation", user_id=admin.id)
+                account = await ensure_account(
+                    session, command.administrator.email, command.administrator.display_name
+                )
+                admin.account_id = account.id
                 row.status = "draft"
             admin.email = command.administrator.email
             admin.display_name = command.administrator.display_name

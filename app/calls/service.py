@@ -18,9 +18,9 @@ from app.configuration.schemas import OperationalConfiguration
 from app.conversation.locales import LanguagePolicy
 from app.core.database.rls import set_tenant_scope, verify_runtime_role
 from app.core.errors import AuthorizationError, ConflictError, NotFoundError
+from app.identity.sessions import platform_scope
 from app.platform.models import PlatformAuditEvent
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
-from app.platform.tenants import platform_scope
 from app.postcall.models import CallTranscript
 from app.postcall.schemas import PostCallInput
 from app.tenants.models import Tenant

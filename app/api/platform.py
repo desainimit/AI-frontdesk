@@ -1,25 +1,15 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request, Response
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import APIRouter, Depends, Header, Request
 
-from app.api.dependencies import get_resources
+from app.api.dependencies import SessionToken, get_resources
 from app.api.tenancy import DatabaseDependency, Limit, Offset, Search
-from app.auth.human import HumanAuthenticationService
-from app.auth.human_schemas import InvitationView
-from app.core.errors import AuthenticationError
-from app.core.redis import RedisClient
 from app.core.security.rate_limit import enforce_rate_limit
-from app.platform.mfa import (
-    EnrollmentView,
-    MfaCode,
-    PlatformMfaService,
-    RecoveryCodes,
-    RecoveryIssue,
-    RecoveryReplace,
-    RecoveryStatus,
-)
+from app.identity.invitations import InvitationService
+from app.identity.schemas import InvitationView, OpenWorkspace, SupportVisit
+from app.identity.service import IdentityService
+from app.identity.sessions import authenticate_platform
 from app.platform.onboarding import (
     OnboardingDefaults,
     OnboardingDraft,
@@ -29,49 +19,20 @@ from app.platform.onboarding import (
     onboarding_defaults,
 )
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
-from app.platform.schemas import LoginCommand, PlatformUserView, SessionView
-from app.platform.service import PlatformAuthenticationService
-from app.platform.support import EnterSupportCommand, EnterSupportView, SupportAccessService
-from app.platform.tenants import (
-    CreateTenantCommand,
-    PlatformTenantService,
-    TenantCreatedView,
-    TenantStatusCommand,
-)
-from app.platform.throttle import AuthenticationUnavailableError, check_login_limit
+from app.platform.tenants import PlatformTenantService, TenantStatusCommand
 from app.tenants.schemas import TenantView
 
 router = APIRouter(prefix="/api/v1/platform", tags=["platform"])
 
 PLATFORM_REQUESTS_PER_MINUTE = 120
-platform_bearer = HTTPBearer(
-    auto_error=False,
-    scheme_name="PlatformBearer",
-    description=(
-        "Platform Super Admin Bearer token obtained from "
-        "/api/v1/platform/auth/login: fps1.<session_id>.<secret>"
-    ),
-)
-
-
-async def login_limit(request: Request, command: LoginCommand) -> None:
-    redis = get_resources(request).redis
-    if not isinstance(redis, RedisClient):
-        raise AuthenticationUnavailableError()
-    await check_login_limit(
-        redis, command.email, request.client.host if request.client else "unknown"
-    )
 
 
 async def get_platform_context(
-    request: Request,
-    credential: Annotated[HTTPAuthorizationCredentials | None, Depends(platform_bearer)],
-    database: DatabaseDependency,
+    request: Request, token: SessionToken, database: DatabaseDependency
 ) -> PlatformContext:
-    if credential is None:
-        raise AuthenticationError()
-    context = await PlatformAuthenticationService(database.session_factory).authenticate(
-        credential.credentials, UUID(request.state.request_id)
+    """The signed-in platform administrator; anyone else is refused."""
+    context = await authenticate_platform(
+        database.session_factory, token, UUID(request.state.request_id)
     )
     await enforce_rate_limit(
         get_resources(request).redis,
@@ -86,108 +47,18 @@ async def get_platform_context(
 PlatformIdentity = Annotated[PlatformContext, Depends(get_platform_context)]
 
 
-@router.post("/auth/login", dependencies=[Depends(login_limit)])
-async def login(
-    command: LoginCommand, request: Request, database: DatabaseDependency
-) -> SessionView:
-    return await PlatformAuthenticationService(
-        database.session_factory, request.app.state.settings
-    ).login(
-        command,
-        UUID(request.state.request_id),
-        request.app.state.settings.platform_session_minutes,
-    )
-
-
-@router.post("/auth/mfa/enroll")
-async def enroll_mfa(
-    context: PlatformIdentity, request: Request, database: DatabaseDependency
-) -> EnrollmentView:
-    return await PlatformMfaService(database.session_factory, request.app.state.settings).begin(
-        context
-    )
-
-
-@router.post("/auth/mfa/confirm", status_code=204)
-async def confirm_mfa(
-    command: MfaCode, context: PlatformIdentity, request: Request, database: DatabaseDependency
-) -> Response:
-    await PlatformMfaService(database.session_factory, request.app.state.settings).confirm(
-        context, command
-    )
-    return Response(status_code=204, headers={"Cache-Control": "no-store"})
-
-
-@router.post("/auth/mfa/confirm-recovery")
-async def confirm_mfa_with_recovery(
-    command: MfaCode,
-    context: PlatformIdentity,
+@router.post("/workspaces/{tenant_id}/open")
+async def open_workspace(
+    tenant_id: UUID,
+    command: OpenWorkspace,
     request: Request,
-    database: DatabaseDependency,
-) -> RecoveryCodes:
-    return await PlatformMfaService(database.session_factory, request.app.state.settings).confirm(
-        context, command
-    )
-
-
-@router.get("/auth/mfa/recovery")
-async def recovery_status(
-    context: PlatformIdentity, request: Request, database: DatabaseDependency
-) -> RecoveryStatus:
-    return await PlatformMfaService(
-        database.session_factory, request.app.state.settings
-    ).recovery_status(context)
-
-
-@router.post("/auth/mfa/recovery")
-async def recovery_issue(
-    command: RecoveryIssue,
     context: PlatformIdentity,
-    request: Request,
     database: DatabaseDependency,
-) -> RecoveryCodes:
-    return await PlatformMfaService(
+) -> SupportVisit:
+    """Start working inside a workspace for a stated reason; ends after 30 minutes."""
+    return await IdentityService(
         database.session_factory, request.app.state.settings
-    ).recovery_issue(context, command)
-
-
-@router.post("/auth/mfa/replace", status_code=204)
-async def replace_authenticator(
-    command: RecoveryReplace,
-    context: PlatformIdentity,
-    request: Request,
-    database: DatabaseDependency,
-) -> Response:
-    await PlatformMfaService(database.session_factory, request.app.state.settings).replace_factor(
-        context, command
-    )
-    return Response(status_code=204, headers={"Cache-Control": "no-store"})
-
-
-@router.post("/auth/logout", status_code=204)
-async def logout(context: PlatformIdentity, database: DatabaseDependency) -> Response:
-    await PlatformAuthenticationService(database.session_factory).logout(context)
-    return Response(status_code=204, headers={"Cache-Control": "no-store"})
-
-
-@router.get("/me")
-async def me(context: PlatformIdentity, database: DatabaseDependency) -> PlatformUserView:
-    return await PlatformAuthenticationService(database.session_factory).me(context)
-
-
-@router.post("/support-sessions", status_code=201)
-async def enter_support(
-    command: EnterSupportCommand, context: PlatformIdentity, database: DatabaseDependency
-) -> EnterSupportView:
-    return await SupportAccessService(database.session_factory).enter(context, command)
-
-
-@router.post("/support-sessions/{tenant_id}/{session_id}/revoke", status_code=204)
-async def revoke_support(
-    tenant_id: UUID, session_id: UUID, context: PlatformIdentity, database: DatabaseDependency
-) -> Response:
-    await SupportAccessService(database.session_factory).revoke(context, tenant_id, session_id)
-    return Response(status_code=204, headers={"Cache-Control": "no-store"})
+    ).open_workspace(context, tenant_id, command)
 
 
 @router.get("/tenants")
@@ -203,13 +74,6 @@ async def tenants(
     return await PlatformTenantService(database.session_factory).list(
         context, limit, offset, q=q, is_active=is_active, service_state=service_state
     )
-
-
-@router.post("/tenants", status_code=201)
-async def create_tenant(
-    command: CreateTenantCommand, context: PlatformIdentity, database: DatabaseDependency
-) -> TenantCreatedView:
-    return await PlatformTenantService(database.session_factory).create(context, command)
 
 
 @router.patch("/tenants/{tenant_id}")
@@ -232,7 +96,7 @@ async def invite_tenant_admin(
     database: DatabaseDependency,
     idempotency_key: Annotated[str, Header(min_length=1, max_length=128)],
 ) -> InvitationView:
-    return await HumanAuthenticationService(
+    return await InvitationService(
         database.session_factory, request.app.state.settings
     ).invite_initial_admin(context, tenant_id, idempotency_key)
 

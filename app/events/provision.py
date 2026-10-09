@@ -58,18 +58,11 @@ async def provision_worker(settings: Settings) -> None:
                 f"GRANT UPDATE (status, ciphertext, attempts, available_at, lease_id, lease_until) "
                 f"ON auth_mail TO {quoted}"
             )
-            await connection.exec_driver_sql(
-                "DROP POLICY IF EXISTS auth_mail_delivery ON auth_mail"
-            )
             # Background jobs read the job tenant's own connection under ordinary tenant
             # RLS (app.tenant_id is set per claim); there is no cross-tenant worker policy.
             integration_tables = "tenant_integrations, integration_credential_versions"
             await connection.exec_driver_sql(f"REVOKE ALL ON {integration_tables} FROM {quoted}")
             await connection.exec_driver_sql(f"GRANT SELECT ON {integration_tables} TO {quoted}")
-            await connection.exec_driver_sql(
-                f"CREATE POLICY auth_mail_delivery ON auth_mail TO {quoted} "
-                "USING (true) WITH CHECK (true)"
-            )
             await connection.exec_driver_sql(f"REVOKE ALL ON outbox_events FROM {quoted}")
             # This globally claimable table contains publication IDs and versions,
             # never configuration contents. The worker cannot alter event bindings.

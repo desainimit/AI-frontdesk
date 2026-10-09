@@ -86,7 +86,6 @@ at a disposable database, never a development one.
 
 ## More
 
-- [Provider connections and tenant login](docs/tenant-integrations.md)
-- [Fresh database initialisation](docs/fresh-install.md)
-- [Platform administrator access to a workspace](docs/support-access.md)
-- [Platform account recovery](docs/platform-recovery.md)
+- [Sign-in and accounts](docs/sign-in.md)
+- [Workspaces and provider connections](docs/tenant-integrations.md)
+- [Fresh database setup](docs/fresh-install.md)

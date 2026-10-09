@@ -44,11 +44,12 @@ class UserService:
                 limit, offset, q=q, role=role, role_id=role_id, is_active=is_active
             )
             names = await transaction.users.role_names()
-            accepted = await transaction.users.with_password([user.id for user in users])
             AuditService(transaction.audit).record(context, AuditAction.USERS_VIEWED, "users")
-            views = [UserView.model_validate(user) for user in users]
-            for view in views:
+            views: list[UserView] = []
+            for user in users:
+                view = UserView.model_validate(user)
                 view.role_name = names.get(view.role_id, "") if view.role_id else ""
-                if not view.is_active:
-                    view.status = "deactivated" if view.id in accepted else "invited"
+                if not user.is_active:
+                    view.status = "deactivated" if user.accepted_at else "invited"
+                views.append(view)
             return views

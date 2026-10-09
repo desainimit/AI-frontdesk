@@ -1,8 +1,10 @@
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     String,
@@ -20,6 +22,7 @@ class User(IdentityMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_users_tenant_id_id"),
         UniqueConstraint("tenant_id", "email", name="uq_users_tenant_id_email"),
+        UniqueConstraint("tenant_id", "account_id", name="uq_users_tenant_id_account_id"),
         CheckConstraint("role IN ('admin', 'member')", name="role_allowed"),
         ForeignKeyConstraint(
             ["tenant_id", "role_id"],
@@ -29,8 +32,12 @@ class User(IdentityMixin, TimestampMixin, Base):
     )
 
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id"), index=True)
+    # The person behind this membership; they sign in with the account's email and password.
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("accounts.id"), index=True)
     email: Mapped[str] = mapped_column(String(254))
     display_name: Mapped[str] = mapped_column(String(200))
     role: Mapped[str] = mapped_column(String(20), default="member")
     role_id: Mapped[UUID | None]
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    # Empty while the invitation is unanswered.
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

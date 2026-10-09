@@ -31,13 +31,13 @@ async def test_transfer_destination_admin_api_and_call_scope(tenancy: TenancyFix
         assert saved.status_code == 200
         assert saved.json()["human_transfer_number"] == "+15551234567"
         assert (await client.put(endpoint, json={"number": "12345"})).status_code == 422
-        assert (
-            await client.put(
-                endpoint,
-                json={"number": "+15551234568"},
-                headers={"X-Tenant-ID": str(tenancy.b.tenant_id)},
-            )
-        ).status_code == 403
+        # The workspace comes from the session; one named by the browser changes nothing.
+        named = await client.put(
+            endpoint,
+            json={"number": "+15551234567"},
+            headers={"X-Tenant-ID": str(tenancy.b.tenant_id)},
+        )
+        assert named.status_code == 200 and named.json()["id"] == str(tenancy.a.tenant_id)
         other = await client.get(
             "/api/v1/tenants/current",
             headers={"Authorization": f"Bearer {tenancy.b.token.get_secret_value()}"},
@@ -57,7 +57,9 @@ async def test_transfer_destination_admin_api_and_call_scope(tenancy: TenancyFix
                     )
                 )
             ).all()
-            assert len(events) == 1 and events[0].actor_id == tenancy.a.user_id
+            # Both saves, including the one that named another workspace, were made here.
+            assert len(events) == 2
+            assert {event.actor_id for event in events} == {tenancy.a.user_id}
         cleared = await client.put(endpoint, json={"number": None})
         assert cleared.status_code == 200
         assert await calls.transfer_number(context.call) is None

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ai-frontdesk"
 version = "0.1.0"
-description = "AI Frontdesk modular backend — Phase 1 foundation"
+description = "AI Frontdesk backend"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi>=0.115,<1",
@@ -27,6 +27,7 @@ dependencies = [
   "pgvector>=0.4,<1",
   "boto3>=1.36,<2",
   "cryptography>=46,<47",
+  "segno>=1.6,<2",
 ]
 
 [project.optional-dependencies]

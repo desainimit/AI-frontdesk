@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 TENANT_TABLES = (
     "tenants",
     "users",
-    "api_credentials",
     "audit_events",
     "locations",
     "providers",
@@ -25,12 +24,7 @@ TENANT_TABLES = (
     "call_transcripts",
     "post_call_reports",
     "follow_up_events",
-    "support_sessions",
     "tenant_onboardings",
-    "human_accounts",
-    "human_sessions",
-    "auth_challenges",
-    "auth_mail",
     "tenant_integrations",
     "integration_credential_versions",
     "tenant_roles",
@@ -57,9 +51,6 @@ class UnsafeDatabaseRoleError(RuntimeError):
     """The application must never silently run tenant queries with bypass privileges."""
 
 
-GLOBAL_IDENTITY_TABLES = ("human_identities", "identity_memberships", "identity_sessions")
-
-
 async def verify_runtime_role(session: AsyncSession) -> None:
     unsafe = await session.scalar(
         text(
@@ -77,9 +68,9 @@ async def verify_runtime_role(session: AsyncSession) -> None:
           AND c.relrowsecurity AND c.relforcerowsecurity
           AND NOT pg_has_role(current_user, c.relowner, 'MEMBER')
         """),
-        {"tables": [*TENANT_TABLES, *GLOBAL_IDENTITY_TABLES]},
+        {"tables": list(TENANT_TABLES)},
     )
-    if safe_tables != len(TENANT_TABLES) + len(GLOBAL_IDENTITY_TABLES):
+    if safe_tables != len(TENANT_TABLES):
         raise UnsafeDatabaseRoleError("Migrate the schema and use a non-owner application role")
     can_read_domain = await session.scalar(
         text("SELECT has_table_privilege(current_user, 'public.patients', 'SELECT')")

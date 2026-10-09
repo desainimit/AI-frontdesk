@@ -13,7 +13,6 @@ x-app-environment: &app-environment
   # Injected by the deployment secret manager; never stored in PostgreSQL or its backups.
   SECRET_ENCRYPTION_KEYS: ${SECRET_ENCRYPTION_KEYS:-}
   SECRET_ENCRYPTION_ACTIVE_KEY: ${SECRET_ENCRYPTION_ACTIVE_KEY:-}
-  OTP_HMAC_KEY: ${OTP_HMAC_KEY:-}
   STREAM_TOKEN_KEY: ${STREAM_TOKEN_KEY:-}
   SMTP_HOST: ${SMTP_HOST:-}
   SMTP_PORT: ${SMTP_PORT:-587}

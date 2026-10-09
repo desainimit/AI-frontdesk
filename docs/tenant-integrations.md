@@ -1,4 +1,4 @@
-# Tenant onboarding, login and provider connections
+# Workspaces and provider connections
 
 These features are always on. Each clinic may connect its own Twilio, speech, AI-model and embeddings accounts; anything it has not connected is served by the platform account configured in the environment.
 
@@ -10,32 +10,22 @@ All of these are platform infrastructure. Inject them from the deployment secret
 
 | Setting | Needed for | Notes |
 | --- | --- | --- |
-| `SECRET_ENCRYPTION_KEYS`, `SECRET_ENCRYPTION_ACTIVE_KEY` | Human auth, integrations | JSON keyring `{"key-id": "<base64 of 32 random bytes>"}`. New data is encrypted with the active key. Keep older key IDs in the keyring until nothing references them. A lost key makes its ciphertext unrecoverable, so back the keyring up separately from the database. |
-| `OTP_HMAC_KEY` | Human auth | Independent random value, at least 43 characters. |
+| `SECRET_ENCRYPTION_KEYS`, `SECRET_ENCRYPTION_ACTIVE_KEY` | Two-step verification, queued email, provider connections | JSON keyring `{"key-id": "<base64 of 32 random bytes>"}`. New data is encrypted with the active key. Keep older key IDs in the keyring until nothing references them. A lost key makes its ciphertext unrecoverable, so back the keyring up separately from the database. |
 | `STREAM_TOKEN_KEY` | Integrations with telephony | Independent random value, at least 43 characters. Signs media-stream tokens so a provider secret is never used as an application key. |
 | `SMTP_*` | Invitations and password reset | TLS is required outside local/development. Mail is delivered by the worker (`python -m app.worker`). |
 | `TENANT_AUTH_PUBLIC_ORIGIN` | Invitation links | The frontend origin. HTTPS outside local/development. |
 
 The API and the worker (`python -m app.worker`) both need the keyring.
 
-## Onboarding and administrator access
+## Creating a workspace
 
-1. `POST /api/v1/platform/tenant-onboardings` with an `Idempotency-Key` creates the tenant, its first location and an inactive administrator in one transaction. Retrying with the same key returns the same workspace; reusing the key with a different body returns 409. The new tenant starts with `service_state: "setup"`.
+1. `POST /api/v1/platform/tenant-onboardings` with an `Idempotency-Key` creates the workspace, its first location and an invited (not yet active) administrator in one transaction. Retrying with the same key returns the same workspace; reusing the key with a different body returns 409. The new workspace starts with `service_state: "setup"`.
 2. `GET` / `PATCH /api/v1/platform/tenants/{tenant_id}/onboarding` resume and edit the draft under a `revision` guard. Editing is refused once the administrator has accepted. Changing the administrator's email cancels any invitation already sent.
 3. `POST /api/v1/platform/tenants/{tenant_id}/admin-invitations` queues a single-use, 24-hour invitation. A new idempotency key resends and invalidates the previous link. The response and the onboarding view report delivery state (`not_sent`, `queued`, `sent`, `delivery_failed`, `expired`, `accepted`), never the token.
-4. The invitee opens `{TENANT_AUTH_PUBLIC_ORIGIN}/tenant-auth/accept#token=...`. The frontend sends the bearer token in a POST body to `/api/v1/tenant-invitations/details` to learn whether password setup is required. New identities submit a password (15 to 128 characters) to `/api/v1/tenant-invitations/accept`; existing identities omit the password and retain their global credential. Acceptance activates only that membership and consumes the invitation atomically. A locked legacy identity must recover through email-verified password reset in an accepted workspace first.
-5. `POST /api/v1/tenant-auth/login` with `tenant_id`, `email` and `password` returns an `fhu1` bearer token valid for 8 hours. It is accepted by the same tenant routes as `fd1` service tokens and is rechecked for revocation inside every database operation.
 
-Password recovery: `POST /api/v1/tenant-auth/forgot-password` always answers 202, and `POST /api/v1/tenant-auth/reset-password` takes the emailed 8-digit code (10 minutes, 5 attempts). A successful reset changes the global credential revision, invalidating sessions and older reset codes across all accepted memberships. A tenant administrator can revoke only sessions in their own tenant. Ambiguous legacy memberships differing only by email case fail closed and require administrative reconciliation.
+How the invited person accepts and signs in is described in [sign-in and accounts](sign-in.md).
 
-Team management, for a member with the relevant persisted grants: `POST /api/v1/users/invitations`, `POST /api/v1/users/{user_id}/invitations` (resend), `PATCH /api/v1/users/{user_id}` (role and active state) and `POST /api/v1/users/{user_id}/revoke-sessions`. Dynamic role management is exposed through `/api/v2/roles`. The last accepted, active member capable of managing users and roles cannot lose those capabilities. Pending invitations count only for initial setup configuration and cannot authorize live activation.
-
-Login, acceptance and recovery are throttled per account and per source address and need Redis; without it they answer 503 rather than run unthrottled.
-
-The legacy `POST /api/v1/platform/tenants` contract still returns a one-time `fd1` admin token and creates a tenant that is live immediately on the platform's provider accounts.
-
-A workspace created through onboarding goes live once an administrator has accepted,
-its configuration is published and every required provider is available.
+A workspace goes live once an administrator has accepted, its configuration is published and every required provider is available.
 
 ## Provider connections
 
@@ -84,7 +74,6 @@ Behaviour to rely on:
 
 ## Not covered here
 
-- Tenant-user multi-factor authentication is not implemented. Platform business administration requires TOTP MFA; recovery codes and operator factor recovery remain unfinished.
 - Platform-managed (subaccount) connections are modelled (`ownership`) but only tenant-owned credentials can be submitted.
 - Verification proves a credential is accepted. It does not place a test call; a real-provider canary remains a release step.
 - Tenant-level spend limits and usage attribution are not implemented.

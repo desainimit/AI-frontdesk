@@ -44,7 +44,8 @@ class RequestTelemetryMiddleware:
             if message["type"] == "http.response.start":
                 status = int(message["status"])
                 MutableHeaders(scope=message)["X-Request-ID"] = request_id
-                if scope.get("path", "").startswith("/api/v1/platform"):
+                # Sign-in and platform answers are never cached, errors included.
+                if scope.get("path", "").startswith(("/api/v1/platform", "/api/v1/auth")):
                     MutableHeaders(scope=message)["Cache-Control"] = "no-store"
                 context = scope["state"].get("context")
                 if (

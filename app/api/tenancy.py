@@ -2,22 +2,19 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import APIRouter, Depends, Query, Request, Response
 
-from app.api.dependencies import get_resources
+from app.api.dependencies import SessionToken, get_resources
 from app.audit.queries import AuditQueryService
 from app.audit.schemas import AuditView
 from app.auth.context import ActorType, RequestContext, Role
-from app.auth.policies import require_tenant
-from app.auth.service import AuthenticationService
 from app.calls.verification import VerificationPolicy
 from app.conversation.locales import LanguagePolicy
 from app.core.database.session import Database
 from app.core.database.unit_of_work import UnitOfWork
-from app.core.errors import AuthenticationError, AuthorizationError
 from app.core.security.rate_limit import enforce_rate_limit
-from app.platform.support import SupportAccessService, SupportSessionView
+from app.identity.sessions import authenticate_workspace
+from app.platform.support import record_support_action
 from app.tenants.schemas import TenantName, TenantView, TransferDestination
 from app.tenants.service import TenantService
 from app.users.schemas import UserView
@@ -26,11 +23,6 @@ from app.users.service import UserService
 router = APIRouter(prefix="/api/v1", tags=["tenancy"])
 
 TENANT_REQUESTS_PER_MINUTE = 240
-bearer = HTTPBearer(
-    auto_error=False,
-    scheme_name="TenantBearer",
-    description="Tenant fd1 token or scoped Super Admin fds1 support token",
-)
 
 
 def get_database(request: Request) -> Database:
@@ -43,20 +35,13 @@ def get_database(request: Request) -> Database:
 async def get_context(
     request: Request,
     response: Response,
-    credential: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    token: SessionToken,
     database: Annotated[Database, Depends(get_database)],
-    tenant_header: Annotated[UUID | None, Header(alias="X-Tenant-ID")] = None,
 ) -> RequestContext:
-    if credential is None or credential.scheme.lower() != "bearer":
-        raise AuthenticationError()
-    if credential.credentials.startswith("fds1."):
-        context = await SupportAccessService(database.session_factory).authenticate(
-            credential.credentials, UUID(request.state.request_id)
-        )
-    else:
-        context = await AuthenticationService(database.session_factory).authenticate(
-            credential.credentials, UUID(request.state.request_id)
-        )
+    """Who is acting, in the workspace their session is working in."""
+    context = await authenticate_workspace(
+        database.session_factory, token, UUID(request.state.request_id)
+    )
     await enforce_rate_limit(
         get_resources(request).redis,
         enabled=request.app.state.rate_limits,
@@ -67,11 +52,7 @@ async def get_context(
     if context.actor_type == ActorType.PLATFORM_SUPPORT:
         request.state.context = context
         route = getattr(request.scope.get("route"), "path", "unmatched")
-        await SupportAccessService(database.session_factory).action(
-            context, request.method, route, tenant_header
-        )
-    if tenant_header is not None:
-        require_tenant(context, tenant_header)
+        await record_support_action(database.session_factory, context, request.method, route)
     response.headers["Cache-Control"] = "no-store"
     request.state.context = context
     return context
@@ -86,33 +67,6 @@ Offset = Annotated[int, Query(ge=0, le=10000)]
 Search = Annotated[str | None, Query(max_length=100, description="Case-insensitive contains")]
 Since = Annotated[datetime | None, Query(description="Inclusive lower bound (ISO 8601)")]
 Until = Annotated[datetime | None, Query(description="Inclusive upper bound (ISO 8601)")]
-
-
-@router.get("/support/me")
-async def current_support(context: Context) -> SupportSessionView:
-    if context.actor_type != ActorType.PLATFORM_SUPPORT:
-        raise AuthorizationError()
-    if (
-        context.support_session_id is None
-        or context.platform_user_id is None
-        or context.support_expires_at is None
-    ):
-        raise AuthenticationError()
-    return SupportSessionView(
-        id=context.support_session_id,
-        tenant_id=context.tenant_id,
-        platform_user_id=context.platform_user_id,
-        capabilities=sorted(context.capabilities),
-        expires_at=context.support_expires_at,
-    )
-
-
-@router.post("/support/exit", status_code=204)
-async def exit_support(context: Context, database: DatabaseDependency) -> Response:
-    if context.actor_type != ActorType.PLATFORM_SUPPORT:
-        raise AuthorizationError()
-    await SupportAccessService(database.session_factory).exit(context)
-    return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/tenants/current")

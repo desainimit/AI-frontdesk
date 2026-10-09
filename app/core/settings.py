@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     tenant_auth_public_origin: str = ""
     secret_encryption_keys: SecretStr = SecretStr("")
     secret_encryption_active_key: str = ""
-    otp_hmac_key: SecretStr = SecretStr("")
     stream_token_key: SecretStr = SecretStr("")
     tenant_llm_models: str = (
         "gemini-3.8-flash,gemini-3.5-flash-lite,"
@@ -163,11 +162,6 @@ class Settings(BaseSettings):
             from app.core.security.encryption import SecretCipher
 
             SecretCipher(self.secret_encryption_keys, self.secret_encryption_active_key)
-        code_key = self.otp_hmac_key.get_secret_value()
-        if (self.deployed or code_key) and len(code_key) < 43:
-            raise ValueError(
-                "Configure an independent random OTP_HMAC_KEY of at least 43 characters"
-            )
         if self.deployed or self.tenant_auth_public_origin:
             url = urlsplit(self.tenant_auth_public_origin)
             if (
@@ -202,11 +196,10 @@ class Settings(BaseSettings):
 
     @property
     def account_mail_ready(self) -> bool:
-        """Invitations and resets need SMTP, the keyring, the code key and the link origin."""
+        """Invitations and resets need SMTP, the keyring and the link origin."""
         return bool(
             self.mail_enabled
             and self.secret_encryption_keys.get_secret_value()
-            and len(self.otp_hmac_key.get_secret_value()) >= 43
             and self.tenant_auth_public_origin
         )
 

@@ -10,7 +10,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.context import RequestContext
-from app.auth.human_models import HumanAccount
 from app.auth.policies import Permission, has_permission
 from app.business.models import BusinessResource, BusinessService, BusinessStaff, DirectoryMutation
 from app.business.persistence import sync_directory
@@ -51,16 +50,11 @@ async def validate_directory_references(
         if isinstance(record, StaffDefinition):
             if record.user_id is not None:
                 user = await session.get(User, record.user_id)
-                account = await session.scalar(
-                    select(HumanAccount.id).where(
-                        HumanAccount.tenant_id == tenant_id, HumanAccount.user_id == record.user_id
-                    )
-                )
                 if (
                     user is None
                     or user.tenant_id != tenant_id
                     or not user.is_active
-                    or account is None
+                    or user.accepted_at is None
                 ):
                     raise ConflictError()
             if record.calendar_connection_id is not None:
@@ -312,10 +306,10 @@ class BusinessDirectoryService(ConfigurationService):
                     {"id": str(row.id), "name": row.display_name, "is_active": row.is_active}
                     for row in await session.scalars(
                         select(User)
-                        .join(HumanAccount, HumanAccount.user_id == User.id)
                         .where(
                             User.tenant_id == tenant.id,
                             User.is_active.is_(True),
+                            User.accepted_at.is_not(None),
                         )
                         .order_by(User.display_name)
                     )
