@@ -1,11 +1,11 @@
-from app.cache.redis import RedisClient
-from app.config.settings import Environment, Settings
 from app.conversation.store import (
     ConversationStateStore,
     MemoryConversationStateStore,
     RedisConversationStateStore,
 )
-from app.resources import Dependency
+from app.core.redis import RedisClient
+from app.core.resources import Dependency
+from app.core.settings import Environment, Settings
 
 
 def build_conversation_store(

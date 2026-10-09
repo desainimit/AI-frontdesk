@@ -41,6 +41,7 @@ from app.configuration.schemas import (
 )
 from app.configuration.sections import ConfigurationSection
 from app.configuration.service import ConfigurationService
+from app.core.security.encryption import SecretCipher
 from app.platform.support import SUPPORT_ROUTES
 from app.rbac.catalog import permission_catalog
 from app.rbac.schemas import (
@@ -52,7 +53,6 @@ from app.rbac.schemas import (
     UpdateRole,
 )
 from app.rbac.service import RoleService
-from app.security.encryption import SecretCipher
 
 router = APIRouter(prefix="/api/v2", tags=["workspace configuration"])
 

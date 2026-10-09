@@ -11,8 +11,8 @@ from app.audit.models import AuditEvent
 from app.auth.context import ActorType, RequestContext
 from app.auth.human_models import HumanAccount
 from app.auth.policies import Permission, require_permission
-from app.database.unit_of_work import enter_tenant_scope
-from app.errors import AuthorizationError, ConflictError, NotFoundError
+from app.core.database.unit_of_work import enter_tenant_scope
+from app.core.errors import AuthorizationError, ConflictError, NotFoundError
 from app.rbac.catalog import CUSTODIAN_PERMISSIONS, template_permissions
 from app.rbac.models import RolePermission, TenantRole
 from app.rbac.schemas import PermissionGrant, RoleCommand, RoleOption, RoleView, UpdateRole
@@ -201,7 +201,7 @@ class RoleService:
     ) -> None:
         require_permission(context, permission)
         if write:
-            from app.database.rls import set_tenant_scope
+            from app.core.database.rls import set_tenant_scope
 
             await set_tenant_scope(session, context.tenant_id)
             await session.scalar(

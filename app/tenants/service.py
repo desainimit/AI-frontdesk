@@ -4,8 +4,8 @@ from app.auth.context import RequestContext
 from app.auth.policies import Permission, require_permission
 from app.calls.verification import VerificationPolicy
 from app.conversation.locales import LanguagePolicy
-from app.database.unit_of_work import UnitOfWork
-from app.errors import NotFoundError
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import NotFoundError
 from app.tenants.schemas import TenantName, TenantView, TransferDestination
 
 

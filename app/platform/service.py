@@ -8,9 +8,9 @@ from sqlalchemy import select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.tokens import digest_token
-from app.config.settings import Settings
-from app.database.rls import verify_runtime_role
-from app.errors import AuthenticationError
+from app.core.database.rls import verify_runtime_role
+from app.core.errors import AuthenticationError
+from app.core.settings import Settings
 from app.platform.models import (
     PlatformAuditEvent,
     PlatformAuthenticator,

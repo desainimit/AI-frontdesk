@@ -7,8 +7,8 @@ from sqlalchemy.orm import Mapped, declared_attr, mapped_column
 
 from app.auth.context import RequestContext
 from app.auth.policies import require_tenant
-from app.database.base import Base
-from app.database.types import IdentityMixin, TimestampMixin
+from app.core.database.base import Base
+from app.core.database.types import IdentityMixin, TimestampMixin
 
 
 class TenantRecord(IdentityMixin, TimestampMixin, Base):

@@ -14,8 +14,8 @@ from app.auth.service import AuthenticationService
 from app.auth.workspace_models import IdentityMembership, IdentitySession
 from app.auth.workspace_schemas import IdentityCredential, IdentityLogin, WorkspaceSelection
 from app.auth.workspaces import WorkspaceIdentityService
-from app.database.rls import set_tenant_scope
-from app.errors import AuthenticationError, AuthorizationError
+from app.core.database.rls import set_tenant_scope
+from app.core.errors import AuthenticationError, AuthorizationError
 from app.main import create_app
 from app.tenants.models import Tenant
 from tests.integration.test_global_identity import memberships

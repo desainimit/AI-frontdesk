@@ -36,13 +36,14 @@ from app.calls.service import (
     PhoneCommand,
     PhoneView,
 )
-from app.config.settings import Settings
 from app.conversation import ConversationStateManager, build_conversation_store
 from app.conversation.locales import LOCALES, LanguagePolicy, base_language
 from app.conversation.state import CallStatus, ConversationState, SafetyDecision
 from app.conversation.store import ConversationStateStore
-from app.database.session import Database
-from app.errors import ApplicationError, NotFoundError
+from app.core.database.session import Database
+from app.core.errors import ApplicationError, NotFoundError
+from app.core.security.rate_limit import enforce_rate_limit
+from app.core.settings import Settings
 from app.integrations.resolver import (
     IntegrationUnavailableError,
     ResolvedIntegration,
@@ -53,7 +54,6 @@ from app.safety.classifier import LLMSafetyClassifier
 from app.safety.engine import SafetyEngine
 from app.safety.messages import transfer_failed_message
 from app.safety.transfer import TransferError, transfer_call
-from app.security.rate_limit import enforce_rate_limit
 from app.voice.circuit import CircuitRegistry
 from app.voice.factory import (
     follows_caller_language,

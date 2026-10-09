@@ -4,10 +4,10 @@ from alembic import context
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.config.logging import configure_logging
-from app.config.settings import Settings
-from app.database import models as models
-from app.database.base import Base
+from app.core.database import models as models
+from app.core.database.base import Base
+from app.core.logging import configure_logging
+from app.core.settings import Settings
 
 settings = Settings.from_environment()
 configure_logging(settings.log_level)

@@ -2,7 +2,7 @@ from enum import StrEnum
 from uuid import UUID
 
 from app.auth.context import ActorType, RequestContext
-from app.errors import AuthorizationError
+from app.core.errors import AuthorizationError
 
 
 class Permission(StrEnum):

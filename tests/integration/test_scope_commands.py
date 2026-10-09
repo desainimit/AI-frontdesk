@@ -12,7 +12,7 @@ from app.configuration.sections import (
     SectionPublicationConflictError,
 )
 from app.configuration.service import ConfigurationService
-from app.errors import AuthorizationError, NotFoundError
+from app.core.errors import AuthorizationError, NotFoundError
 from app.rbac.service import RevisionConflictError
 from tests.integration.test_configuration_sections import editor
 from tests.integration.test_saas import authenticate

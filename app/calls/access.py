@@ -15,8 +15,8 @@ from app.auth.policies import Permission, require_permission
 from app.calls.models import Call, PhoneNumber
 from app.calls.service import CallContext, audit
 from app.calls.verification import VerificationPolicy
-from app.database.rls import set_tenant_scope, verify_runtime_role
-from app.errors import AuthorizationError, ConflictError
+from app.core.database.rls import set_tenant_scope, verify_runtime_role
+from app.core.errors import AuthorizationError, ConflictError
 from app.patients.models import Patient
 from app.tenants.models import Tenant
 from app.users.models import User

@@ -23,10 +23,11 @@ from app.audit.models import AuditEvent
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
 from app.calls.models import PhoneNumber
-from app.config.settings import Settings
-from app.database.rls import set_tenant_scope
-from app.database.unit_of_work import enter_tenant_scope
-from app.errors import ApplicationError, AuthorizationError, ConflictError, NotFoundError
+from app.core.database.rls import set_tenant_scope
+from app.core.database.unit_of_work import enter_tenant_scope
+from app.core.errors import ApplicationError, AuthorizationError, ConflictError, NotFoundError
+from app.core.security.encryption import SecretCipher
+from app.core.settings import Settings
 from app.events.idempotency import IdempotencyConflictError, InvalidIdempotencyKeyError
 from app.integrations.catalog import (
     ConnectionSlot,
@@ -53,7 +54,6 @@ from app.integrations.verifiers import (
 from app.platform.models import PlatformAuditEvent
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.platform.tenants import platform_scope
-from app.security.encryption import SecretCipher
 from app.tenants.models import Tenant
 
 VERIFICATION_LEASE = timedelta(seconds=60)

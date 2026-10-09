@@ -5,7 +5,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 from app.knowledge.embeddings import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,

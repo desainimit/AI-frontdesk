@@ -6,9 +6,9 @@ from uuid import uuid4
 import pytest
 from pydantic import SecretStr
 
+from app.core.security.encryption import SecretCipher
 from app.platform.mfa import consume_code, totp
 from app.platform.models import PlatformAuthenticator
-from app.security.encryption import SecretCipher
 
 
 @pytest.mark.parametrize(

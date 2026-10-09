@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.context import RequestContext
-from app.database.domain import ScopedRepository
+from app.core.database.domain import ScopedRepository
 from app.locations.models import Location
 
 

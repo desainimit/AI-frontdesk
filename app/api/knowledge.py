@@ -6,8 +6,8 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.api.tenancy import Context, DatabaseDependency, Limit, Offset, Search
-from app.config.settings import Settings
-from app.database.unit_of_work import UnitOfWork
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.settings import Settings
 from app.knowledge.embeddings import open_embedder
 from app.knowledge.schemas import DocumentView, KnowledgeQuery, KnowledgeResult, VersionView
 from app.knowledge.service import KnowledgeService

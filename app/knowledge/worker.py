@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.database.rls import set_tenant_scope
+from app.core.database.rls import set_tenant_scope
 from app.events.store import verify_worker_role
 from app.knowledge.embeddings import Embedder, OwnedEmbedder
 from app.knowledge.models import DocumentChunk, DocumentVersion, KnowledgeJob

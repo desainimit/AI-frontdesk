@@ -15,8 +15,8 @@ from starlette.websockets import WebSocket
 
 from app.api.telephony import run_media
 from app.calls.service import CallContext
-from app.config.settings import Settings
 from app.conversation.locales import LanguagePolicy
+from app.core.settings import Settings
 from app.voice.circuit import CircuitBreaker, CircuitState
 from app.voice.factory import follows_caller_language, platform_stt, platform_tts
 from app.voice.pipeline import VoicePipeline

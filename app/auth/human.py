@@ -30,10 +30,11 @@ from app.auth.human_schemas import (
 from app.auth.identity import identity_for_email, identity_scope
 from app.auth.policies import Permission, require_permission
 from app.auth.tokens import digest_token
-from app.config.settings import Settings
-from app.database.rls import set_tenant_scope, verify_runtime_role
-from app.database.unit_of_work import enter_tenant_scope
-from app.errors import AuthenticationError, AuthorizationError, ConflictError, NotFoundError
+from app.core.database.rls import set_tenant_scope, verify_runtime_role
+from app.core.database.unit_of_work import enter_tenant_scope
+from app.core.errors import AuthenticationError, AuthorizationError, ConflictError, NotFoundError
+from app.core.security.encryption import SecretCipher
+from app.core.settings import Settings
 from app.events.idempotency import InvalidIdempotencyKeyError
 from app.platform.models import PlatformAuditEvent
 from app.platform.onboarding_models import TenantOnboarding
@@ -43,7 +44,6 @@ from app.platform.tenants import platform_scope
 from app.platform.throttle import AuthenticationUnavailableError
 from app.rbac.models import TenantRole
 from app.rbac.service import assert_custodian, grantable_role, legacy_role
-from app.security.encryption import SecretCipher
 from app.tenants.models import Tenant
 from app.users.models import User
 

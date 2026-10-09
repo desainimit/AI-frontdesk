@@ -11,7 +11,8 @@ from cryptography.exceptions import InvalidTag
 from pydantic import SecretStr, ValidationError
 
 from app.calls.service import CallContext
-from app.config.settings import Settings
+from app.core.security.encryption import SecretCipher
+from app.core.settings import Settings
 from app.integrations.catalog import (
     InvalidIntegrationError,
     catalog_entries,
@@ -21,7 +22,6 @@ from app.integrations.catalog import (
 )
 from app.integrations.service import SubmitCredentials
 from app.integrations.verifiers import HttpProviderVerifier, ProviderUnavailableError
-from app.security.encryption import SecretCipher
 from app.voice.circuit import CircuitRegistry
 from app.voice.twilio import (
     TwilioCredentials,

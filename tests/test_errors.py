@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.errors import ConflictError
-from app.config.settings import Settings
+from app.core.settings import Settings
 from app.main import create_app
 from tests.fakes import FakeDependency
 

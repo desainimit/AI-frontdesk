@@ -21,7 +21,7 @@ from app.auth.workspace_schemas import (
     IdentityLogin,
 )
 from app.auth.workspaces import WorkspaceIdentityService
-from app.errors import AuthenticationError
+from app.core.errors import AuthenticationError
 from app.main import create_app
 from tests.integration.test_global_identity import memberships
 from tests.integration.test_human_auth import PASSWORD, Harness
@@ -64,7 +64,7 @@ async def test_email_recovery_revokes_every_workspace_and_admission(
         assert context.human_session_id is not None
         # Current identity revision invalidates already-authorized request contexts too.
         from app.auth.human import validate_human_context
-        from app.database.rls import set_tenant_scope
+        from app.core.database.rls import set_tenant_scope
 
         async with harness.sessions.begin() as session:
             await set_tenant_scope(session, context.tenant_id)

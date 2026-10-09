@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.configuration.schemas import HoursSettings, OperationalConfiguration
-from app.database.domain import TenantRecord
+from app.core.database.domain import TenantRecord
 from app.locations.models import Location
 
 

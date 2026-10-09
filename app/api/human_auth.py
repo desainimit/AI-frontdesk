@@ -21,7 +21,7 @@ from app.auth.human_schemas import (
     ResetPassword,
     TeamMemberUpdate,
 )
-from app.cache.redis import RedisClient
+from app.core.redis import RedisClient
 from app.platform.throttle import AuthenticationUnavailableError, check_login_limit
 
 router = APIRouter(prefix="/api/v1", tags=["human-auth"])

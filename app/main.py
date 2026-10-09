@@ -20,14 +20,14 @@ from app.api.postcall import router as postcall_router
 from app.api.saas import router as saas_router
 from app.api.telephony import router as telephony_router
 from app.api.tenancy import router as tenancy_router
-from app.cache.redis import RedisClient
-from app.config.logging import configure_logging
-from app.config.settings import Environment, Settings
 from app.conversation.factory import build_conversation_store
-from app.database.session import Database
+from app.core.database.session import Database
+from app.core.logging import configure_logging
+from app.core.redis import RedisClient
+from app.core.resources import Dependency, Resources
+from app.core.settings import Environment, Settings
+from app.core.telemetry import Telemetry
 from app.integrations.resolver import TenantIntegrationResolver
-from app.observability.tracing import Telemetry
-from app.resources import Dependency, Resources
 from app.voice.circuit import CircuitRegistry
 
 logger = logging.getLogger(__name__)

@@ -18,8 +18,8 @@ from app.audit.events import AuditAction
 from app.audit.service import AuditService
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, has_permission, require_permission
-from app.database.unit_of_work import Transaction, UnitOfWork
-from app.errors import AuthorizationError, NotFoundError
+from app.core.database.unit_of_work import Transaction, UnitOfWork
+from app.core.errors import AuthorizationError, NotFoundError
 from app.events.outbox import EventType
 
 

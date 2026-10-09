@@ -13,7 +13,7 @@ from app.configuration.hours import HoursPolicy
 from app.configuration.models import ConfigurationDraft, PublishedConfiguration
 from app.configuration.schemas import OperationalConfiguration, SaveConfiguration
 from app.configuration.service import ConfigurationService, seed_configuration
-from app.database.rls import set_tenant_scope
+from app.core.database.rls import set_tenant_scope
 from app.platform.onboarding import TenantOnboardingService, onboarding_defaults
 from app.platform.support import EnterSupportCommand, SupportAccessService
 from app.rbac.catalog import template_permissions

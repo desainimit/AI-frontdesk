@@ -12,7 +12,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 from websockets.asyncio.server import ServerConnection, serve
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 from app.voice.audio import pcm_frames
 from app.voice.http import retry_after_seconds
 from app.voice.pipeline import VoicePipeline

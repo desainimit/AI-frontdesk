@@ -21,9 +21,9 @@ from app.auth.workspace_schemas import (
     WorkspacesView,
 )
 from app.auth.workspaces import WorkspaceIdentityService
-from app.cache.redis import RedisClient
+from app.core.redis import RedisClient
+from app.core.security.rate_limit import enforce_rate_limit
 from app.platform.throttle import AuthenticationUnavailableError, check_login_limit
-from app.security.rate_limit import enforce_rate_limit
 
 router = APIRouter(prefix="/api/v2/identity", tags=["identity admission"])
 

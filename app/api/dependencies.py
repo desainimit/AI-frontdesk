@@ -2,7 +2,7 @@ from typing import cast
 
 from fastapi import Request
 
-from app.resources import Resources
+from app.core.resources import Resources
 
 
 def get_resources(request: Request) -> Resources:

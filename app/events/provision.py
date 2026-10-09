@@ -5,8 +5,8 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.config.settings import Settings
-from app.database.session import Database
+from app.core.database.session import Database
+from app.core.settings import Settings
 from app.events.store import OutboxStore
 
 

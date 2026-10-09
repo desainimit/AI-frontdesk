@@ -2,7 +2,7 @@ import os
 import subprocess
 import sys
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 
 
 def test_offline_migration_sql(settings: Settings) -> None:

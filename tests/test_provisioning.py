@@ -1,12 +1,12 @@
 import pytest
 from pydantic import SecretStr
 
-from app.config.settings import Settings
-from app.database.provision import (
+from app.core.database.provision import (
     ProvisioningConfigurationError,
     main,
     validate_role_configuration,
 )
+from app.core.settings import Settings
 
 
 def test_same_login_is_explained_without_exposing_credentials(

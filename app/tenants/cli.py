@@ -9,8 +9,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.config.settings import Settings
-from app.errors import ApplicationError
+from app.core.errors import ApplicationError
+from app.core.settings import Settings
 from app.tenants.bootstrap import BootstrapTenant, TenantBootstrapService
 
 

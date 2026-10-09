@@ -12,7 +12,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 from opentelemetry.trace import Tracer
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 
 TRACE_SAMPLE_RATIO = 0.1
 METRIC_EXPORT_INTERVAL_MILLIS = 30_000

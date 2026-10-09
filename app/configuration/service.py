@@ -51,8 +51,8 @@ from app.configuration.sections import (
     authority,
     in_publication_area,
 )
-from app.database.unit_of_work import enter_tenant_scope
-from app.errors import ConflictError, NotFoundError
+from app.core.database.unit_of_work import enter_tenant_scope
+from app.core.errors import ConflictError, NotFoundError
 from app.integrations.models import TenantIntegration
 from app.rbac.service import RevisionConflictError, audit
 from app.tenants.models import Tenant
@@ -221,7 +221,7 @@ class ConfigurationService:
         lock: bool = False,
     ) -> Tenant:
         require_permission(context, permission)
-        from app.database.rls import set_tenant_scope
+        from app.core.database.rls import set_tenant_scope
 
         await set_tenant_scope(session, context.tenant_id)
         query = select(Tenant).where(Tenant.id == context.tenant_id)

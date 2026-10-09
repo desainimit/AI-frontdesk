@@ -6,8 +6,8 @@ from typing import cast
 
 from redis.exceptions import RedisError
 
-from app.cache.redis import RedisClient
-from app.errors import ApplicationError
+from app.core.errors import ApplicationError
+from app.core.redis import RedisClient
 
 
 class RateLimitExceeded(ApplicationError):

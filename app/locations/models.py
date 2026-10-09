@@ -1,7 +1,7 @@
 from sqlalchemy import String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database.domain import TenantRecord
+from app.core.database.domain import TenantRecord
 
 
 class Location(TenantRecord):

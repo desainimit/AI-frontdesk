@@ -10,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 from app.platform.models import PlatformAuditEvent, PlatformUser
 from app.platform.passwords import hash_password
 from app.platform.schemas import SuperAdminSeed

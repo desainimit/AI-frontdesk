@@ -9,8 +9,8 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.auth.context import ActorType, RequestContext
-from app.config.logging import request_id_var
-from app.observability.tracing import Telemetry
+from app.core.logging import request_id_var
+from app.core.telemetry import Telemetry
 
 logger = logging.getLogger(__name__)
 

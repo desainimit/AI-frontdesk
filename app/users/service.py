@@ -4,8 +4,8 @@ from app.audit.events import AuditAction
 from app.audit.service import AuditService
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
-from app.database.unit_of_work import UnitOfWork
-from app.errors import AuthenticationError, NotFoundError
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import AuthenticationError, NotFoundError
 from app.users.schemas import UserView
 
 

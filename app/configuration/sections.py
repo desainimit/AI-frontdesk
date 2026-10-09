@@ -5,7 +5,7 @@ from typing import Literal
 
 from app.auth.context import RequestContext
 from app.auth.policies import Permission, has_permission, require_permission
-from app.errors import ApplicationError, NotFoundError
+from app.core.errors import ApplicationError, NotFoundError
 
 ConfigurationSection = Literal[
     "business",

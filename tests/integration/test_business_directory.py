@@ -25,11 +25,11 @@ from app.calls.service import CallContext
 from app.configuration.models import ConfigurationDraft
 from app.configuration.schemas import SaveConfiguration
 from app.configuration.service import ConfigurationService
-from app.database.rls import set_tenant_scope
-from app.errors import ConflictError
+from app.core.database.rls import set_tenant_scope
+from app.core.errors import ConflictError
+from app.core.security.encryption import SecretCipher
 from app.main import create_app
 from app.rbac.service import RevisionConflictError
-from app.security.encryption import SecretCipher
 from tests.fakes import FakeDependency
 from tests.integration.test_saas import authenticate
 from tests.integration.test_tenancy import TenancyFixture

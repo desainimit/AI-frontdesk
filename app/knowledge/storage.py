@@ -9,7 +9,7 @@ import boto3
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 
 
 class ObjectStorage(Protocol):

@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from cryptography.exceptions import InvalidTag
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
-from app.errors import ConflictError
-from app.security.encryption import SecretCipher
+from app.core.errors import ConflictError
+from app.core.security.encryption import SecretCipher
 
 
 class CursorAnchor(BaseModel):

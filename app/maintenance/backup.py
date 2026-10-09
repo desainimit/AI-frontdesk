@@ -12,7 +12,7 @@ from pathlib import Path
 
 from sqlalchemy.engine import make_url
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 
 
 def _connection(settings: Settings) -> tuple[dict[str, str], str]:

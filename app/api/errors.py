@@ -7,11 +7,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException
 
-from app.config.logging import request_id_var
-from app.errors import ApplicationError as ApplicationError
-from app.errors import AuthenticationError
-from app.errors import ConflictError as ConflictError
-from app.errors import NotFoundError as NotFoundError
+from app.core.errors import ApplicationError as ApplicationError
+from app.core.errors import AuthenticationError
+from app.core.errors import ConflictError as ConflictError
+from app.core.errors import NotFoundError as NotFoundError
+from app.core.logging import request_id_var
 
 logger = logging.getLogger(__name__)
 

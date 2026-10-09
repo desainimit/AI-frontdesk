@@ -1,4 +1,4 @@
-from app.errors import ApplicationError, ConflictError
+from app.core.errors import ApplicationError, ConflictError
 
 
 class SlotUnavailableError(ConflictError):

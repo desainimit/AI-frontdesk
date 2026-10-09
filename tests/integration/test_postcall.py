@@ -8,8 +8,8 @@ from sqlalchemy import select
 from app.calls.models import PhoneNumber
 from app.calls.service import CallService
 from app.conversation.manager import ConversationStateManager
-from app.database.session import Database
-from app.errors import NotFoundError
+from app.core.database.session import Database
+from app.core.errors import NotFoundError
 from app.postcall.schemas import PostCallInput
 from app.postcall.service import PostCallQueryService
 from app.workflows.activities import WorkflowActivities

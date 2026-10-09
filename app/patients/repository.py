@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.context import RequestContext
 from app.calls.models import Call
-from app.database.domain import ScopedRepository
+from app.core.database.domain import ScopedRepository
 from app.patients.models import Patient
 
 

@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.audit.models import AuditEvent
 from app.calls.service import CallService
-from app.errors import NotFoundError
+from app.core.errors import NotFoundError
 from app.main import create_app
 from tests.fakes import FakeDependency
 from tests.integration.test_appointment_agent import setup_call

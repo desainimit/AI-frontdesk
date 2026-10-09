@@ -11,9 +11,9 @@ from sqlalchemy import select, update
 from app.auth.human_models import AuthChallenge, HumanAccount, HumanIdentity
 from app.auth.human_schemas import AcceptInvitation, EmailIdentity, InvitationToken, ResetPassword
 from app.auth.identity import identity_scope
-from app.database.rls import set_tenant_scope
-from app.database.unit_of_work import UnitOfWork
-from app.errors import AuthenticationError, ConflictError
+from app.core.database.rls import set_tenant_scope
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import AuthenticationError, ConflictError
 from app.users.models import User
 from app.users.service import UserService
 from tests.integration.test_human_auth import PASSWORD, Harness

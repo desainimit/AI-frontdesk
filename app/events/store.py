@@ -7,7 +7,7 @@ from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
-from app.database.rls import UnsafeDatabaseRoleError
+from app.core.database.rls import UnsafeDatabaseRoleError
 from app.events.models import OutboxEvent
 
 

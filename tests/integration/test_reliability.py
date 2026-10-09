@@ -12,8 +12,8 @@ from app.appointments.commands import CancelAppointment, RescheduleAppointment
 from app.appointments.models import Appointment
 from app.appointments.service import AppointmentService
 from app.audit.events import AuditAction
-from app.database.rls import UnsafeDatabaseRoleError, set_tenant_scope
-from app.database.session import Database
+from app.core.database.rls import UnsafeDatabaseRoleError, set_tenant_scope
+from app.core.database.session import Database
 from app.events.idempotency import IdempotencyConflictError
 from app.events.models import IdempotencyRecord, OutboxEvent
 from app.events.outbox import EventType, OutboxRepository

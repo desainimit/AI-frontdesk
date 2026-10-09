@@ -6,7 +6,7 @@ first and asks for the platform provider only when there is none.
 
 from collections.abc import Callable
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 from app.integrations.resolver import ResolvedIntegration
 from app.voice.stt.azure import AzureSTTProvider
 from app.voice.stt.base import SpeechToTextProvider

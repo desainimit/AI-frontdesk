@@ -6,8 +6,8 @@ from uuid import UUID
 from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database.base import Base
-from app.database.types import IdentityMixin
+from app.core.database.base import Base
+from app.core.database.types import IdentityMixin
 
 
 class IdentityMembership(IdentityMixin, Base):

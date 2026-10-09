@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import SUPPORT_PERMISSIONS, Permission
 from app.auth.tokens import digest_token
-from app.database.rls import set_tenant_scope, verify_runtime_role
-from app.errors import AuthenticationError, AuthorizationError, NotFoundError
+from app.core.database.rls import set_tenant_scope, verify_runtime_role
+from app.core.errors import AuthenticationError, AuthorizationError, NotFoundError
 from app.platform.models import PlatformAuditEvent, PlatformSession, PlatformUser, SupportSession
 from app.platform.policies import (
     PlatformContext,

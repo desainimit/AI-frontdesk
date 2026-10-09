@@ -1,7 +1,7 @@
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 
 
 def test_secrets_masked_and_urls_validated(monkeypatch: pytest.MonkeyPatch) -> None:

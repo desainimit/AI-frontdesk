@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.search import contains
+from app.core.database.search import contains
 from app.knowledge.models import Document, DocumentChunk, DocumentVersion, KnowledgeJob
 
 
@@ -37,7 +37,7 @@ class KnowledgeRepository:
                 select(Document).where(Document.id == document_id).with_for_update()
             )
             if document is None or document.status == "archived":
-                from app.errors import NotFoundError
+                from app.core.errors import NotFoundError
 
                 raise NotFoundError()
             document.active_version += 1

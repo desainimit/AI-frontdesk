@@ -18,11 +18,11 @@ from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.config.settings import Settings
-from app.database.rls import set_tenant_scope, verify_runtime_role
-from app.errors import ApplicationError
+from app.core.database.rls import set_tenant_scope, verify_runtime_role
+from app.core.errors import ApplicationError
+from app.core.security.encryption import SecretCipher
+from app.core.settings import Settings
 from app.integrations.models import CredentialVersion, TenantIntegration
-from app.security.encryption import SecretCipher
 
 MAX_CACHE_ENTRIES = 2048
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
 
 from app.api.dependencies import get_resources
-from app.resources import Dependency, Resources
+from app.core.resources import Dependency, Resources
 
 router = APIRouter(prefix="/health", tags=["health"])
 logger = logging.getLogger(__name__)

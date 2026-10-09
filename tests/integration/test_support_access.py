@@ -13,9 +13,9 @@ from app.api.platform import login_limit
 from app.audit.models import AuditEvent
 from app.calls.models import PhoneNumber
 from app.calls.service import CallService
-from app.database.rls import set_tenant_scope
-from app.database.unit_of_work import UnitOfWork
-from app.errors import AuthenticationError
+from app.core.database.rls import set_tenant_scope
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import AuthenticationError
 from app.events.models import IdempotencyRecord
 from app.knowledge.models import Document, DocumentVersion
 from app.main import create_app

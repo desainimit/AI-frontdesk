@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 from pydantic import SecretStr
 
-from app.errors import AuthenticationError
+from app.core.errors import AuthenticationError
 
 
 @dataclass(frozen=True)

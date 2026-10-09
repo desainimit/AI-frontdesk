@@ -26,8 +26,8 @@ from app.configuration.defaults import (
 from app.configuration.models import ConfigurationDraft
 from app.configuration.schemas import OperationalConfiguration
 from app.conversation.locales import LanguagePolicy
-from app.database.rls import set_tenant_scope
-from app.errors import ConflictError, NotFoundError
+from app.core.database.rls import set_tenant_scope
+from app.core.errors import ConflictError, NotFoundError
 from app.events.idempotency import IdempotencyConflictError, InvalidIdempotencyKeyError
 from app.locations.models import Location
 from app.locations.schemas import CreateLocation

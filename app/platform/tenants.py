@@ -5,8 +5,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.configuration.models import ConfigurationDraft
-from app.database.search import contains
-from app.errors import ConflictError, NotFoundError
+from app.core.database.search import contains
+from app.core.errors import ConflictError, NotFoundError
 from app.platform.models import PlatformAuditEvent
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.platform.service import validate_context

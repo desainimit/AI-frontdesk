@@ -20,11 +20,11 @@ from app.auth.context import ActorType, RequestContext, Role
 from app.auth.models import ApiCredential
 from app.auth.policies import Permission
 from app.auth.service import AuthenticationService
-from app.config.settings import Settings
-from app.database.rls import UnsafeDatabaseRoleError, set_tenant_scope
-from app.database.session import Database
-from app.database.unit_of_work import UnitOfWork
-from app.errors import AuthenticationError, AuthorizationError, ConflictError
+from app.core.database.rls import UnsafeDatabaseRoleError, set_tenant_scope
+from app.core.database.session import Database
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import AuthenticationError, AuthorizationError, ConflictError
+from app.core.settings import Settings
 from app.main import create_app
 from app.tenants.bootstrap import BootstrapResult, BootstrapTenant, TenantBootstrapService
 from app.tenants.models import Tenant

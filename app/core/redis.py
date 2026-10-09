@@ -2,7 +2,7 @@ from redis.asyncio import Redis
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 
 MAX_CONNECTIONS = 20
 

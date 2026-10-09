@@ -4,7 +4,7 @@ from uuid import UUID
 from sqlalchemy import CheckConstraint, DateTime, ForeignKeyConstraint, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database.domain import TenantRecord
+from app.core.database.domain import TenantRecord
 
 
 class PhoneNumber(TenantRecord):

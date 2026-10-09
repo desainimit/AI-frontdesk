@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.appointments.repository import AppointmentRepository, AvailabilityRepository
 from app.audit.repository import AuditRepository
 from app.auth.context import ActorType, RequestContext
-from app.database.rls import set_tenant_scope, verify_runtime_role
-from app.errors import AuthenticationError, AuthorizationError
+from app.core.database.rls import set_tenant_scope, verify_runtime_role
+from app.core.errors import AuthenticationError, AuthorizationError
 from app.events.idempotency import IdempotencyRepository
 from app.events.outbox import OutboxRepository
 from app.knowledge.repository import KnowledgeRepository

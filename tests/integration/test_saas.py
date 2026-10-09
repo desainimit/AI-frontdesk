@@ -16,9 +16,9 @@ from app.configuration.models import ConfigurationEvent, PublishedConfiguration
 from app.configuration.schemas import ConfigurationTest, SaveConfiguration
 from app.configuration.service import ConfigurationService, is_business_open, published_for_tenant
 from app.conversation.locales import LanguagePolicy
-from app.database.rls import set_tenant_scope
-from app.database.unit_of_work import UnitOfWork
-from app.errors import AuthorizationError, ConflictError, NotFoundError
+from app.core.database.rls import set_tenant_scope
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import AuthorizationError, ConflictError, NotFoundError
 from app.platform.support import EnterSupportCommand, SupportAccessService
 from app.rbac.models import TenantRole
 from app.rbac.schemas import PermissionGrant, RoleCommand, UpdateRole

@@ -1,1 +1,0 @@
-"""Ephemeral state infrastructure."""

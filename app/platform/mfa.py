@@ -13,13 +13,13 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.config.settings import Settings
-from app.errors import ApplicationError, AuthenticationError, ConflictError
+from app.core.errors import ApplicationError, AuthenticationError, ConflictError
+from app.core.security.encryption import SecretCipher
+from app.core.settings import Settings
 from app.platform.models import PlatformAuditEvent, PlatformAuthenticator, PlatformSession
 from app.platform.passwords import verify_password
 from app.platform.policies import PlatformContext
 from app.platform.service import validate_context
-from app.security.encryption import SecretCipher
 
 
 class MfaUnavailableError(ApplicationError):

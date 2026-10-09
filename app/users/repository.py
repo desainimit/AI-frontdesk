@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.context import RequestContext
 from app.auth.human_models import HumanAccount
-from app.database.search import contains
+from app.core.database.search import contains
 from app.rbac.models import TenantRole
 from app.users.models import User
 

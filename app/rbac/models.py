@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy import Boolean, ForeignKeyConstraint, Integer, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database.domain import TenantRecord
+from app.core.database.domain import TenantRecord
 
 
 class TenantRole(TenantRecord):

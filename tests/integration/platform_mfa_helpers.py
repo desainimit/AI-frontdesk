@@ -10,7 +10,7 @@ from uuid import uuid4
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 from app.platform.bootstrap import seed_super_admin
 from app.platform.mfa import MfaCode, PlatformMfaService, totp
 from app.platform.policies import PlatformContext

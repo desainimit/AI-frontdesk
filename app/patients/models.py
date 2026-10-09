@@ -3,7 +3,7 @@ from datetime import date
 from sqlalchemy import Date, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database.domain import TenantRecord
+from app.core.database.domain import TenantRecord
 
 
 class Patient(TenantRecord):

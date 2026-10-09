@@ -4,9 +4,9 @@ from app.audit.events import AuditAction
 from app.audit.service import AuditService
 from app.auth.context import RequestContext
 from app.auth.policies import Permission, require_permission
-from app.database.search import contains
-from app.database.unit_of_work import UnitOfWork
-from app.errors import NotFoundError
+from app.core.database.search import contains
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import NotFoundError
 from app.providers.models import Provider
 from app.providers.schemas import CreateProvider, ProviderView
 

@@ -23,9 +23,9 @@ from app.calls.service import CallContext, CallService
 from app.calls.verification import VerificationPolicy
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConversationState, FlowStep
-from app.database.session import Database
-from app.database.unit_of_work import UnitOfWork
-from app.errors import AuthorizationError, ConflictError, NotFoundError
+from app.core.database.session import Database
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import AuthorizationError, ConflictError, NotFoundError
 from app.events.models import OutboxEvent
 from app.patients.schemas import UpdatePatientVerification
 from app.patients.service import PatientService

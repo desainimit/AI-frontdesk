@@ -17,9 +17,9 @@ from app.agents.runtime import AgentRuntime
 from app.agents.schemas import Intent
 from app.agents.tools import ToolRegistry
 from app.calls.service import CallContext
-from app.config.settings import Settings
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConfirmationStatus, ConversationState, SafetyDecision
+from app.core.settings import Settings
 from app.safety.classifier import SafetySignal
 from app.safety.engine import SafetyEngine
 from app.safety.normalization import normalize_transcript

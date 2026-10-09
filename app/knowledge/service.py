@@ -10,8 +10,8 @@ from app.audit.events import AuditAction
 from app.audit.service import AuditService
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
-from app.database.unit_of_work import UnitOfWork
-from app.errors import ConflictError, NotFoundError
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import ConflictError, NotFoundError
 from app.knowledge.embeddings import Embedder
 from app.knowledge.schemas import DocumentView, KnowledgeResult, SourceView, VersionView
 from app.knowledge.storage import ObjectStorage
@@ -139,7 +139,7 @@ class KnowledgeService:
         if context.actor_type in {ActorType.USER, ActorType.PLATFORM_SUPPORT}:
             require_permission(context, Permission.KNOWLEDGE_READ)
         elif context.actor_type != ActorType.CALLER:
-            from app.errors import AuthorizationError
+            from app.core.errors import AuthorizationError
 
             raise AuthorizationError()
         if not 5 <= len(question.strip()) <= 300 or not 1 <= limit <= 5:

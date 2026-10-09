@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 from app.main import create_app
 from tests.fakes import FakeDependency
 

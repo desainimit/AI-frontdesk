@@ -18,9 +18,9 @@ from app.auth.human_models import HumanAccount
 from app.auth.models import ApiCredential
 from app.auth.policies import Permission
 from app.calls.models import PhoneNumber
-from app.config.settings import Settings
 from app.configuration.models import ConfigurationDraft
-from app.errors import ApplicationError, NotFoundError
+from app.core.errors import ApplicationError, NotFoundError
+from app.core.settings import Settings
 from app.integrations.catalog import Purpose
 from app.integrations.models import TenantIntegration
 from app.integrations.resolver import TenantIntegrationResolver

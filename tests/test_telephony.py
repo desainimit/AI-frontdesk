@@ -7,7 +7,7 @@ from pydantic import SecretStr, ValidationError
 from twilio.request_validator import RequestValidator  # pyright: ignore[reportMissingTypeStubs]
 
 from app.calls.service import CallContext
-from app.config.settings import Settings
+from app.core.settings import Settings
 from app.voice.twilio import decode_audio, parse_message, signature_valid, stream_token, twiml
 
 

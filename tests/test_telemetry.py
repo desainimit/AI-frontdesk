@@ -5,9 +5,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
-from app.config.settings import Settings
+from app.core.settings import Settings
+from app.core.telemetry import Telemetry
 from app.main import create_app
-from app.observability.tracing import Telemetry
 from tests.fakes import FakeDependency
 
 

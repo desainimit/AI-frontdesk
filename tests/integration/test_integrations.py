@@ -17,10 +17,10 @@ from app.audit.models import AuditEvent
 from app.auth.context import ActorType, RequestContext, Role
 from app.calls.models import Call, PhoneNumber
 from app.calls.service import CallBinding, CallService
-from app.config.settings import Settings
 from app.conversation.store import MemoryConversationStateStore
-from app.database.rls import set_tenant_scope
-from app.errors import AuthorizationError, ConflictError, NotFoundError
+from app.core.database.rls import set_tenant_scope
+from app.core.errors import AuthorizationError, ConflictError, NotFoundError
+from app.core.settings import Settings
 from app.events.idempotency import IdempotencyConflictError
 from app.integrations.catalog import Purpose
 from app.integrations.models import CredentialVersion, TenantIntegration

@@ -3,9 +3,9 @@ from typing import cast
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config.settings import Settings
+from app.core.settings import Settings
+from app.core.telemetry import Telemetry
 from app.main import create_app
-from app.observability.tracing import Telemetry
 from tests.fakes import FakeDependency
 
 

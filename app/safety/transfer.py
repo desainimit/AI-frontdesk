@@ -7,7 +7,7 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 import httpx
 
 from app.calls.service import CallContext
-from app.config.settings import Settings
+from app.core.settings import Settings
 
 if TYPE_CHECKING:
     from app.voice.twilio import TwilioCredentials

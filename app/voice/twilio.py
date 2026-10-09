@@ -14,7 +14,7 @@ from pydantic import SecretStr
 from twilio.request_validator import RequestValidator  # pyright: ignore[reportMissingTypeStubs]
 
 from app.calls.service import CallContext
-from app.config.settings import Settings
+from app.core.settings import Settings
 
 STREAM_TOKEN_SECONDS = 300
 

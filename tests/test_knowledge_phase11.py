@@ -12,7 +12,7 @@ from sqlalchemy.dialects import postgresql
 from app.agents.language import spoken
 from app.auth.context import ActorType, RequestContext, Role
 from app.auth.policies import Permission, require_permission
-from app.errors import AuthorizationError
+from app.core.errors import AuthorizationError
 from app.knowledge.models import DocumentChunk
 from app.knowledge.parsing import parse_document
 from app.knowledge.schemas import KnowledgeQuery

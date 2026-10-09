@@ -10,8 +10,8 @@ from app.calls.models import Call, PhoneNumber
 from app.calls.service import CallContext, audit
 from app.configuration.models import PublishedConfiguration
 from app.configuration.schemas import OperationalConfiguration
-from app.database.rls import set_tenant_scope, verify_runtime_role
-from app.errors import AuthorizationError
+from app.core.database.rls import set_tenant_scope, verify_runtime_role
+from app.core.errors import AuthorizationError
 from app.locations.models import Location
 from app.providers.models import Provider
 from app.tenants.models import Tenant
@@ -161,7 +161,7 @@ class CallDirectoryService:
         # Focused repository read, not model-supplied display text.
         from sqlalchemy import select
 
-        from app.database.rls import set_tenant_scope, verify_runtime_role
+        from app.core.database.rls import set_tenant_scope, verify_runtime_role
         from app.locations.models import Location
         from app.providers.models import Provider
 

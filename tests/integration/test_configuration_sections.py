@@ -14,8 +14,8 @@ from app.configuration.sections import (
     SectionPublicationConflictError,
 )
 from app.configuration.service import ConfigurationService
-from app.database.rls import set_tenant_scope
-from app.errors import AuthorizationError
+from app.core.database.rls import set_tenant_scope
+from app.core.errors import AuthorizationError
 from app.main import create_app
 from app.rbac.schemas import PermissionGrant, RoleCommand
 from app.rbac.service import RevisionConflictError, RoleService, bind_user_permissions

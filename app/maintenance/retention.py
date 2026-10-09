@@ -8,9 +8,9 @@ from uuid import UUID
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config.settings import Settings
-from app.database.rls import set_tenant_scope
-from app.database.session import Database
+from app.core.database.rls import set_tenant_scope
+from app.core.database.session import Database
+from app.core.settings import Settings
 from app.events.store import verify_worker_role
 from app.postcall.models import CallTranscript, FollowUpEvent, PostCallReport
 

@@ -13,11 +13,11 @@ from app.auth.policies import require_tenant
 from app.auth.service import AuthenticationService
 from app.calls.verification import VerificationPolicy
 from app.conversation.locales import LanguagePolicy
-from app.database.session import Database
-from app.database.unit_of_work import UnitOfWork
-from app.errors import AuthenticationError, AuthorizationError
+from app.core.database.session import Database
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import AuthenticationError, AuthorizationError
+from app.core.security.rate_limit import enforce_rate_limit
 from app.platform.support import SupportAccessService, SupportSessionView
-from app.security.rate_limit import enforce_rate_limit
 from app.tenants.schemas import TenantName, TenantView, TransferDestination
 from app.tenants.service import TenantService
 from app.users.schemas import UserView

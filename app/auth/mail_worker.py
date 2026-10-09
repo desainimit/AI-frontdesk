@@ -17,9 +17,9 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.human_models import AuthMail
-from app.config.settings import Settings
+from app.core.security.encryption import SecretCipher
+from app.core.settings import Settings
 from app.events.store import verify_worker_role
-from app.security.encryption import SecretCipher
 
 logger = logging.getLogger(__name__)
 

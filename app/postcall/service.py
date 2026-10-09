@@ -11,8 +11,8 @@ from app.audit.repository import AuditRepository
 from app.audit.service import AuditService
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
-from app.database.rls import set_tenant_scope, verify_runtime_role
-from app.errors import NotFoundError
+from app.core.database.rls import set_tenant_scope, verify_runtime_role
+from app.core.errors import NotFoundError
 from app.postcall.models import FollowUpEvent, PostCallReport
 from app.postcall.schemas import DailyCallAnalytics, FollowUpView, PostCallReportView
 

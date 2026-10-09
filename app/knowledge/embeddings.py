@@ -13,7 +13,7 @@ import httpx
 from google.genai import Client, types
 from pydantic import SecretStr
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 
 if TYPE_CHECKING:
     from app.integrations.resolver import TenantIntegrationResolver

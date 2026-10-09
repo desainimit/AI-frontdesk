@@ -7,8 +7,8 @@ from fastapi.testclient import TestClient
 from app.auth.context import ActorType, RequestContext, Role
 from app.auth.policies import Permission, require_permission, require_tenant
 from app.auth.tokens import digest_token, issue_token, parse_locator
-from app.config.settings import Settings
-from app.errors import AuthenticationError, AuthorizationError
+from app.core.errors import AuthenticationError, AuthorizationError
+from app.core.settings import Settings
 from app.main import create_app
 from tests.fakes import FakeDependency
 

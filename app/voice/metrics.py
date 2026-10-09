@@ -1,6 +1,6 @@
 from opentelemetry.metrics import Counter, Histogram, Meter
 
-from app.observability.tracing import Telemetry
+from app.core.telemetry import Telemetry
 
 
 class VoiceMetrics:

@@ -4,8 +4,8 @@ from contextlib import asynccontextmanager
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.config.settings import Settings
-from app.database.rls import verify_runtime_role
+from app.core.database.rls import verify_runtime_role
+from app.core.settings import Settings
 
 POOL_TIMEOUT_SECONDS = 5
 POOL_RECYCLE_SECONDS = 1800

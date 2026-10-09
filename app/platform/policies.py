@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from uuid import UUID
 
-from app.errors import AuthorizationError
+from app.core.errors import AuthorizationError
 
 
 class PlatformRole(StrEnum):

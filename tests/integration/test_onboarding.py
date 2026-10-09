@@ -9,9 +9,9 @@ from sqlalchemy import func, select, text
 
 from app.api.platform import login_limit
 from app.auth.models import ApiCredential
-from app.database.rls import set_tenant_scope
-from app.database.session import Database
-from app.errors import AuthenticationError, ConflictError, NotFoundError
+from app.core.database.rls import set_tenant_scope
+from app.core.database.session import Database
+from app.core.errors import AuthenticationError, ConflictError, NotFoundError
 from app.events.idempotency import IdempotencyConflictError
 from app.locations.models import Location
 from app.main import create_app

@@ -7,8 +7,8 @@ from sqlalchemy import CheckConstraint, ForeignKey, ForeignKeyConstraint, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database.base import Base
-from app.database.types import IdentityMixin, TimestampMixin
+from app.core.database.base import Base
+from app.core.database.types import IdentityMixin, TimestampMixin
 
 
 class TenantOnboarding(IdentityMixin, TimestampMixin, Base):

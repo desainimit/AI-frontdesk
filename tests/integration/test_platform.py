@@ -10,9 +10,9 @@ from sqlalchemy import select, text, update
 from sqlalchemy.exc import DBAPIError
 
 from app.api.platform import login_limit
-from app.cache.redis import RedisClient
-from app.database.rls import set_tenant_scope
-from app.errors import AuthenticationError
+from app.core.database.rls import set_tenant_scope
+from app.core.errors import AuthenticationError
+from app.core.redis import RedisClient
 from app.main import create_app
 from app.patients.models import Patient
 from app.platform.bootstrap import seed_super_admin

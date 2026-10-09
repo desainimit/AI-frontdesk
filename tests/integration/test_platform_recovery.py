@@ -8,7 +8,7 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy import select, update
 
-from app.errors import AuthenticationError, ConflictError
+from app.core.errors import AuthenticationError, ConflictError
 from app.platform.bootstrap import seed_super_admin
 from app.platform.mfa import MfaCode, PlatformMfaService, RecoveryIssue, RecoveryReplace, totp
 from app.platform.models import PlatformAuthenticator

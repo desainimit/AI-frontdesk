@@ -3,7 +3,7 @@ import os
 import pytest
 from pydantic import SecretStr
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 
 # A developer's .env may hold real provider keys, a real mail server and public
 # addresses. No test may ever pick them up: a test that built a real client would

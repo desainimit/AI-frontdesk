@@ -25,9 +25,9 @@ from app.auth.workspace_schemas import (
     WorkspaceSelection,
     WorkspacesView,
 )
-from app.config.settings import Settings
-from app.database.rls import set_tenant_scope, verify_runtime_role
-from app.errors import AuthenticationError, AuthorizationError
+from app.core.database.rls import set_tenant_scope, verify_runtime_role
+from app.core.errors import AuthenticationError, AuthorizationError
+from app.core.settings import Settings
 from app.platform.passwords import DUMMY_HASH, verify_password
 from app.rbac.models import TenantRole
 from app.tenants.models import Tenant

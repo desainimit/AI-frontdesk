@@ -13,9 +13,9 @@ from uuid import UUID
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.cache.redis import RedisClient
 from app.configuration.models import ConfigurationEvent
-from app.database.rls import UnsafeDatabaseRoleError
+from app.core.database.rls import UnsafeDatabaseRoleError
+from app.core.redis import RedisClient
 from app.events.store import verify_worker_role
 
 

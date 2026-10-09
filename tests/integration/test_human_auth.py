@@ -25,17 +25,17 @@ from app.auth.human_schemas import (
 )
 from app.auth.mail_worker import deliver_one
 from app.auth.service import AuthenticationService
-from app.config.settings import Settings
-from app.database.rls import set_tenant_scope
-from app.database.session import Database
-from app.database.unit_of_work import UnitOfWork
-from app.errors import AuthenticationError, AuthorizationError, ConflictError, NotFoundError
+from app.core.database.rls import set_tenant_scope
+from app.core.database.session import Database
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import AuthenticationError, AuthorizationError, ConflictError, NotFoundError
+from app.core.security.encryption import SecretCipher
+from app.core.settings import Settings
 from app.platform.bootstrap import seed_super_admin
 from app.platform.onboarding import OnboardingDraft, OnboardingView, TenantOnboardingService
 from app.platform.policies import PlatformContext
 from app.platform.service import PlatformAuthenticationService
 from app.platform.support import EnterSupportCommand, SupportAccessService
-from app.security.encryption import SecretCipher
 from app.tenants.schemas import TenantName
 from app.tenants.service import TenantService
 from app.users.models import User

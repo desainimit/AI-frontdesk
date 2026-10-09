@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.auth.context import ActorType, RequestContext, Role
 from app.auth.models import ApiCredential
 from app.auth.tokens import digest_token, parse_locator
-from app.database.rls import set_tenant_scope, verify_runtime_role
-from app.errors import AuthenticationError
+from app.core.database.rls import set_tenant_scope, verify_runtime_role
+from app.core.errors import AuthenticationError
 from app.tenants.models import Tenant
 from app.users.models import User
 

@@ -1,7 +1,7 @@
 import json
 import logging
 
-from app.config.logging import JsonFormatter, request_id_var
+from app.core.logging import JsonFormatter, request_id_var
 
 
 def test_logging_allowlist_and_request_correlation() -> None:

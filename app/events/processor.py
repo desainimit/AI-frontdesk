@@ -5,6 +5,7 @@ from time import perf_counter
 from pydantic import ValidationError
 
 from app.appointments.schemas import AppointmentView
+from app.core.telemetry import Telemetry
 from app.events.outbox import EventType
 from app.events.providers import (
     Notification,
@@ -16,7 +17,6 @@ from app.events.providers import (
     TransientProviderError,
 )
 from app.events.store import OutboxStore
-from app.observability.tracing import Telemetry
 
 logger = logging.getLogger(__name__)
 

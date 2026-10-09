@@ -22,7 +22,7 @@ from app.appointments.commands import (
 )
 from app.appointments.schemas import AppointmentView, AvailabilityView, Slot
 from app.appointments.service import AppointmentService
-from app.database.unit_of_work import UnitOfWork
+from app.core.database.unit_of_work import UnitOfWork
 from app.locations.schemas import CreateLocation, LocationView
 from app.locations.service import LocationService
 from app.patients.schemas import CreatePatient, PatientView, UpdatePatientVerification

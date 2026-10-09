@@ -16,8 +16,8 @@ from app.calls.models import Call, PhoneNumber
 from app.configuration.models import PublishedConfiguration
 from app.configuration.schemas import OperationalConfiguration
 from app.conversation.locales import LanguagePolicy
-from app.database.rls import set_tenant_scope, verify_runtime_role
-from app.errors import AuthorizationError, ConflictError, NotFoundError
+from app.core.database.rls import set_tenant_scope, verify_runtime_role
+from app.core.errors import AuthorizationError, ConflictError, NotFoundError
 from app.platform.models import PlatformAuditEvent
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.platform.tenants import platform_scope

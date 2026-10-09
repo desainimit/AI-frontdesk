@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from app.api.platform import PlatformIdentity
 from app.api.tenancy import Context, DatabaseDependency
 from app.auth.context import RequestContext
-from app.errors import AuthenticationError
+from app.core.errors import AuthenticationError
 from app.integrations.catalog import ProviderCatalogEntry, catalog_entries
 from app.integrations.resolver import TenantIntegrationResolver
 from app.integrations.service import (

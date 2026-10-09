@@ -8,8 +8,9 @@ from app.api.dependencies import get_resources
 from app.api.tenancy import DatabaseDependency, Limit, Offset, Search
 from app.auth.human import HumanAuthenticationService
 from app.auth.human_schemas import InvitationView
-from app.cache.redis import RedisClient
-from app.errors import AuthenticationError
+from app.core.errors import AuthenticationError
+from app.core.redis import RedisClient
+from app.core.security.rate_limit import enforce_rate_limit
 from app.platform.mfa import (
     EnrollmentView,
     MfaCode,
@@ -38,7 +39,6 @@ from app.platform.tenants import (
     TenantStatusCommand,
 )
 from app.platform.throttle import AuthenticationUnavailableError, check_login_limit
-from app.security.rate_limit import enforce_rate_limit
 from app.tenants.schemas import TenantView
 
 router = APIRouter(prefix="/api/v1/platform", tags=["platform"])

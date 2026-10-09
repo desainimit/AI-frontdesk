@@ -11,8 +11,8 @@ from app.audit.models import AuditEvent
 from app.calls.service import CallService
 from app.conversation.locales import LanguagePolicy
 from app.conversation.manager import ConversationStateManager
-from app.database.unit_of_work import UnitOfWork
-from app.errors import AuthorizationError, NotFoundError
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import AuthorizationError, NotFoundError
 from app.main import create_app
 from app.tenants.models import Tenant
 from app.tenants.service import TenantService

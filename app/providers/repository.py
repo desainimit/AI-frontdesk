@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.context import RequestContext
-from app.database.domain import ScopedRepository
+from app.core.database.domain import ScopedRepository
 from app.providers.models import Provider
 
 

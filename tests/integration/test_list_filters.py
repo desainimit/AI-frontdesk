@@ -10,8 +10,8 @@ from app.appointments.service import AppointmentService
 from app.audit.queries import AuditQueryService
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, has_permission
-from app.database.rls import set_tenant_scope
-from app.database.unit_of_work import UnitOfWork
+from app.core.database.rls import set_tenant_scope
+from app.core.database.unit_of_work import UnitOfWork
 from app.main import create_app
 from app.patients.schemas import CreatePatient, PatientView
 from app.patients.service import PatientService

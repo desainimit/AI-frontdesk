@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.calls.models import Call
-from app.database.rls import set_tenant_scope
+from app.core.database.rls import set_tenant_scope
 from app.events.store import verify_worker_role
 from app.postcall.models import CallTranscript, FollowUpEvent, PostCallReport
 from app.postcall.schemas import PostCallInput, analyze_post_call

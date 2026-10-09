@@ -12,8 +12,8 @@ from app.audit.service import AuditService
 from app.auth.context import ActorType, RequestContext, Role
 from app.auth.models import ApiCredential
 from app.auth.tokens import issue_token
-from app.database.rls import set_tenant_scope
-from app.errors import ConflictError, NotFoundError
+from app.core.database.rls import set_tenant_scope
+from app.core.errors import ConflictError, NotFoundError
 from app.tenants.models import Tenant
 from app.users.models import User
 

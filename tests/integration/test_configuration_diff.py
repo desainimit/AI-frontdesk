@@ -6,7 +6,7 @@ import pytest
 
 from app.configuration.schemas import SaveConfiguration
 from app.configuration.service import ConfigurationService
-from app.errors import AuthorizationError
+from app.core.errors import AuthorizationError
 from app.rbac.service import RevisionConflictError
 from tests.integration.test_saas import authenticate
 from tests.integration.test_tenancy import TenancyFixture

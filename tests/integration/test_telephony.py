@@ -18,8 +18,8 @@ from app.audit.models import AuditEvent
 from app.calls.models import Call, PhoneNumber
 from app.calls.service import CallContext, CallService
 from app.conversation.store import MemoryConversationStateStore
-from app.database.rls import set_tenant_scope
-from app.errors import AuthorizationError, ConflictError, NotFoundError
+from app.core.database.rls import set_tenant_scope
+from app.core.errors import AuthorizationError, ConflictError, NotFoundError
 from app.main import create_app
 from app.voice.twilio import stream_token
 from tests.fake_llm import MockLLMProvider

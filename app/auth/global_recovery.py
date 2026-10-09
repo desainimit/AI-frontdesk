@@ -20,11 +20,11 @@ from app.auth.human_schemas import EmailIdentity, ResetPassword
 from app.auth.identity import identity_for_email
 from app.auth.workspace_models import IdentityMembership
 from app.auth.workspace_schemas import GlobalEmail, GlobalPasswordReset, GlobalRecoveryView
-from app.config.settings import Settings
-from app.database.rls import set_tenant_scope, verify_runtime_role
-from app.errors import AuthenticationError
+from app.core.database.rls import set_tenant_scope, verify_runtime_role
+from app.core.errors import AuthenticationError
+from app.core.security.encryption import SecretCipher
+from app.core.settings import Settings
 from app.platform.throttle import AuthenticationUnavailableError
-from app.security.encryption import SecretCipher
 from app.tenants.models import Tenant
 from app.users.models import User
 

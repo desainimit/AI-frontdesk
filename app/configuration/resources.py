@@ -15,7 +15,7 @@ from app.configuration.models import ConfigurationResource
 from app.configuration.schemas import Section
 from app.configuration.sections import authority
 from app.configuration.service import ConfigurationService
-from app.errors import ConflictError, NotFoundError
+from app.core.errors import ConflictError, NotFoundError
 from app.rbac.service import RevisionConflictError, audit
 
 

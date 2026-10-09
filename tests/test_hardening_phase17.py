@@ -5,11 +5,11 @@ import pytest
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from app.cache.redis import RedisClient
-from app.config.settings import Settings
+from app.core.redis import RedisClient
+from app.core.security.rate_limit import RateLimitExceeded, RateLimitUnavailable, enforce_rate_limit
+from app.core.settings import Settings
 from app.main import create_app
 from app.maintenance.backup import verify_restore
-from app.security.rate_limit import RateLimitExceeded, RateLimitUnavailable, enforce_rate_limit
 
 
 class Counter:

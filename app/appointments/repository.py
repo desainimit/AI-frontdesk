@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appointments.models import Appointment, Availability
 from app.auth.context import ActorType, RequestContext
-from app.database.domain import ScopedRepository
+from app.core.database.domain import ScopedRepository
 
 
 class AvailabilityRepository(ScopedRepository[Availability]):

@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from app.configuration.schemas import EffectiveConfigurationView, OperationalConfiguration
-from app.errors import ConflictError
+from app.core.errors import ConflictError
 
 SCOPE_FIELDS = {
     "location": ["business.timezone", "business.address", "hours"],

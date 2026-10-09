@@ -6,9 +6,9 @@ from app.audit.events import AuditAction
 from app.audit.service import AuditService
 from app.auth.context import RequestContext
 from app.auth.policies import Permission, require_permission
-from app.database.search import contains
-from app.database.unit_of_work import UnitOfWork
-from app.errors import ConflictError, NotFoundError
+from app.core.database.search import contains
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import ConflictError, NotFoundError
 from app.patients.models import Patient
 from app.patients.schemas import CreatePatient, PatientView, UpdatePatientVerification
 

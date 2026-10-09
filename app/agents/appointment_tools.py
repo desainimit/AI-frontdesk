@@ -15,9 +15,9 @@ from app.agents.tools import ReadTool, StatefulTool, ToolRegistry, directory_too
 from app.auth.context import ActorType, RequestContext
 from app.calls.access import CallPatientAccess, IdentifyPatient
 from app.calls.directory import CallDirectoryService, DirectoryQuery
-from app.config.settings import Settings
 from app.conversation.state import ConversationState
-from app.database.unit_of_work import UnitOfWork
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.settings import Settings
 from app.integrations.resolver import TenantIntegrationResolver
 from app.knowledge.embeddings import open_embedder
 from app.knowledge.schemas import KnowledgeQuery

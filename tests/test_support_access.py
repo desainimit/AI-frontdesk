@@ -15,7 +15,7 @@ from app.api.tenancy import get_context
 from app.api.tenancy import router as tenancy_router
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import SUPPORT_PERMISSIONS, Permission, require_permission
-from app.errors import AuthorizationError
+from app.core.errors import AuthorizationError
 from app.platform.support import SUPPORT_ROUTES, EnterSupportCommand, parse_support_locator
 
 
@@ -97,7 +97,7 @@ def test_reason_alone_grants_full_access_and_a_narrower_list_is_still_honoured()
 
 @pytest.mark.parametrize("token", ["", "fd1.bad", "fds1.bad.bad.bad", "fds1." + "x" * 160])
 def test_invalid_support_token_locator(token: str) -> None:
-    from app.errors import AuthenticationError
+    from app.core.errors import AuthenticationError
 
     with pytest.raises(AuthenticationError):
         parse_support_locator(token)

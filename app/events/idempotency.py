@@ -8,7 +8,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.context import ActorType, RequestContext
-from app.errors import ApplicationError, AuthorizationError, ConflictError
+from app.core.errors import ApplicationError, AuthorizationError, ConflictError
 from app.events.models import IdempotencyRecord
 
 

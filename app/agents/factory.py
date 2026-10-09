@@ -3,7 +3,7 @@ from typing import Any
 from pydantic import SecretStr
 
 from app.agents.providers.base import LLMProvider
-from app.config.settings import Settings
+from app.core.settings import Settings
 
 TIMEOUT_SECONDS = 10
 # Thinking tokens count against this budget, so it leaves room for the reply.

@@ -160,7 +160,7 @@ class Settings(BaseSettings):
         feature that needs it unavailable, so the API can still start.
         """
         if self.deployed or self.secret_encryption_keys.get_secret_value():
-            from app.security.encryption import SecretCipher
+            from app.core.security.encryption import SecretCipher
 
             SecretCipher(self.secret_encryption_keys, self.secret_encryption_active_key)
         code_key = self.otp_hmac_key.get_secret_value()

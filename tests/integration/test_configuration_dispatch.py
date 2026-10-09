@@ -9,13 +9,13 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 
-from app.cache.redis import RedisClient
 from app.configuration.dispatch import ConfigurationDispatcher, ValkeyRevisionPublisher
 from app.configuration.models import ConfigurationEvent, PublishedConfiguration
 from app.configuration.schemas import SaveConfiguration
 from app.configuration.service import ConfigurationService
-from app.database.rls import set_tenant_scope
-from app.database.session import Database
+from app.core.database.rls import set_tenant_scope
+from app.core.database.session import Database
+from app.core.redis import RedisClient
 from tests.integration.test_saas import authenticate
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as pytestmark

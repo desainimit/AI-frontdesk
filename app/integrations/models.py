@@ -20,9 +20,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database.base import Base
-from app.database.domain import TenantRecord
-from app.database.types import IdentityMixin
+from app.core.database.base import Base
+from app.core.database.domain import TenantRecord
+from app.core.database.types import IdentityMixin
 
 
 class TenantIntegration(TenantRecord):

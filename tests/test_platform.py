@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr, ValidationError
 
-from app.config.settings import Settings
+from app.core.settings import Settings
 from app.main import create_app
 from app.platform.bootstrap import BootstrapSettings
 from app.platform.passwords import hash_password, verify_password

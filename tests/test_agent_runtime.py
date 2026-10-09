@@ -14,9 +14,9 @@ from app.agents.schemas import AgentDecision, Intent, ToolCall
 from app.agents.tools import ReadTool, ToolRegistry
 from app.calls.directory import DirectoryQuery, DirectoryResult
 from app.calls.service import CallContext
-from app.config.settings import Settings
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import SafetyDecision
+from app.core.settings import Settings
 from tests.fake_llm import MockLLMProvider
 
 

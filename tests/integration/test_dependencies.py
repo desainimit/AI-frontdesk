@@ -6,9 +6,9 @@ from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
-from app.cache.redis import RedisClient
-from app.config.settings import Settings
-from app.database.session import Database
+from app.core.database.session import Database
+from app.core.redis import RedisClient
+from app.core.settings import Settings
 from app.main import create_app
 
 pytestmark = [

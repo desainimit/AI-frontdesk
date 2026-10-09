@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.context import RequestContext
 from app.calls.models import Call
 from app.configuration.models import ConfigurationDraft
-from app.errors import ConflictError
+from app.core.errors import ConflictError
 from app.tenants.models import Tenant
 
 

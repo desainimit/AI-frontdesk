@@ -31,10 +31,10 @@ from app.audit.events import AuditAction
 from app.audit.models import AuditEvent
 from app.audit.service import AuditService
 from app.auth.context import RequestContext
-from app.database.rls import set_tenant_scope
-from app.database.session import Database
-from app.database.unit_of_work import UnitOfWork
-from app.errors import NotFoundError
+from app.core.database.rls import set_tenant_scope
+from app.core.database.session import Database
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import NotFoundError
 from app.locations.models import Location
 from app.locations.schemas import CreateLocation
 from app.locations.service import LocationService

@@ -34,8 +34,8 @@ from app.conversation.state import (
     IdentityState,
     VerificationStatus,
 )
-from app.database.unit_of_work import UnitOfWork
-from app.errors import ApplicationError
+from app.core.database.unit_of_work import UnitOfWork
+from app.core.errors import ApplicationError
 
 
 class ToolInput(BaseModel):

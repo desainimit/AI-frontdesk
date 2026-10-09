@@ -9,7 +9,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
-from app.database.provision import main as provision
+from app.core.database.provision import main as provision
 from app.platform.bootstrap import main as bootstrap_super_admin
 
 ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"

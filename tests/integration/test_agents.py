@@ -7,14 +7,14 @@ from app.agents.context import AgentContext
 from app.agents.runtime import AgentRuntime
 from app.agents.tools import directory_tools
 from app.audit.models import AuditEvent
-from app.cache.redis import RedisClient
 from app.calls.directory import CallDirectoryService, DirectoryQuery
 from app.calls.models import PhoneNumber
 from app.calls.service import CallContext, CallService
 from app.conversation.manager import ConversationStateManager
 from app.conversation.store import RedisConversationStateStore
-from app.database.rls import set_tenant_scope
-from app.errors import AuthorizationError
+from app.core.database.rls import set_tenant_scope
+from app.core.errors import AuthorizationError
+from app.core.redis import RedisClient
 from app.locations.models import Location
 from app.providers.models import Provider
 from tests.fake_llm import MockLLMProvider
