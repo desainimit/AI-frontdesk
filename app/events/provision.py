@@ -103,9 +103,6 @@ async def provision_worker(settings: Settings) -> None:
             await connection.exec_driver_sql(
                 f"GRANT SELECT, UPDATE ON workflow_intents TO {quoted}"
             )
-            await connection.exec_driver_sql(
-                f"GRANT SELECT, INSERT ON workflow_results TO {quoted}"
-            )
             await connection.exec_driver_sql(f"GRANT SELECT ON call_transcripts TO {quoted}")
             await connection.exec_driver_sql(f"GRANT DELETE ON call_transcripts TO {quoted}")
             await connection.exec_driver_sql(

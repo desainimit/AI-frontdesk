@@ -25,10 +25,8 @@ write. A lost rotation response cannot be recovered as plaintext; load the curre
 revision, then explicitly generate a replacement set using another fresh TOTP.
 The dashboard preserves protection when an outcome check also fails.
 
-Migration 0032 adds an empty recovery set to existing authenticators. Existing
-administrators generate their first set through Account security. No migration
-changes their authenticator or password. Legacy confirmation remains supported;
-the dashboard uses the confirmation endpoint that returns recovery codes.
+An administrator generates the first set through Account security; the dashboard
+uses the confirmation endpoint that returns recovery codes.
 
 Total loss of the password or every factor is not recoverable through an unauthenticated
 reset endpoint. A separately approved, identity-verified operator recovery process

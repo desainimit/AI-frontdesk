@@ -14,7 +14,7 @@ def test_offline_migration_sql(settings: Settings) -> None:
     }
     for arguments, expected in [
         (["upgrade", "head", "--sql"], "INSERT INTO alembic_version"),
-        (["downgrade", "0001_foundation:base", "--sql"], "DELETE FROM alembic_version"),
+        (["downgrade", "0001_baseline:base", "--sql"], "DELETE FROM alembic_version"),
     ]:
         result = subprocess.run(
             [sys.executable, "-m", "alembic", *arguments],

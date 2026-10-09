@@ -220,7 +220,6 @@ async def provision_runtime_role(settings: Settings) -> None:
             await connection.exec_driver_sql(
                 f"GRANT SELECT, INSERT ON workflow_intents TO {quoted_role}"
             )
-            await connection.exec_driver_sql(f"GRANT SELECT ON workflow_results TO {quoted_role}")
             await connection.exec_driver_sql(
                 f"GRANT SELECT, INSERT ON call_transcripts TO {quoted_role}"
             )

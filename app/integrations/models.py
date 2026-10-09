@@ -39,7 +39,7 @@ class TenantIntegration(TenantRecord):
         CheckConstraint(
             "purpose IN ('telephony', 'stt', 'tts', 'llm', 'embeddings')", name="purpose_allowed"
         ),
-        CheckConstraint("slot IN ('primary', 'fallback')", name="slot_allowed"),
+        CheckConstraint("slot = 'primary'", name="slot_allowed"),
         CheckConstraint("ownership IN ('byo', 'platform')", name="ownership_allowed"),
         CheckConstraint(
             "status IN ('not_configured', 'saved_unverified', 'verified', 'invalid', 'revoked')",
