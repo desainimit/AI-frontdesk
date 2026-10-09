@@ -44,8 +44,8 @@ jobs:
       - run: uv run --locked ruff check .
       - run: uv run --locked ruff format --check .
       - run: uv run --locked pyright
-      - run: uv run --locked python -m app.database.initialize
-      - run: uv run --locked python -m app.database.initialize
+      - run: uv run --locked python -m app.setup
+      - run: uv run --locked python -m app.setup
       - run: uv run --locked alembic check
       - run: uv run --locked pytest
       - run: uv build

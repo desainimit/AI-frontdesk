@@ -68,7 +68,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
-      migrate:
+      setup:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -80,7 +80,7 @@ services:
     security_opt: [no-new-privileges:true]
     stop_grace_period: 30s
 
-  migrate:
+  setup:
     build:
       context: .
       target: runtime
@@ -93,7 +93,7 @@ services:
       SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
       SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:-}
       SUPER_ADMIN_NAME: ${SUPER_ADMIN_NAME:-Super Admin}
-    command: ["python", "-m", "app.database.initialize"]
+    command: ["python", "-m", "app.setup"]
     healthcheck:
       disable: true
     restart: "no"
@@ -115,7 +115,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       HF_HOME: /srv/app/data/models
     depends_on:
-      migrate:
+      setup:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -135,6 +135,14 @@ services:
       timeout: 15s
       start_period: 30s
       retries: 3
+
+  # Development mail: set SMTP_HOST=mailpit, SMTP_PORT=1025 and SMTP_TLS_MODE=plain,
+  # then read every message at http://localhost:8025. Nothing leaves this machine.
+  mailpit:
+    image: axllent/mailpit:v1.27.10@sha256:b1f1be18af530d939a11ee8820b379e0c88eeec204d904bfad68862adced3a5a
+    ports:
+      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:1025:1025"
 
   redis:
     image: valkey/valkey:8.1.10-alpine@sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507

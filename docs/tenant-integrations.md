@@ -2,7 +2,7 @@
 
 These features are always on. Each clinic may connect its own Twilio, speech, AI-model and embeddings accounts; anything it has not connected is served by the platform account configured in the environment.
 
-Run `python -m app.database.initialize` before starting the API and the worker. It applies every migration, provisions the restricted API and worker logins, and runs the optional Super Admin bootstrap. See [fresh installation](fresh-install.md).
+Run `python -m app.setup` before starting the API and the worker. It applies every migration, provisions the restricted API and worker logins, and runs the optional Super Admin bootstrap. See [fresh installation](fresh-install.md).
 
 ## Required secrets
 

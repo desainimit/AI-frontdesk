@@ -1,6 +1,6 @@
-# Fresh database initialization
+# Fresh database setup
 
-Run `python -m app.database.initialize` as the one-shot deployment job before
+Run `python -m app.setup` as the one-shot deployment job before
 starting the API or the worker. It applies every migration, provisions and verifies
 the restricted API and worker logins, and creates the first Super Admin from
 operator-supplied credentials. The same command can run again without resetting

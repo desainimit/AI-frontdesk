@@ -10,7 +10,7 @@ it is updated as each phase lands.
 
 | Process | Command | Purpose |
 | --- | --- | --- |
-| Setup job | `python -m app.database.initialize` | Applies migrations, provisions the restricted database logins and creates the first super admin. Safe to run again. |
+| Setup job | `python -m app.setup` | Applies migrations, provisions the restricted database logins and creates the first super admin. Safe to run again. |
 | API | `uvicorn app.main:create_app --factory` | HTTP API, Twilio webhooks and the call media stream. |
 | Worker | `python -m app.worker` | Every background queue: notifications, post-call reports, email, knowledge ingestion and configuration events. |
 
@@ -39,9 +39,13 @@ Three database logins point at the same database:
 The setup job creates the two restricted logins if they do not exist. URL-encode
 passwords.
 
-For the AI, set `LLM_PROVIDER=gemini` and `GEMINI_API_KEY`. Use a key from a
+For the AI, set `LLM_PROVIDER=gemini` and `GEMINI_API_KEY`, or
+`LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY`. A Gemini key must come from a
 billing-enabled Google project: on the free tier Google uses prompts and replies to
 improve its products, which is not acceptable for patient calls.
+
+For development email, point `SMTP_HOST` at Mailpit (see below) and read the
+messages at http://localhost:8025.
 
 ## Run with Docker Compose
 
@@ -52,7 +56,9 @@ curl --fail http://localhost:8000/health/live
 curl --fail http://localhost:8000/health/ready
 ```
 
-Compose starts the setup job, the API, the worker and Redis. It uses your own
+Compose starts the setup job, the API, the worker, Redis and Mailpit (a local
+mailbox: with `SMTP_HOST=mailpit`, `SMTP_PORT=1025` and `SMTP_TLS_MODE=plain` every
+email is caught at http://localhost:8025 and nothing is delivered). It uses your own
 PostgreSQL server; containers reach a database on the host through
 `host.docker.internal`.
 
@@ -60,7 +66,7 @@ PostgreSQL server; containers reach a database on the host through
 
 ```sh
 uv sync --locked
-uv run python -m app.database.initialize
+uv run python -m app.setup
 uv run uvicorn app.main:create_app --factory --reload
 uv run python -m app.worker
 ```
