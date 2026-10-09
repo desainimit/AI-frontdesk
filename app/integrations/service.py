@@ -289,9 +289,7 @@ class IntegrationService:
         resolver: TenantIntegrationResolver | None = None,
     ) -> None:
         self._sessions, self._settings, self._resolver = sessions, settings, resolver
-        self._verifier = verifier or HttpProviderVerifier(
-            settings.integration_verify_timeout_seconds
-        )
+        self._verifier = verifier or HttpProviderVerifier(8)
 
     def _cipher(self) -> SecretCipher:
         return SecretCipher(

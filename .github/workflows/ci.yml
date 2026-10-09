@@ -33,7 +33,6 @@ jobs:
       WORKER_DATABASE_URL: postgresql+asyncpg://frontdesk_worker:ci-worker-only@localhost:5432/frontdesk_test
       REDIS_URL: redis://localhost:6379/15
       ENVIRONMENT: development
-      OTEL_ENABLED: "false"
       RUN_INTEGRATION: "true"
     steps:
       - uses: actions/checkout@v4

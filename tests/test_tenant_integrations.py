@@ -341,7 +341,6 @@ def test_circuit_breakers_are_scoped_per_connection() -> None:
 def test_settings_need_secrets_once_deployed_and_check_what_is_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OTEL_ENABLED", "false")
     base = {
         "database_url": SecretStr("postgresql+asyncpg://app:app@localhost:5432/frontdesk"),
         "redis_url": SecretStr("redis://localhost:6379/0"),

@@ -5,6 +5,10 @@ from pydantic import SecretStr
 from app.agents.providers.base import LLMProvider
 from app.config.settings import Settings
 
+TIMEOUT_SECONDS = 10
+# Thinking tokens count against this budget, so it leaves room for the reply.
+MAX_OUTPUT_TOKENS = 2048
+
 
 def _provider(
     settings: Settings, name: str, api_key: SecretStr, model: str, reasoning: Any = "low"
@@ -15,8 +19,8 @@ def _provider(
         return GeminiLLMProvider(
             api_key,
             model,
-            settings.llm_timeout_seconds,
-            settings.llm_max_output_tokens,
+            TIMEOUT_SECONDS,
+            MAX_OUTPUT_TOKENS,
             thinking_level=reasoning,
         )
     if name == "openrouter":
@@ -25,8 +29,8 @@ def _provider(
         return OpenRouterLLMProvider(
             api_key,
             model,
-            settings.llm_timeout_seconds,
-            settings.llm_max_output_tokens,
+            TIMEOUT_SECONDS,
+            MAX_OUTPUT_TOKENS,
             reasoning_effort=reasoning,
         )
     raise ValueError("Unsupported LLM provider")

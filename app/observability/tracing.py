@@ -14,24 +14,27 @@ from opentelemetry.trace import Tracer
 
 from app.config.settings import Settings
 
+TRACE_SAMPLE_RATIO = 0.1
+METRIC_EXPORT_INTERVAL_MILLIS = 30_000
+
 
 class Telemetry:
     """Application-owned providers avoid global singletons across tests and app instances."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, service: str = "ai-frontdesk") -> None:
         resource = Resource.create(
             {
-                "service.name": settings.service_name,
+                "service.name": service,
                 "deployment.environment.name": settings.environment,
             }
         )
         self.traces = TracerProvider(
             resource=resource,
-            sampler=ParentBased(TraceIdRatioBased(settings.otel_trace_sample_ratio)),
+            sampler=ParentBased(TraceIdRatioBased(TRACE_SAMPLE_RATIO)),
             shutdown_on_exit=False,
         )
         readers: list[PeriodicExportingMetricReader] = []
-        if settings.otel_enabled:
+        if settings.otel_exporter_otlp_endpoint:
             endpoint = settings.otel_exporter_otlp_endpoint
             headers = {
                 key.strip(): unquote(value.strip())
@@ -49,7 +52,7 @@ class Telemetry:
                     OTLPMetricExporter(
                         endpoint=f"{endpoint}/v1/metrics", headers=headers, timeout=5
                     ),
-                    export_interval_millis=settings.otel_metric_export_interval_seconds * 1000,
+                    export_interval_millis=METRIC_EXPORT_INTERVAL_MILLIS,
                 )
             )
         self.metrics = MeterProvider(

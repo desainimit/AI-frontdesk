@@ -28,6 +28,7 @@ for _secret in (
     "STREAM_TOKEN_KEY",
     "TENANT_AUTH_PUBLIC_ORIGIN",
     "TELEPHONY_PUBLIC_BASE_URL",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
 ):
     os.environ[_secret] = ""
 # The semantic safety check is one more model request per turn; tests of it enable it.
@@ -36,7 +37,6 @@ os.environ["SAFETY_SEMANTIC_ENABLED"] = "false"
 
 @pytest.fixture
 def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
-    monkeypatch.setenv("OTEL_ENABLED", "false")
     monkeypatch.setenv("ENVIRONMENT", "local")
     return Settings.from_environment(
         env_file=None,

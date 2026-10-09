@@ -7,6 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.config.settings import Settings
 from app.database.rls import verify_runtime_role
 
+POOL_TIMEOUT_SECONDS = 5
+POOL_RECYCLE_SECONDS = 1800
+COMMAND_TIMEOUT_SECONDS = 10
+
 
 class Database:
     def __init__(self, settings: Settings) -> None:
@@ -15,13 +19,13 @@ class Database:
             pool_pre_ping=True,
             pool_size=settings.db_pool_size,
             max_overflow=settings.db_max_overflow,
-            pool_timeout=settings.db_pool_timeout_seconds,
-            pool_recycle=settings.db_pool_recycle_seconds,
+            pool_timeout=POOL_TIMEOUT_SECONDS,
+            pool_recycle=POOL_RECYCLE_SECONDS,
             pool_use_lifo=True,
             hide_parameters=True,
             connect_args={
                 "timeout": settings.dependency_timeout_seconds,
-                "command_timeout": settings.db_command_timeout_seconds,
+                "command_timeout": COMMAND_TIMEOUT_SECONDS,
                 "server_settings": {"timezone": "UTC"},
             },
         )

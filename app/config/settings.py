@@ -21,7 +21,6 @@ class Settings(BaseSettings):
     )
 
     environment: Environment = Environment.LOCAL
-    service_name: str = "ai-frontdesk"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     database_url: SecretStr
     migration_database_url: SecretStr | None = None
@@ -29,20 +28,12 @@ class Settings(BaseSettings):
     redis_url: SecretStr
     db_pool_size: int = Field(default=5, ge=1, le=100)
     db_max_overflow: int = Field(default=5, ge=0, le=100)
-    db_pool_timeout_seconds: float = Field(default=5, gt=0, le=60)
-    db_pool_recycle_seconds: int = Field(default=1800, ge=60, le=86400)
-    db_command_timeout_seconds: float = Field(default=10, gt=0, le=120)
     dependency_timeout_seconds: float = Field(default=2, gt=0, le=30)
-    redis_max_connections: int = Field(default=20, ge=1, le=1000)
     tenant_auth_public_origin: str = ""
     secret_encryption_keys: SecretStr = SecretStr("")
     secret_encryption_active_key: str = ""
     otp_hmac_key: SecretStr = SecretStr("")
-    # A clinic's own verified provider connection is used when it has one; otherwise
-    # the platform account configured by the provider keys below.
     stream_token_key: SecretStr = SecretStr("")
-    integration_cache_seconds: float = Field(default=15, ge=0, le=300)
-    integration_verify_timeout_seconds: float = Field(default=8, gt=0, le=30)
     tenant_llm_models: str = (
         "gemini-3.8-flash,gemini-3.5-flash-lite,"
         "google/gemini-3.8-flash,google/gemini-3.5-flash-lite"
@@ -53,28 +44,17 @@ class Settings(BaseSettings):
     smtp_username: str = ""
     smtp_password: SecretStr = SecretStr("")
     smtp_sender: str = ""
-    smtp_timeout_seconds: float = Field(default=15, gt=0, le=30)
-    tenant_api_requests_per_minute: int = Field(default=240, ge=1, le=10000)
-    platform_api_requests_per_minute: int = Field(default=120, ge=1, le=10000)
     # How long a platform administrator stays signed in. A workspace opened from the
     # platform console stays open for the same period.
     platform_session_minutes: int = Field(default=30, ge=5, le=720)
-    webhook_requests_per_call_per_minute: int = Field(default=60, ge=1, le=1000)
-    otel_enabled: bool = False
-    otel_exporter_otlp_endpoint: str = "http://localhost:4318"
+    # Traces and metrics are exported only when an OTLP/HTTP collector is configured.
+    otel_exporter_otlp_endpoint: str = ""
     otel_exporter_otlp_headers: SecretStr = SecretStr("")
-    otel_trace_sample_ratio: float = Field(default=0.1, ge=0, le=1)
-    otel_metric_export_interval_seconds: int = Field(default=30, ge=1, le=300)
-    outbox_poll_seconds: float = Field(default=1, gt=0, le=60)
-    outbox_provider_timeout_seconds: float = Field(default=10, gt=0, le=60)
-    outbox_lease_seconds: float = Field(default=90, ge=75, le=600)
-    outbox_max_attempts: int = Field(default=5, ge=1, le=20)
-    notification_provider: Literal["console"] = "console"
+    # A clinic's own verified provider connection is used when it has one; otherwise
+    # the platform account configured by the provider keys below.
     twilio_account_sid: str = ""
     twilio_auth_token: SecretStr = SecretStr("")
     telephony_public_base_url: str = ""
-    telephony_idle_seconds: float = Field(default=30, ge=5, le=120)
-    telephony_max_call_seconds: float = Field(default=600, ge=30, le=3600)
     stt_provider: Literal["deepgram", "azure"] = "deepgram"
     tts_provider: Literal["elevenlabs", "azure"] = "elevenlabs"
 
@@ -83,14 +63,11 @@ class Settings(BaseSettings):
     # "multi" follows a caller who mixes languages; set one language code to fix it.
     deepgram_model: str = "nova-3"
     deepgram_language: str = "multi"
-    deepgram_base_url: str = "https://api.deepgram.com"
 
     # ElevenLabs TTS
     elevenlabs_api_key: SecretStr = SecretStr("")
     elevenlabs_model_id: str = "eleven_turbo_v2_5"
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
-    elevenlabs_output_format: Literal["pcm_8000"] = "pcm_8000"
-    elevenlabs_base_url: str = "https://api.elevenlabs.io"
 
     # Azure Speech Services (STT & TTS)
     azure_speech_key: SecretStr = SecretStr("")
@@ -98,47 +75,20 @@ class Settings(BaseSettings):
     azure_speech_language: str = "en-US"
     azure_speech_voice: str = "en-US-JennyNeural"
     azure_hindi_voice: str = "hi-IN-SwaraNeural"
-    azure_speech_output_format: Literal["raw-8khz-16bit-mono-pcm"] = "raw-8khz-16bit-mono-pcm"
 
-    # Voice Timeouts & Circuit Breaker
-    stt_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
-    tts_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
-    voice_circuit_breaker_failures: int = Field(default=3, ge=1, le=10)
-    voice_circuit_breaker_reset_seconds: float = Field(default=60.0, ge=5.0, le=600.0)
-
-    # Barge-In / Interruption
-    barge_in_enabled: bool = True
-    barge_in_energy_threshold: float = Field(default=400.0, ge=50.0, le=5000.0)
-    barge_in_consecutive_frames: int = Field(default=2, ge=1, le=20)
-
-    # Phase 11 knowledge base. API and ingestion worker share object storage.
+    # Knowledge documents; the API and the worker share this storage.
     knowledge_storage_backend: Literal["local", "s3"] = "local"
     knowledge_local_path: str = ".local/knowledge-objects"
     knowledge_s3_bucket: str = ""
     knowledge_s3_region: str = ""
     knowledge_s3_endpoint: str = ""
-    knowledge_max_upload_bytes: int = Field(default=10_000_000, ge=1024, le=25_000_000)
-    knowledge_worker_poll_seconds: float = Field(default=2.0, gt=0, le=60)
 
-    # Phase 7 — Conversation State
-    conversation_state_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
-    conversation_default_language: Literal["en", "es", "fr", "de", "pt", "hi"] = "en"
-    conversation_language_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
-    conversation_confirmation_timeout_seconds: float = Field(default=120.0, ge=10.0, le=600.0)
     llm_provider: Literal["gemini", "openrouter"] = "gemini"
     gemini_api_key: SecretStr = SecretStr("")
     openrouter_api_key: SecretStr = SecretStr("")
     # Empty uses the selected provider's default model.
     llm_model: str = ""
-    llm_timeout_seconds: float = Field(default=10, ge=1, le=30)
-    # Thinking tokens count against this budget, so it leaves room for the reply.
-    llm_max_output_tokens: int = Field(default=2048, ge=128, le=8192)
-    agent_max_steps: int = Field(default=3, ge=1, le=5)
-    agent_max_tool_calls: int = Field(default=4, ge=1, le=8)
-    agent_turn_timeout_seconds: float = Field(default=20, ge=1, le=60)
-    agent_tool_timeout_seconds: float = Field(default=3, ge=0.1, le=10)
     safety_semantic_enabled: bool = True
-    safety_classifier_timeout_seconds: float = Field(default=2.0, ge=0.2, le=5.0)
 
     @model_validator(mode="after")
     def validate_knowledge(self) -> Self:
@@ -296,6 +246,8 @@ class Settings(BaseSettings):
     @field_validator("otel_exporter_otlp_endpoint")
     @classmethod
     def validate_otlp_endpoint(cls, value: str) -> str:
+        if not value:
+            return value  # Telemetry export is off.
         url = urlsplit(value)
         if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.query:
             raise ValueError("OTLP endpoint must be an HTTP(S) base URL without credentials/query")

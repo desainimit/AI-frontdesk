@@ -23,6 +23,8 @@ from app.security.encryption import SecretCipher
 
 logger = logging.getLogger(__name__)
 
+SMTP_TIMEOUT_SECONDS = 15
+
 
 def send_smtp(settings: Settings, payload: dict[str, str], identity: str) -> None:
     if not settings.mail_enabled:
@@ -39,12 +41,12 @@ def send_smtp(settings: Settings, payload: dict[str, str], identity: str) -> Non
         connection = smtplib.SMTP_SSL(
             settings.smtp_host,
             settings.smtp_port,
-            timeout=settings.smtp_timeout_seconds,
+            timeout=SMTP_TIMEOUT_SECONDS,
             context=context,
         )
     else:
         connection = smtplib.SMTP(
-            settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds
+            settings.smtp_host, settings.smtp_port, timeout=SMTP_TIMEOUT_SECONDS
         )
     with connection:
         if settings.smtp_tls_mode == "starttls":

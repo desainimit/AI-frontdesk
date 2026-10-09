@@ -4,6 +4,8 @@ from redis.backoff import NoBackoff
 
 from app.config.settings import Settings
 
+MAX_CONNECTIONS = 20
+
 
 class RedisClient:
     def __init__(self, settings: Settings) -> None:
@@ -13,7 +15,7 @@ class RedisClient:
             decode_responses=True,
             socket_connect_timeout=settings.dependency_timeout_seconds,
             socket_timeout=settings.dependency_timeout_seconds,
-            max_connections=settings.redis_max_connections,
+            max_connections=MAX_CONNECTIONS,
             retry=Retry(NoBackoff(), 0),
         )
 

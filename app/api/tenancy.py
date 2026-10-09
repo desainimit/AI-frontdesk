@@ -12,7 +12,6 @@ from app.auth.context import ActorType, RequestContext, Role
 from app.auth.policies import require_tenant
 from app.auth.service import AuthenticationService
 from app.calls.verification import VerificationPolicy
-from app.config.settings import Settings
 from app.conversation.locales import LanguagePolicy
 from app.database.session import Database
 from app.database.unit_of_work import UnitOfWork
@@ -25,6 +24,8 @@ from app.users.schemas import UserView
 from app.users.service import UserService
 
 router = APIRouter(prefix="/api/v1", tags=["tenancy"])
+
+TENANT_REQUESTS_PER_MINUTE = 240
 bearer = HTTPBearer(
     auto_error=False,
     scheme_name="TenantBearer",
@@ -56,13 +57,12 @@ async def get_context(
         context = await AuthenticationService(database.session_factory).authenticate(
             credential.credentials, UUID(request.state.request_id)
         )
-    settings: Settings = request.app.state.settings
     await enforce_rate_limit(
         get_resources(request).redis,
         enabled=request.app.state.rate_limits,
         scope="tenant_api",
         identity=f"{context.tenant_id}:{context.support_session_id or context.actor_id}",
-        limit=settings.tenant_api_requests_per_minute,
+        limit=TENANT_REQUESTS_PER_MINUTE,
     )
     if context.actor_type == ActorType.PLATFORM_SUPPORT:
         request.state.context = context
@@ -119,10 +119,7 @@ async def exit_support(context: Context, database: DatabaseDependency) -> Respon
 async def current_tenant(
     request: Request, context: Context, database: DatabaseDependency
 ) -> TenantView:
-    settings: Settings = request.app.state.settings
-    return await TenantService(UnitOfWork(database.session_factory)).current(
-        context, settings.conversation_default_language
-    )
+    return await TenantService(UnitOfWork(database.session_factory)).current(context)
 
 
 @router.patch("/tenants/current")

@@ -189,7 +189,6 @@ def test_voice_config_rejects_unknown_providers_and_wrong_codec(settings: Settin
         {"stt_provider": "typo"},
         {"tts_provider": "typo"},
         {"stt_provider": "mock"},
-        {"elevenlabs_output_format": "mp3_44100_128"},
     ]:
         with pytest.raises(ValidationError):
             Settings.model_validate({**settings.model_dump(), **update})

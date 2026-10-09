@@ -80,17 +80,17 @@ async def build_queues(settings: Settings, stack: AsyncExitStack) -> list[Queue]
     stack.push_async_callback(database.close)
     redis = RedisClient(settings)
     stack.push_async_callback(redis.close)
-    telemetry = Telemetry(settings)
+    telemetry = Telemetry(settings, "ai-frontdesk-worker")
     stack.push_async_callback(telemetry.close)
     sessions = database.session_factory
 
-    outbox = OutboxStore(sessions, settings.outbox_lease_seconds)
+    outbox = OutboxStore(sessions, 90)
     await outbox.check()
     events = EventProcessor(
         outbox,
         ConsoleNotificationProvider(),
-        retry=RetryPolicy(max_attempts=settings.outbox_max_attempts),
-        timeout_seconds=settings.outbox_provider_timeout_seconds,
+        retry=RetryPolicy(max_attempts=5),
+        timeout_seconds=10,
         telemetry=telemetry,
     )
     jobs = JobRunner(WorkflowIntentStore(sessions), WorkflowActivities(sessions))
@@ -102,7 +102,7 @@ async def build_queues(settings: Settings, stack: AsyncExitStack) -> list[Queue]
     await configuration.check()
     await redis.ping()
     queues = [
-        Queue("outbox", events.process_one, settings.outbox_poll_seconds),
+        Queue("outbox", events.process_one, 1),
         Queue("jobs", jobs.process_one, 1),
         Queue("configuration", configuration.process_one, 1),
     ]
@@ -119,7 +119,7 @@ async def build_queues(settings: Settings, stack: AsyncExitStack) -> list[Queue]
         None,
         tenant_embedder=lambda tenant_id: open_embedder(settings, resolver, tenant_id),
     )
-    queues.append(Queue("knowledge", knowledge.process_one, settings.knowledge_worker_poll_seconds))
+    queues.append(Queue("knowledge", knowledge.process_one, 2))
     return queues
 
 

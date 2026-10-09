@@ -12,7 +12,6 @@ from tests.fakes import FakeDependency
 
 
 def test_trace_parent_propagation_and_sensitive_data_exclusion(settings: Settings) -> None:
-    settings.otel_trace_sample_ratio = 1
     app = create_app(
         settings,
         database_factory=lambda _: FakeDependency(),
@@ -49,7 +48,6 @@ def test_trace_parent_propagation_and_sensitive_data_exclusion(settings: Setting
 
 async def test_export_enabled_initializes_and_closes(settings: Settings) -> None:
     # No spans/measurements: this verifies real SDK setup and shutdown without external IO.
-    settings.otel_enabled = True
     settings.otel_exporter_otlp_endpoint = "http://127.0.0.1:4318"
     telemetry = Telemetry(settings)
     await telemetry.close()

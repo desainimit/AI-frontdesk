@@ -79,6 +79,13 @@ from app.voice.twilio import (
 router = APIRouter(tags=["telephony"])
 logger = logging.getLogger(__name__)
 
+WEBHOOK_REQUESTS_PER_CALL_PER_MINUTE = 60
+# A stream with no audio for this long is closed; a call never runs longer than the cap.
+IDLE_SECONDS = 30
+MAX_CALL_SECONDS = 600
+CONVERSATION_TTL_SECONDS = 3600
+TOOL_TIMEOUT_SECONDS = 3
+
 
 @router.post("/api/v1/platform/phone-numbers", status_code=201)
 async def assign_phone(
@@ -206,7 +213,7 @@ async def read_form(request: Request) -> dict[str, str]:
             enabled=request.app.state.rate_limits,
             scope="twilio_unverified",
             identity=request.client.host if request.client else "unknown",
-            limit=settings.webhook_requests_per_call_per_minute * 20,
+            limit=WEBHOOK_REQUESTS_PER_CALL_PER_MINUTE * 20,
         )
     if request.url.query or request.headers.get("content-type", "").split(";")[0] != (
         "application/x-www-form-urlencoded"
@@ -253,7 +260,7 @@ async def authenticate_form(
         enabled=request.app.state.rate_limits,
         scope="twilio_webhook",
         identity=f"{params['AccountSid']}:{params['CallSid']}",
-        limit=settings.webhook_requests_per_call_per_minute,
+        limit=WEBHOOK_REQUESTS_PER_CALL_PER_MINUTE,
     )
     return credentials
 
@@ -478,17 +485,13 @@ async def run_media(
             tenant_id=tenant_id,
             telephony_call_id=sid,
             caller_phone=getattr(context, "caller_phone", None),
-            default_language=settings.conversation_default_language,
-            confirmation_timeout_seconds=settings.conversation_confirmation_timeout_seconds,
             language_policy=(
                 configuration.languages
                 if configuration is not None
-                else await service.language_policy(context, settings.conversation_default_language)
+                else await service.language_policy(context)
                 if multilingual
                 else LanguagePolicy(
-                    default_language=settings.conversation_default_language,
-                    enabled_languages=[settings.conversation_default_language],
-                    auto_detect=False,
+                    default_language="en", enabled_languages=["en"], auto_detect=False
                 )
             ),
         )
@@ -499,9 +502,7 @@ async def run_media(
         stt = providers.speech_to_text(socket.app, settings, speech_locale)
         conversation_state = initial_conv_state
         initial_conv_state.call_state.stream_sid = stream_sid
-        await conv_store.save(
-            initial_conv_state, ttl_seconds=settings.conversation_state_ttl_seconds
-        )
+        await conv_store.save(initial_conv_state, ttl_seconds=CONVERSATION_TTL_SECONDS)
         transfer_number = (
             configuration.voice.transfer_number
             if configuration is not None
@@ -512,22 +513,18 @@ async def run_media(
         safety_engine = SafetyEngine(
             classifier,
             transfer_available=transfer_number is not None,
-            classifier_timeout_seconds=settings.safety_classifier_timeout_seconds,
         )
         voice_metrics = VoiceMetrics(telemetry)
         registry, appointment_flow = appointment_tools(
-            service.sessions, settings.agent_tool_timeout_seconds, settings, resolver
+            service.sessions, TOOL_TIMEOUT_SECONDS, settings, resolver
         )
         agent = AgentRuntime(
             llm,
             registry,
             appointment_flow=appointment_flow,
             safety_engine=safety_engine,
-            max_steps=configuration.agent.max_steps if configuration else settings.agent_max_steps,
-            max_tool_calls=configuration.agent.max_tool_calls
-            if configuration
-            else settings.agent_max_tool_calls,
-            turn_timeout_seconds=settings.agent_turn_timeout_seconds,
+            max_steps=configuration.agent.max_steps if configuration else 3,
+            max_tool_calls=configuration.agent.max_tool_calls if configuration else 4,
             metrics=voice_metrics,
         )
         agent_context = AgentContext(
@@ -600,15 +597,6 @@ async def run_media(
                 return
             await pipeline.speak(response)
 
-        interruption_config = (
-            InterruptionConfig(
-                energy_threshold=settings.barge_in_energy_threshold,
-                consecutive_frames_required=settings.barge_in_consecutive_frames,
-            )
-            if settings.barge_in_enabled
-            else None
-        )
-
         pipeline = VoicePipeline(
             stream_sid=stream_sid,
             metrics=voice_metrics,
@@ -616,13 +604,11 @@ async def run_media(
             tts_provider=tts,
             send_frame=send_frame,
             on_transcript=on_transcript_cb,
-            interruption_config=interruption_config,
+            interruption_config=InterruptionConfig(),
             conversation_state=initial_conv_state,
             conversation_store=conv_store,
-            conversation_ttl_seconds=settings.conversation_state_ttl_seconds,
-            language_threshold=settings.conversation_language_confidence_threshold,
+            conversation_ttl_seconds=CONVERSATION_TTL_SECONDS,
             multilingual_enabled=multilingual,
-            barge_in_enabled=settings.barge_in_enabled,
         )
         previous_sequence = int(message["sequenceNumber"])
         try:
@@ -630,13 +616,11 @@ async def run_media(
             if configuration is not None:
                 await pipeline.speak(configuration.agent.greeting)
             call_seconds = (
-                configuration.voice.max_duration_minutes * 60
-                if configuration
-                else settings.telephony_max_call_seconds
+                configuration.voice.max_duration_minutes * 60 if configuration else MAX_CALL_SECONDS
             )
             async with asyncio.timeout(call_seconds):
                 while True:
-                    async with asyncio.timeout(settings.telephony_idle_seconds):
+                    async with asyncio.timeout(IDLE_SECONDS):
                         message = parse_message(await socket.receive_text())
                     sequence = int(message["sequenceNumber"])
                     if message.get("streamSid") != stream_sid or sequence <= previous_sequence:
@@ -697,9 +681,7 @@ async def run_media(
             conversation_state.call_state.ended_at = datetime.now(UTC)
             try:
                 async with asyncio.timeout(5):
-                    await conversation_store.save(
-                        conversation_state, settings.conversation_state_ttl_seconds
-                    )
+                    await conversation_store.save(conversation_state, CONVERSATION_TTL_SECONDS)
             except Exception:
                 logger.error("conversation_cleanup_failed", extra={"call_id": str(call_id)})
         if context is not None:

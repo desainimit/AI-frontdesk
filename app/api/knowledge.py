@@ -14,6 +14,8 @@ from app.knowledge.service import KnowledgeService
 from app.knowledge.storage import build_storage
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
+
+MAX_UPLOAD_BYTES = 10_000_000
 FileName = Annotated[str, Header(alias="X-File-Name", min_length=1, max_length=200)]
 
 
@@ -23,12 +25,11 @@ def service(request: Request, database: DatabaseDependency) -> KnowledgeService:
 
 
 async def body(request: Request) -> bytes:
-    settings: Settings = request.app.state.settings
     chunks: list[bytes] = []
     size = 0
     async for chunk in request.stream():
         size += len(chunk)
-        if size > settings.knowledge_max_upload_bytes:
+        if size > MAX_UPLOAD_BYTES:
             raise HTTPException(413, "Document is too large")
         chunks.append(chunk)
     return b"".join(chunks)
@@ -38,10 +39,9 @@ async def body(request: Request) -> bytes:
 async def upload_document(
     request: Request, name: FileName, context: Context, database: DatabaseDependency
 ) -> DocumentView:
-    settings: Settings = request.app.state.settings
     try:
         return await service(request, database).upload(
-            context, name, await body(request), settings.knowledge_max_upload_bytes
+            context, name, await body(request), MAX_UPLOAD_BYTES
         )
     except (ValueError, UnicodeError):
         raise HTTPException(422, "Invalid document") from None
@@ -55,13 +55,12 @@ async def upload_version(
     context: Context,
     database: DatabaseDependency,
 ) -> DocumentView:
-    settings: Settings = request.app.state.settings
     try:
         return await service(request, database).upload(
             context,
             name,
             await body(request),
-            settings.knowledge_max_upload_bytes,
+            MAX_UPLOAD_BYTES,
             document_id,
         )
     except (ValueError, UnicodeError):

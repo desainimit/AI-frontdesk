@@ -42,6 +42,8 @@ from app.security.rate_limit import enforce_rate_limit
 from app.tenants.schemas import TenantView
 
 router = APIRouter(prefix="/api/v1/platform", tags=["platform"])
+
+PLATFORM_REQUESTS_PER_MINUTE = 120
 platform_bearer = HTTPBearer(
     auto_error=False,
     scheme_name="PlatformBearer",
@@ -71,13 +73,12 @@ async def get_platform_context(
     context = await PlatformAuthenticationService(database.session_factory).authenticate(
         credential.credentials, UUID(request.state.request_id)
     )
-    settings = request.app.state.settings
     await enforce_rate_limit(
         get_resources(request).redis,
         enabled=request.app.state.rate_limits,
         scope="platform_api",
         identity=str(context.user_id),
-        limit=settings.platform_api_requests_per_minute,
+        limit=PLATFORM_REQUESTS_PER_MINUTE,
     )
     return context
 

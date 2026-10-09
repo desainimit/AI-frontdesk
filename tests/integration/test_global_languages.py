@@ -27,7 +27,7 @@ from tests.test_global_languages import CONSENT
 
 async def test_language_policy_api_rbac_audit_and_isolation(tenancy: TenancyFixture) -> None:
     app = create_app(
-        tenancy.settings.model_copy(update={"conversation_default_language": "pt"}),
+        tenancy.settings,
         redis_factory=lambda _: FakeDependency(),
         rate_limits=False,
     )
@@ -55,7 +55,7 @@ async def test_language_policy_api_rbac_audit_and_isolation(tenancy: TenancyFixt
             "/api/v1/tenants/current",
             headers={"Authorization": f"Bearer {tenancy.b.token.get_secret_value()}"},
         )
-        assert other.json()["language_policy"]["default_language"] == "pt"
+        assert other.json()["language_policy"]["default_language"] == "en"
         async with tenancy.admin.begin() as session:
             events = (
                 await session.scalars(

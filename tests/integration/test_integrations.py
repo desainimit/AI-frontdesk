@@ -67,7 +67,6 @@ def integration_settings(base: Settings, **overrides: object) -> Settings:
             "secret_encryption_keys": SecretStr(json.dumps({"k1": key})),
             "secret_encryption_active_key": "k1",
             "stream_token_key": SecretStr(secrets.token_urlsafe(48)),
-            "integration_cache_seconds": 0,
             "telephony_public_base_url": "https://voice.example.test",
             "twilio_account_sid": "",
             "twilio_auth_token": SecretStr(""),
@@ -120,7 +119,7 @@ class Harness:
         self.settings = integration_settings(tenancy.settings, **overrides)
         self.sessions = tenancy.database.session_factory
         self.verifier = FakeVerifier()
-        self.resolver = TenantIntegrationResolver(self.sessions, self.settings)
+        self.resolver = TenantIntegrationResolver(self.sessions, self.settings, cache_seconds=0)
         self.service = IntegrationService(
             self.sessions, self.settings, verifier=self.verifier, resolver=self.resolver
         )

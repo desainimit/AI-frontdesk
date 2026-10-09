@@ -70,8 +70,11 @@ class TenantIntegrationResolver:
         settings: Settings,
         *,
         role_check: RoleCheck = verify_runtime_role,
+        cache_seconds: float = 15,
     ) -> None:
         self._sessions, self._settings, self._role_check = sessions, settings, role_check
+        # A changed connection reaches running calls within this time.
+        self._cache_seconds = cache_seconds
         self._cipher: SecretCipher | None = None
         self._cache: dict[tuple[UUID, str, str], tuple[float, ResolvedIntegration | None]] = {}
 
@@ -151,7 +154,7 @@ class TenantIntegrationResolver:
             await self._role_check(session)
             await set_tenant_scope(session, tenant_id)
             resolved = await self._load_active(session, tenant_id, purpose, slot)
-        ttl = self._settings.integration_cache_seconds
+        ttl = self._cache_seconds
         if ttl > 0:
             if len(self._cache) >= MAX_CACHE_ENTRIES:
                 self._cache.pop(next(iter(self._cache)))

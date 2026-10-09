@@ -29,8 +29,6 @@ def stt_from_connection(
             api_key=connection.secret("api_key"),
             model=str(config["model"]),
             language=str(config["language"]),
-            base_url=settings.deepgram_base_url,
-            timeout_seconds=settings.stt_timeout_seconds,
         )
     if connection.provider == "azure_speech":
         return AzureSTTProvider(
@@ -38,7 +36,6 @@ def stt_from_connection(
             region=str(config["region"]),
             language=str(config["language"]),
             language_resolver=language_resolver,
-            timeout_seconds=settings.stt_timeout_seconds,
         )
     raise ValueError("Unsupported STT provider")
 
@@ -52,9 +49,6 @@ def tts_from_connection(
             api_key=connection.secret("api_key"),
             default_voice_id=str(config["voice_id"]),
             model_id=str(config["model_id"]),
-            output_format=settings.elevenlabs_output_format,
-            base_url=settings.elevenlabs_base_url,
-            timeout_seconds=settings.tts_timeout_seconds,
         )
     if connection.provider == "azure_speech":
         return AzureTTSProvider(
@@ -62,8 +56,6 @@ def tts_from_connection(
             region=str(config["region"]),
             default_voice=str(config["voice"]),
             hindi_voice=str(config["hindi_voice"]),
-            output_format=settings.azure_speech_output_format,
-            timeout_seconds=settings.tts_timeout_seconds,
         )
     raise ValueError("Unsupported TTS provider")
 
@@ -77,8 +69,6 @@ def platform_stt(
             api_key=settings.deepgram_api_key,
             model=settings.deepgram_model,
             language=settings.deepgram_language,
-            base_url=settings.deepgram_base_url,
-            timeout_seconds=settings.stt_timeout_seconds,
         )
     if settings.stt_provider == "azure" and settings.azure_speech_key.get_secret_value():
         return AzureSTTProvider(
@@ -86,7 +76,6 @@ def platform_stt(
             region=settings.azure_speech_region,
             language=settings.azure_speech_language,
             language_resolver=language_resolver,
-            timeout_seconds=settings.stt_timeout_seconds,
         )
     return None
 
@@ -98,9 +87,6 @@ def platform_tts(settings: Settings) -> TextToSpeechProvider | None:
             api_key=settings.elevenlabs_api_key,
             default_voice_id=settings.elevenlabs_voice_id,
             model_id=settings.elevenlabs_model_id,
-            output_format=settings.elevenlabs_output_format,
-            base_url=settings.elevenlabs_base_url,
-            timeout_seconds=settings.tts_timeout_seconds,
         )
     if settings.tts_provider == "azure" and settings.azure_speech_key.get_secret_value():
         return AzureTTSProvider(
@@ -108,8 +94,6 @@ def platform_tts(settings: Settings) -> TextToSpeechProvider | None:
             region=settings.azure_speech_region,
             default_voice=settings.azure_speech_voice,
             hindi_voice=settings.azure_hindi_voice,
-            output_format=settings.azure_speech_output_format,
-            timeout_seconds=settings.tts_timeout_seconds,
         )
     return None
 
