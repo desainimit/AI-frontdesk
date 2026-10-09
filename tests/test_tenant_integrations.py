@@ -19,7 +19,6 @@ from app.integrations.catalog import (
     validate_config,
     validate_secrets,
 )
-from app.integrations.resolver import TenantIntegrationResolver
 from app.integrations.service import SubmitCredentials
 from app.integrations.verifiers import HttpProviderVerifier, ProviderUnavailableError
 from app.security.encryption import SecretCipher
@@ -227,7 +226,6 @@ async def test_verifier_classifies_provider_answers_and_uses_fixed_hosts() -> No
 def tenant_settings(settings: Settings) -> Settings:
     return settings.model_copy(
         update={
-            "telephony_enabled": True,
             "telephony_public_base_url": "https://voice.example.test",
             "twilio_account_sid": SID,
             "twilio_auth_token": SecretStr(TOKEN),
@@ -340,7 +338,7 @@ def test_circuit_breakers_are_scoped_per_connection() -> None:
     assert registry.get("stt:tenant-a", 1, 60) is not first
 
 
-def test_settings_require_keys_only_when_tenant_integrations_are_enabled(
+def test_settings_need_secrets_once_deployed_and_check_what_is_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("OTEL_ENABLED", "false")
@@ -352,29 +350,32 @@ def test_settings_require_keys_only_when_tenant_integrations_are_enabled(
     def build(**overrides: object) -> Settings:
         return Settings.from_environment(env_file=None, **base, **overrides)
 
-    assert not build().tenant_integrations_enabled
-    with pytest.raises(ValidationError):
-        build(tenant_integrations_enabled=True)  # No encryption keyring.
+    # Locally nothing is mandatory: a missing value only disables what needs it.
+    local = build()
+    assert not local.telephony_ready and not local.platform_twilio
     ring = {"secret_encryption_keys": keyring(), "secret_encryption_active_key": "k1"}
-    tenant = uuid4()
-    enabled = build(
-        tenant_integrations_enabled=True, legacy_provider_tenant_ids=f"{tenant}, {uuid4()}", **ring
-    )
-    assert tenant in enabled.legacy_tenants and len(enabled.legacy_tenants) == 2
-    resolver = TenantIntegrationResolver(None, enabled)  # pyright: ignore[reportArgumentType]
-    assert resolver.legacy_allowed(tenant) and not resolver.legacy_allowed(uuid4())
-    assert TenantIntegrationResolver(None, build()).legacy_allowed(uuid4())  # pyright: ignore[reportArgumentType]
     with pytest.raises(ValidationError):
-        build(tenant_integrations_enabled=True, legacy_provider_tenant_ids="not-a-uuid", **ring)
-    origin = {"telephony_enabled": True, "telephony_public_base_url": "https://voice.example.test"}
-    # Tenant connections supply the Twilio account, but the stream key becomes mandatory.
+        build(secret_encryption_keys=SecretStr("not-json"))  # A keyring that is set must be valid.
     with pytest.raises(ValidationError):
-        build(tenant_integrations_enabled=True, **ring, **origin)
-    assert build(
-        tenant_integrations_enabled=True,
-        stream_token_key=SecretStr(secrets.token_urlsafe(48)),
+        build(stream_token_key=SecretStr("too-short"))
+    with pytest.raises(ValidationError):
+        build(telephony_public_base_url="http://voice.example.test")  # Webhooks need HTTPS.
+    ready = build(telephony_public_base_url="https://voice.example.test/", **ring)
+    assert ready.telephony_ready and ready.telephony_public_base_url == "https://voice.example.test"
+    # Deployed, the keys that protect accounts, calls and stored secrets are required.
+    deployed = {
+        "environment": "production",
+        "knowledge_storage_backend": "s3",
+        "knowledge_s3_bucket": "documents",
+    }
+    with pytest.raises(ValidationError):
+        build(**deployed)
+    complete = build(
+        **deployed,
         **ring,
-        **origin,
-    ).telephony_enabled
-    with pytest.raises(ValidationError):
-        build(**origin)  # Legacy mode still needs the platform Twilio account.
+        otp_hmac_key=SecretStr(secrets.token_urlsafe(48)),
+        stream_token_key=SecretStr(secrets.token_urlsafe(48)),
+        tenant_auth_public_origin="https://app.example.test",
+        telephony_public_base_url="https://voice.example.test",
+    )
+    assert complete.deployed

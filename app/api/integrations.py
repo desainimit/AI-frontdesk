@@ -16,7 +16,7 @@ from app.api.tenancy import Context, DatabaseDependency
 from app.auth.context import RequestContext
 from app.errors import AuthenticationError
 from app.integrations.catalog import ProviderCatalogEntry, catalog_entries
-from app.integrations.resolver import IntegrationsDisabledError, TenantIntegrationResolver
+from app.integrations.resolver import TenantIntegrationResolver
 from app.integrations.service import (
     Actor,
     BindNumber,
@@ -51,8 +51,6 @@ Resolver = Annotated[TenantIntegrationResolver, Depends(get_resolver)]
 def get_service(
     request: Request, database: DatabaseDependency, resolver: Resolver
 ) -> IntegrationService:
-    if not request.app.state.settings.tenant_integrations_enabled:
-        raise IntegrationsDisabledError()
     return IntegrationService(
         database.session_factory,
         request.app.state.settings,
@@ -209,8 +207,6 @@ async def platform_integration_providers(
 
 def _catalog(request: Request, _authenticated: Any) -> list[ProviderCatalogEntry]:
     settings = request.app.state.settings
-    if not settings.tenant_integrations_enabled:
-        raise IntegrationsDisabledError()
     return catalog_entries(settings.llm_models)
 
 

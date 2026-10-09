@@ -40,7 +40,7 @@ async def transfer_call(
 ) -> None:
     from app.voice.twilio import TwilioCredentials
 
-    # Tenant calls pass their own connection; the platform account is legacy only.
+    # The account the call was opened on: the tenant's own, or the platform's.
     account = credentials or TwilioCredentials.from_settings(settings)
     if not re.fullmatch(r"CA[0-9a-fA-F]{32}", context.provider_call_id) or not re.fullmatch(
         r"AC[0-9a-fA-F]{32}", account.account_sid

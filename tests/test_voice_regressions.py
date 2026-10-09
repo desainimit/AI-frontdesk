@@ -14,18 +14,15 @@ from websockets.asyncio.server import ServerConnection, serve
 
 from app.config.settings import Settings
 from app.voice.audio import pcm_frames
-from app.voice.circuit import CircuitBreaker
-from app.voice.factory import build_stt_provider, build_tts_provider
 from app.voice.http import retry_after_seconds
 from app.voice.pipeline import VoicePipeline
 from app.voice.stt.azure import AzureSTTProvider
-from app.voice.stt.base import STTStream, STTTransientError, TranscriptionResult
+from app.voice.stt.base import STTTransientError
 from app.voice.stt.deepgram import DeepgramSTTProvider
-from app.voice.stt.fallback import FallbackSTTStream
-from app.voice.stt.mock import MockSTTProvider, MockSTTStream
 from app.voice.tts.azure import AzureTTSProvider
 from app.voice.tts.base import TTSPermanentError
-from app.voice.tts.mock import MockTTSProvider
+from tests.fake_stt import MockSTTProvider
+from tests.fake_tts import MockTTSProvider
 
 
 async def test_deepgram_live_websocket_finishes_utterance_before_disconnect() -> None:
@@ -112,55 +109,6 @@ async def test_azure_background_failure_reaches_consumer() -> None:
             await stream.close()
 
 
-async def test_failover_closes_primary_and_replays_packet_once() -> None:
-    class FailedStream(MockSTTStream):
-        def __init__(self) -> None:
-            super().__init__(results=[])
-            self.was_closed = False
-
-        async def send_audio(self, audio: bytes) -> None:
-            raise STTTransientError("failed")
-
-        async def close(self) -> None:
-            self.was_closed = True
-            await super().close()
-            await asyncio.sleep(0)
-
-    class RecordingStream(MockSTTStream):
-        def __init__(self) -> None:
-            super().__init__(results=[])
-            self.packets: list[bytes] = []
-
-        async def send_audio(self, audio: bytes) -> None:
-            self.packets.append(audio)
-
-    class Fallback(MockSTTProvider):
-        async def create_stream(
-            self, sample_rate: int = 8000, encoding: str = "linear16"
-        ) -> STTStream:
-            assert primary.was_closed
-            return secondary
-
-    primary = FailedStream()
-    secondary = RecordingStream()
-    stream = FallbackSTTStream(
-        primary, Fallback(), "primary", 8000, "linear16", CircuitBreaker("test")
-    )
-
-    async def consume() -> list[TranscriptionResult]:
-        return [result async for result in stream.results()]
-
-    reader = asyncio.create_task(consume())
-    await asyncio.sleep(0)
-    await stream.send_audio(bytes(320))
-    assert primary.was_closed and secondary.packets == [bytes(320)]
-    await asyncio.sleep(0)
-    assert not reader.done()
-    await stream.close()
-    async with asyncio.timeout(2):
-        assert await reader == []
-
-
 async def test_pcm_chunk_boundaries_preserve_every_sample() -> None:
     audio = bytes(range(256)) * 3
 
@@ -238,16 +186,13 @@ def test_retry_after_invalid_values(value: str) -> None:
 
 def test_voice_config_rejects_unknown_providers_and_wrong_codec(settings: Settings) -> None:
     for update in [
-        {"primary_stt_provider": "typo"},
-        {"fallback_tts_provider": "typo"},
+        {"stt_provider": "typo"},
+        {"tts_provider": "typo"},
+        {"stt_provider": "mock"},
         {"elevenlabs_output_format": "mp3_44100_128"},
     ]:
         with pytest.raises(ValidationError):
             Settings.model_validate({**settings.model_dump(), **update})
-    with pytest.raises(ValueError):
-        build_stt_provider(settings.model_copy(update={"primary_stt_provider": "typo"}))
-    with pytest.raises(ValueError):
-        build_tts_provider(settings.model_copy(update={"primary_tts_provider": "typo"}))
 
 
 async def test_azure_voice_attribute_is_xml_escaped() -> None:

@@ -15,12 +15,10 @@ from app.conversation.state import ConfirmationStatus
 from app.voice.pipeline import VoicePipeline
 from app.voice.stt.base import TranscriptionResult
 from app.voice.stt.live import DeepgramLiveStream
-from app.voice.stt.mock import MockSTTProvider
 from app.voice.tts.azure import AzureTTSProvider
-from app.voice.tts.base import TTSTransientError
 from app.voice.tts.elevenlabs import ElevenLabsTTSProvider
-from app.voice.tts.fallback import FallbackTTSProvider
-from app.voice.tts.mock import MockTTSProvider
+from tests.fake_stt import MockSTTProvider
+from tests.fake_tts import MockTTSProvider
 
 
 def test_hindi_hinglish_and_sustained_english_switch() -> None:
@@ -135,12 +133,6 @@ async def test_tts_language_and_fallback_routing() -> None:
         _ = [chunk async for chunk in provider.synthesize("Namaste", language="hi")]
     assert "hi-IN-SwaraNeural" in ssml[0]
     assert "hi-IN" in ssml[0]
-
-    primary = MockTTSProvider(fail_with=TTSTransientError("unavailable"))
-    fallback = MockTTSProvider(total_chunks=1)
-    routed = FallbackTTSProvider(primary, fallback)
-    _ = [chunk async for chunk in routed.synthesize("Namaste", language="hi")]
-    assert fallback.last_language == "hi"
 
 
 def test_hindi_confirmation_and_server_owned_speech() -> None:

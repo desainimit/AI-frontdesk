@@ -1,6 +1,4 @@
 import asyncio
-import audioop
-import base64
 import logging
 import re
 from collections.abc import Callable
@@ -58,10 +56,11 @@ from app.safety.transfer import TransferError, transfer_call
 from app.security.rate_limit import enforce_rate_limit
 from app.voice.circuit import CircuitRegistry
 from app.voice.factory import (
-    build_stt_provider,
-    build_tenant_stt_provider,
-    build_tenant_tts_provider,
-    build_tts_provider,
+    follows_caller_language,
+    platform_stt,
+    platform_tts,
+    stt_from_connection,
+    tts_from_connection,
 )
 from app.voice.metrics import VoiceMetrics
 from app.voice.pipeline import VoicePipeline
@@ -131,11 +130,9 @@ async def issue_patient_access(
 
 
 def tenant_resolver(app: FastAPI) -> TenantIntegrationResolver | None:
-    """The resolver when tenant-owned connections are enabled, else None (legacy mode)."""
+    """The connection resolver; absent only when the app runs without a real database."""
     resolver = getattr(app.state, "integration_resolver", None)
-    return (
-        resolver if isinstance(resolver, TenantIntegrationResolver) and resolver.enabled else None
-    )
+    return resolver if isinstance(resolver, TenantIntegrationResolver) else None
 
 
 def circuit_registry(app: FastAPI) -> CircuitRegistry:
@@ -161,36 +158,33 @@ def twilio_credentials(connection: ResolvedIntegration) -> TwilioCredentials:
 async def tenant_candidates(
     app: FastAPI, tenant_id: UUID | None, *, fresh: bool = False
 ) -> list[TwilioCredentials]:
-    """Accounts allowed to open a new call for this tenant: its own connection, or the
-    platform account only when the tenant is explicitly approved to keep using it."""
+    """Accounts allowed to open a new call for this tenant: its own connection when it
+    has one, otherwise the platform account."""
     settings: Settings = app.state.settings
+    platform = [TwilioCredentials.from_settings(settings)] if settings.platform_twilio else []
     resolver = tenant_resolver(app)
     if resolver is None:
-        return [TwilioCredentials.from_settings(settings)]
+        return platform
     if tenant_id is None:
         return []
     connection = await resolver.active(tenant_id, "telephony", fresh=fresh)
-    if connection is not None:
-        return [twilio_credentials(connection)]
-    if resolver.legacy_allowed(tenant_id) and settings.twilio_account_sid:
-        return [TwilioCredentials.from_settings(settings)]
-    return []
+    return [twilio_credentials(connection)] if connection is not None else platform
 
 
 async def call_candidates(
     app: FastAPI, service: CallService, tenant_id: UUID, call_id: UUID
 ) -> list[TwilioCredentials]:
-    """Accounts allowed to continue an existing call: only the connection pinned to it."""
+    """Accounts allowed to continue an existing call: only the one pinned to it."""
     settings: Settings = app.state.settings
+    platform = [TwilioCredentials.from_settings(settings)] if settings.platform_twilio else []
     resolver = tenant_resolver(app)
     if resolver is None:
-        return [TwilioCredentials.from_settings(settings)]
+        return platform
     binding = await service.binding(tenant_id, call_id)
     if binding is None:
         return []
     if binding.integration_id is None or binding.credential_version_id is None:
-        legacy = resolver.legacy_allowed(tenant_id) and settings.twilio_account_sid
-        return [TwilioCredentials.from_settings(settings)] if legacy else []
+        return platform  # The call was opened on the platform account.
     return [
         twilio_credentials(connection)
         for connection in await resolver.for_call(
@@ -202,8 +196,8 @@ async def call_candidates(
 async def read_form(request: Request) -> dict[str, str]:
     """Parse an unauthenticated webhook body. Nothing here is trusted yet."""
     settings: Settings = request.app.state.settings
-    if not settings.telephony_enabled:
-        raise HTTPException(503, "Telephony is disabled")
+    if not settings.telephony_ready:
+        raise HTTPException(503, "Telephony is not configured")
     if tenant_resolver(request.app) is not None:
         # Choosing a candidate account needs a lookup before the signature can be
         # checked, so unauthenticated senders are bounded first.
@@ -356,66 +350,49 @@ async def call_status(request: Request, database: DatabaseDependency) -> Respons
 
 @dataclass
 class CallProviders:
-    """Speech and model providers for one call, resolved from that call's tenant."""
+    """Speech and model providers for one call: the tenant's own connection for each,
+    otherwise the platform account."""
 
-    stt_primary: ResolvedIntegration | None
-    stt_fallback: ResolvedIntegration | None
+    stt_connection: ResolvedIntegration | None
     tts: TextToSpeechProvider
-    llm: LLMProvider | None
+    llm: LLMProvider
     owned_llm: LLMProvider | None
     multilingual: bool
 
     def speech_to_text(
         self, app: FastAPI, settings: Settings, speech_locale: Callable[[], str]
     ) -> SpeechToTextProvider:
-        telemetry = app.state.telemetry
-        if self.stt_primary is not None:
-            return build_tenant_stt_provider(
-                settings,
-                telemetry,
-                circuit_registry(app),
-                self.stt_primary,
-                self.stt_fallback,
-                language_resolver=speech_locale if self.multilingual else None,
-            )
-        if self.multilingual:
-            return build_stt_provider(settings, telemetry, language_resolver=speech_locale)
-        return app.state.stt_provider or build_stt_provider(settings, telemetry)
+        locale = speech_locale if self.multilingual else None
+        if self.stt_connection is not None:
+            return stt_from_connection(settings, self.stt_connection, locale)
+        provider = app.state.stt_provider or platform_stt(settings, locale)
+        if provider is None:
+            raise IntegrationUnavailableError()
+        return provider
 
 
 async def resolve_call_providers(
     app: FastAPI, settings: Settings, tenant_id: UUID
 ) -> CallProviders:
-    """Each provider is this tenant's own connection.
+    """Every provider this call needs, checked before the caller hears anything.
 
-    Platform providers are used only for a tenant explicitly approved to keep them; a
-    tenant with a missing connection fails the call instead of borrowing another key.
+    A missing provider fails the call; nothing falls back to a test or echo mode.
     """
-    telemetry = app.state.telemetry
     resolver = tenant_resolver(app)
-    stt_primary = stt_fallback = tts_primary = tts_fallback = llm_connection = None
+    stt_connection = tts_connection = llm_connection = None
     if resolver is not None:
-        stt_primary = await resolver.active(tenant_id, "stt")
-        tts_primary = await resolver.active(tenant_id, "tts")
-        if stt_primary is not None:
-            stt_fallback = await resolver.active(tenant_id, "stt", "fallback")
-        if tts_primary is not None:
-            tts_fallback = await resolver.active(tenant_id, "tts", "fallback")
-        if settings.agent_enabled:
-            llm_connection = await resolver.active(tenant_id, "llm")
-        if not resolver.legacy_allowed(tenant_id) and (
-            stt_primary is None
-            or tts_primary is None
-            or (settings.agent_enabled and llm_connection is None)
-        ):
-            raise IntegrationUnavailableError()
-    tts: TextToSpeechProvider = (
-        build_tenant_tts_provider(
-            settings, telemetry, circuit_registry(app), tts_primary, tts_fallback
-        )
-        if tts_primary is not None
-        else app.state.tts_provider or build_tts_provider(settings, telemetry)
+        stt_connection = await resolver.active(tenant_id, "stt")
+        tts_connection = await resolver.active(tenant_id, "tts")
+        llm_connection = await resolver.active(tenant_id, "llm")
+    if stt_connection is None and app.state.stt_provider is None and platform_stt(settings) is None:
+        raise IntegrationUnavailableError()
+    tts: TextToSpeechProvider | None = (
+        tts_from_connection(settings, tts_connection)
+        if tts_connection is not None
+        else app.state.tts_provider or platform_tts(settings)
     )
+    if tts is None:
+        raise IntegrationUnavailableError()
     llm: LLMProvider | None = app.state.llm_provider
     owned_llm: LLMProvider | None = None
     if llm_connection is not None:
@@ -427,21 +404,10 @@ async def resolve_call_providers(
             llm_connection.secret("api_key"),
             dict(llm_connection.config),
         )
-    if settings.agent_enabled and llm is None:
+    if llm is None:
         raise IntegrationUnavailableError()
     return CallProviders(
-        stt_primary,
-        stt_fallback,
-        tts,
-        llm,
-        owned_llm,
-        settings.multilingual_enabled
-        and (
-            stt_primary is None
-            or (
-                stt_primary.provider == "deepgram" and stt_primary.config.get("language") == "multi"
-            )
-        ),
+        stt_connection, tts, llm, owned_llm, follows_caller_language(settings, stt_connection)
     )
 
 
@@ -453,7 +419,7 @@ async def run_media(
     call_id: UUID,
     credentials: TwilioCredentials | None = None,
 ) -> None:
-    # The account that authenticated this stream; the platform account in legacy mode.
+    # The account that authenticated this stream: the tenant's own, or the platform's.
     account = credentials or TwilioCredentials.from_settings(settings)
     owned_llm: LLMProvider | None = None
     context: CallContext | None = None
@@ -490,12 +456,185 @@ async def run_media(
                 raise ValueError("Invalid stream binding")
             await service.start(candidate, stream_sid)
             context = candidate
-        if settings.telephony_mode == "echo":
-            # Import once, after authenticated connection. No model downloads or provider calls.
-            from app.voice.echo import EchoSession
+        telemetry = socket.app.state.telemetry
+        redis_dep = getattr(getattr(socket.app.state, "resources", None), "redis", None)
+        resolver = tenant_resolver(socket.app)
+        providers = await resolve_call_providers(socket.app, settings, tenant_id)
+        owned_llm, llm, multilingual = (
+            providers.owned_llm,
+            providers.llm,
+            providers.multilingual,
+        )
+        tts = providers.tts
+        operational = await service.operational_configuration(context)
+        configuration_version = operational[0] if operational else None
+        configuration = operational[1] if operational else None
+        conv_store = socket.app.state.conversation_store or build_conversation_store(
+            settings, redis_dep
+        )
+        conversation_store = conv_store
+        initial_conv_state = ConversationStateManager.create_initial_state(
+            call_id=call_id,
+            tenant_id=tenant_id,
+            telephony_call_id=sid,
+            caller_phone=getattr(context, "caller_phone", None),
+            default_language=settings.conversation_default_language,
+            confirmation_timeout_seconds=settings.conversation_confirmation_timeout_seconds,
+            language_policy=(
+                configuration.languages
+                if configuration is not None
+                else await service.language_policy(context, settings.conversation_default_language)
+                if multilingual
+                else LanguagePolicy(
+                    default_language=settings.conversation_default_language,
+                    enabled_languages=[settings.conversation_default_language],
+                    auto_detect=False,
+                )
+            ),
+        )
 
-            previous_sequence = int(message["sequenceNumber"])
-            async with asyncio.timeout(settings.telephony_max_call_seconds), EchoSession() as echo:
+        def speech_locale() -> str:
+            return LOCALES[base_language(initial_conv_state.language)].speech_locale
+
+        stt = providers.speech_to_text(socket.app, settings, speech_locale)
+        conversation_state = initial_conv_state
+        initial_conv_state.call_state.stream_sid = stream_sid
+        await conv_store.save(
+            initial_conv_state, ttl_seconds=settings.conversation_state_ttl_seconds
+        )
+        transfer_number = (
+            configuration.voice.transfer_number
+            if configuration is not None
+            else await service.transfer_number(context)
+        )
+        # Adds one model request per caller turn; the deterministic rules always run.
+        classifier = LLMSafetyClassifier(llm) if settings.safety_semantic_enabled else None
+        safety_engine = SafetyEngine(
+            classifier,
+            transfer_available=transfer_number is not None,
+            classifier_timeout_seconds=settings.safety_classifier_timeout_seconds,
+        )
+        voice_metrics = VoiceMetrics(telemetry)
+        registry, appointment_flow = appointment_tools(
+            service.sessions, settings.agent_tool_timeout_seconds, settings, resolver
+        )
+        agent = AgentRuntime(
+            llm,
+            registry,
+            appointment_flow=appointment_flow,
+            safety_engine=safety_engine,
+            max_steps=configuration.agent.max_steps if configuration else settings.agent_max_steps,
+            max_tool_calls=configuration.agent.max_tool_calls
+            if configuration
+            else settings.agent_max_tool_calls,
+            turn_timeout_seconds=settings.agent_turn_timeout_seconds,
+            metrics=voice_metrics,
+        )
+        agent_context = AgentContext(
+            context,
+            frozenset(configuration.agent.allowed_tools) if configuration else ALL_TOOLS,
+            business_name=configuration.business.name if configuration else "",
+            instructions=configuration.agent.instructions if configuration else "",
+            tone=configuration.agent.tone if configuration else "professional",
+            configuration_version=configuration_version,
+            configuration=configuration,
+        )
+
+        async def send_frame(msg: dict[str, Any]) -> None:
+            async with asyncio.timeout(5):
+                await socket.send_json(msg)
+
+        async def on_transcript_cb(result: TranscriptionResult) -> None:
+            nonlocal status, reason
+            if not result.is_final or not result.text.strip():
+                return
+            reply = await agent.respond(agent_context, initial_conv_state, result.text)
+            response = reply.response
+            safety = initial_conv_state.safety_state
+            if safety.decision == SafetyDecision.EMERGENCY_PROTOCOL and not safety.event_recorded:
+                safety.event_recorded = True
+                voice_metrics.record_emergency(safety.source or "rule")
+                try:
+                    await service.record_safety_event(context, AuditAction.EMERGENCY_DETECTED)
+                except Exception:
+                    logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
+            if safety.decision == SafetyDecision.ESCALATE and not safety.event_recorded:
+                safety.event_recorded = True
+                voice_metrics.record_human_transfer("unavailable")
+                try:
+                    await service.record_safety_event(context, AuditAction.HUMAN_TRANSFER_REQUESTED)
+                except Exception:
+                    logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
+            if safety.decision == SafetyDecision.TRANSFER:
+                if safety.transfer_attempted:
+                    return
+                safety.transfer_attempted = True
+                try:
+                    await service.record_safety_event(context, AuditAction.HUMAN_TRANSFER_REQUESTED)
+                except Exception:
+                    logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
+                await pipeline.speak(response)
+                if transfer_number is None:
+                    return
+                try:
+                    await transfer_call(settings, context, transfer_number, credentials=account)
+                    safety.transfer_confirmed = True
+                    status, reason = "completed", "human_transfer"
+                    voice_metrics.record_human_transfer("redirected")
+                    try:
+                        await service.record_safety_event(
+                            context, AuditAction.HUMAN_TRANSFER_REDIRECTED
+                        )
+                    except Exception:
+                        logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
+                except TransferError:
+                    voice_metrics.record_human_transfer("failed")
+                    safety.decision = SafetyDecision.ESCALATE
+                    await pipeline.speak(transfer_failed_message(initial_conv_state.language))
+                    try:
+                        await service.record_safety_event(
+                            context, AuditAction.HUMAN_TRANSFER_FAILED
+                        )
+                    except Exception:
+                        logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
+                return
+            await pipeline.speak(response)
+
+        interruption_config = (
+            InterruptionConfig(
+                energy_threshold=settings.barge_in_energy_threshold,
+                consecutive_frames_required=settings.barge_in_consecutive_frames,
+            )
+            if settings.barge_in_enabled
+            else None
+        )
+
+        pipeline = VoicePipeline(
+            stream_sid=stream_sid,
+            metrics=voice_metrics,
+            stt_provider=stt,
+            tts_provider=tts,
+            send_frame=send_frame,
+            on_transcript=on_transcript_cb,
+            interruption_config=interruption_config,
+            conversation_state=initial_conv_state,
+            conversation_store=conv_store,
+            conversation_ttl_seconds=settings.conversation_state_ttl_seconds,
+            language_threshold=settings.conversation_language_confidence_threshold,
+            multilingual_enabled=multilingual,
+            barge_in_enabled=settings.barge_in_enabled,
+        )
+        previous_sequence = int(message["sequenceNumber"])
+        try:
+            await pipeline.start()
+            if configuration is not None:
+                await pipeline.speak(configuration.agent.greeting)
+            call_seconds = (
+                configuration.voice.max_duration_minutes * 60
+                if configuration
+                else settings.telephony_max_call_seconds
+            )
+            async with asyncio.timeout(call_seconds):
                 while True:
                     async with asyncio.timeout(settings.telephony_idle_seconds):
                         message = parse_message(await socket.receive_text())
@@ -510,265 +649,26 @@ async def run_media(
                             stop.get("accountSid") != account.account_sid
                         ):
                             raise ValueError("Invalid stop binding")
-                        status, reason = "completed", "stream_stopped"
+                        status = "completed"
+                        reason = (
+                            "human_transfer"
+                            if initial_conv_state.safety_state.transfer_confirmed
+                            else "stream_stopped"
+                        )
                         break
-                    if event in {"mark", "dtmf"}:
+                    if event == "mark":
+                        pipeline.acknowledge_playback(message.get("mark", {}).get("name", ""))
+                        continue
+                    if event == "dtmf":
                         continue
                     if event != "media" or message["media"].get("track") != "inbound":
                         raise ValueError("Invalid audio event")
                     audio = decode_audio(message["media"]["payload"])
-                    received += 1
-                    pcm = await echo.process(audioop.ulaw2lin(audio, 2))
-                    async with asyncio.timeout(5):
-                        await socket.send_json(
-                            {
-                                "event": "media",
-                                "streamSid": stream_sid,
-                                "media": {
-                                    "payload": base64.b64encode(audioop.lin2ulaw(pcm, 2)).decode()
-                                },
-                            }
-                        )
-                    sent += 1
-        else:
-            # Phase 6 & 7 VoicePipeline with STT + TTS + Barge-in + Conversation State
-            telemetry = socket.app.state.telemetry
-            redis_dep = getattr(getattr(socket.app.state, "resources", None), "redis", None)
-            resolver = tenant_resolver(socket.app)
-            providers = await resolve_call_providers(socket.app, settings, tenant_id)
-            owned_llm, llm, multilingual = (
-                providers.owned_llm,
-                providers.llm,
-                providers.multilingual,
-            )
-            tts = providers.tts
-            operational = await service.operational_configuration(context)
-            configuration_version = operational[0] if operational else None
-            configuration = operational[1] if operational else None
-            conv_store = socket.app.state.conversation_store or build_conversation_store(
-                settings, redis_dep
-            )
-            conversation_store = conv_store
-            initial_conv_state = ConversationStateManager.create_initial_state(
-                call_id=call_id,
-                tenant_id=tenant_id,
-                telephony_call_id=sid,
-                caller_phone=getattr(context, "caller_phone", None),
-                default_language=settings.conversation_default_language,
-                confirmation_timeout_seconds=settings.conversation_confirmation_timeout_seconds,
-                language_policy=(
-                    configuration.languages
-                    if configuration is not None
-                    else await service.language_policy(
-                        context, settings.conversation_default_language
-                    )
-                    if multilingual
-                    else LanguagePolicy(
-                        default_language=settings.conversation_default_language,
-                        enabled_languages=[settings.conversation_default_language],
-                        auto_detect=False,
-                    )
-                ),
-            )
-
-            def speech_locale() -> str:
-                return LOCALES[base_language(initial_conv_state.language)].speech_locale
-
-            stt = providers.speech_to_text(socket.app, settings, speech_locale)
-            conversation_state = initial_conv_state
-            initial_conv_state.call_state.stream_sid = stream_sid
-            await conv_store.save(
-                initial_conv_state, ttl_seconds=settings.conversation_state_ttl_seconds
-            )
-            transfer_number = (
-                configuration.voice.transfer_number
-                if configuration is not None
-                else await service.transfer_number(context)
-            )
-            classifier = (
-                LLMSafetyClassifier(llm)
-                if settings.agent_enabled
-                and llm is not None
-                and (settings.llm_provider != "mock" or owned_llm is not None)
-                and settings.safety_semantic_enabled
-                else None
-            )
-            safety_engine = SafetyEngine(
-                classifier,
-                transfer_available=transfer_number is not None,
-                classifier_timeout_seconds=settings.safety_classifier_timeout_seconds,
-            )
-            agent = None
-            voice_metrics = VoiceMetrics(telemetry)
-            if settings.agent_enabled and llm is not None:
-                registry, appointment_flow = appointment_tools(
-                    service.sessions, settings.agent_tool_timeout_seconds, settings, resolver
-                )
-                agent = AgentRuntime(
-                    llm,
-                    registry,
-                    appointment_flow=appointment_flow,
-                    safety_engine=safety_engine,
-                    max_steps=configuration.agent.max_steps
-                    if configuration
-                    else settings.agent_max_steps,
-                    max_tool_calls=configuration.agent.max_tool_calls
-                    if configuration
-                    else settings.agent_max_tool_calls,
-                    turn_timeout_seconds=settings.agent_turn_timeout_seconds,
-                    metrics=voice_metrics,
-                )
-            agent_context = AgentContext(
-                context,
-                frozenset(configuration.agent.allowed_tools) if configuration else ALL_TOOLS,
-                business_name=configuration.business.name if configuration else "",
-                instructions=configuration.agent.instructions if configuration else "",
-                tone=configuration.agent.tone if configuration else "professional",
-                configuration_version=configuration_version,
-                configuration=configuration,
-            )
-
-            async def send_frame(msg: dict[str, Any]) -> None:
-                async with asyncio.timeout(5):
-                    await socket.send_json(msg)
-
-            async def on_transcript_cb(result: TranscriptionResult) -> None:
-                nonlocal status, reason
-                if not result.is_final or not result.text.strip():
-                    return
-                if agent is not None:
-                    reply = await agent.respond(agent_context, initial_conv_state, result.text)
-                    response = reply.response
-                else:
-                    response = (
-                        await safety_engine.evaluate(initial_conv_state, result.text) or result.text
-                    )
-                safety = initial_conv_state.safety_state
-                if (
-                    safety.decision == SafetyDecision.EMERGENCY_PROTOCOL
-                    and not safety.event_recorded
-                ):
-                    safety.event_recorded = True
-                    voice_metrics.record_emergency(safety.source or "rule")
-                    try:
-                        await service.record_safety_event(context, AuditAction.EMERGENCY_DETECTED)
-                    except Exception:
-                        logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
-                if safety.decision == SafetyDecision.ESCALATE and not safety.event_recorded:
-                    safety.event_recorded = True
-                    voice_metrics.record_human_transfer("unavailable")
-                    try:
-                        await service.record_safety_event(
-                            context, AuditAction.HUMAN_TRANSFER_REQUESTED
-                        )
-                    except Exception:
-                        logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
-                if safety.decision == SafetyDecision.TRANSFER:
-                    if safety.transfer_attempted:
-                        return
-                    safety.transfer_attempted = True
-                    try:
-                        await service.record_safety_event(
-                            context, AuditAction.HUMAN_TRANSFER_REQUESTED
-                        )
-                    except Exception:
-                        logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
-                    await pipeline.speak(response)
-                    if transfer_number is None:
-                        return
-                    try:
-                        await transfer_call(settings, context, transfer_number, credentials=account)
-                        safety.transfer_confirmed = True
-                        status, reason = "completed", "human_transfer"
-                        voice_metrics.record_human_transfer("redirected")
-                        try:
-                            await service.record_safety_event(
-                                context, AuditAction.HUMAN_TRANSFER_REDIRECTED
-                            )
-                        except Exception:
-                            logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
-                    except TransferError:
-                        voice_metrics.record_human_transfer("failed")
-                        safety.decision = SafetyDecision.ESCALATE
-                        await pipeline.speak(transfer_failed_message(initial_conv_state.language))
-                        try:
-                            await service.record_safety_event(
-                                context, AuditAction.HUMAN_TRANSFER_FAILED
-                            )
-                        except Exception:
-                            logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
-                    return
-                await pipeline.speak(response)
-
-            interruption_config = (
-                InterruptionConfig(
-                    energy_threshold=settings.barge_in_energy_threshold,
-                    consecutive_frames_required=settings.barge_in_consecutive_frames,
-                )
-                if settings.barge_in_enabled
-                else None
-            )
-
-            pipeline = VoicePipeline(
-                stream_sid=stream_sid,
-                metrics=voice_metrics,
-                stt_provider=stt,
-                tts_provider=tts,
-                send_frame=send_frame,
-                on_transcript=on_transcript_cb,
-                interruption_config=interruption_config,
-                conversation_state=initial_conv_state,
-                conversation_store=conv_store,
-                conversation_ttl_seconds=settings.conversation_state_ttl_seconds,
-                language_threshold=settings.conversation_language_confidence_threshold,
-                multilingual_enabled=multilingual,
-                barge_in_enabled=settings.barge_in_enabled,
-            )
-            previous_sequence = int(message["sequenceNumber"])
-            try:
-                await pipeline.start()
-                if configuration is not None:
-                    await pipeline.speak(configuration.agent.greeting)
-                call_seconds = (
-                    configuration.voice.max_duration_minutes * 60
-                    if configuration
-                    else settings.telephony_max_call_seconds
-                )
-                async with asyncio.timeout(call_seconds):
-                    while True:
-                        async with asyncio.timeout(settings.telephony_idle_seconds):
-                            message = parse_message(await socket.receive_text())
-                        sequence = int(message["sequenceNumber"])
-                        if message.get("streamSid") != stream_sid or sequence <= previous_sequence:
-                            raise ValueError("Invalid stream sequence")
-                        previous_sequence = sequence
-                        event = message["event"]
-                        if event == "stop":
-                            stop = message.get("stop", {})
-                            if stop.get("callSid") != context.provider_call_id or (
-                                stop.get("accountSid") != account.account_sid
-                            ):
-                                raise ValueError("Invalid stop binding")
-                            status = "completed"
-                            reason = (
-                                "human_transfer"
-                                if initial_conv_state.safety_state.transfer_confirmed
-                                else "stream_stopped"
-                            )
-                            break
-                        if event == "mark":
-                            pipeline.acknowledge_playback(message.get("mark", {}).get("name", ""))
-                            continue
-                        if event == "dtmf":
-                            continue
-                        if event != "media" or message["media"].get("track") != "inbound":
-                            raise ValueError("Invalid audio event")
-                        audio = decode_audio(message["media"]["payload"])
-                        await pipeline.process_inbound_audio(audio)
-            finally:
-                received = pipeline.received_frames
-                sent = pipeline.sent_frames
-                await pipeline.close()
+                    await pipeline.process_inbound_audio(audio)
+        finally:
+            received = pipeline.received_frames
+            sent = pipeline.sent_frames
+            await pipeline.close()
     except WebSocketDisconnect:
         pass
     except asyncio.CancelledError:
@@ -837,7 +737,7 @@ async def media(socket: WebSocket, tenant_id: UUID, call_id: UUID) -> None:
     service = CallService(database.session_factory)
     signature = socket.headers.get("x-twilio-signature", "")
     credentials: TwilioCredentials | None = None
-    if not socket.url.query and signature and settings.telephony_enabled:
+    if not socket.url.query and signature and settings.telephony_ready:
         try:
             # The path only selects the call; its stored binding decides which account
             # may sign, so a number reassigned later cannot adopt this stream.

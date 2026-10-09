@@ -433,9 +433,9 @@ async def test_booking_through_voice_websocket_without_external_providers(
     from app.api.telephony import run_media
     from app.conversation.store import MemoryConversationStateStore
     from app.voice.stt.base import TranscriptionResult
-    from app.voice.stt.mock import MockSTTProvider
-    from app.voice.tts.mock import MockTTSProvider
     from app.voice.twilio import stream_token
+    from tests.fake_stt import MockSTTProvider
+    from tests.fake_tts import MockTTSProvider
 
     domain = await seed(UnitOfWork(tenancy.database.session_factory), tenancy.context(tenancy.a))
     number = "+1" + str(uuid4().int)[:10]
@@ -465,14 +465,6 @@ async def test_booking_through_voice_websocket_without_external_providers(
     )
     config = tenancy.settings.model_copy(
         update={
-            "telephony_enabled": True,
-            "telephony_mode": "pipeline",
-            "agent_enabled": True,
-            "multilingual_enabled": False,
-            "primary_stt_provider": "mock",
-            "fallback_stt_provider": "none",
-            "primary_tts_provider": "mock",
-            "fallback_tts_provider": "none",
             "twilio_account_sid": "AC" + "1" * 32,
             "twilio_auth_token": SecretStr("test-token"),
             "telephony_public_base_url": "https://voice.example.test",

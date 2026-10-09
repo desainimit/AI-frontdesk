@@ -30,10 +30,8 @@ for _secret in (
     "TELEPHONY_PUBLIC_BASE_URL",
 ):
     os.environ[_secret] = ""
-os.environ["LLM_PROVIDER"] = "mock"
-# Remaining switches are fixed here too, so a test never inherits one from .env.
-for _switch in ("TENANT_INTEGRATIONS_ENABLED", "TELEPHONY_ENABLED", "AGENT_ENABLED"):
-    os.environ[_switch] = "false"
+# The semantic safety check is one more model request per turn; tests of it enable it.
+os.environ["SAFETY_SEMANTIC_ENABLED"] = "false"
 
 
 @pytest.fixture

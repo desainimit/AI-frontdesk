@@ -44,8 +44,9 @@ async def test_tenant_document_lifecycle_and_retrieval(
         )
         with pytest.raises(ConflictError):
             await service.set_status(a, doc_a.id, approve=True)
-        assert await worker.process_one()
-        assert await worker.process_one()
+        # Only this test's tenants: the shared database may hold other tests' jobs.
+        assert await worker.process_one(tenant_id=tenancy.a.tenant_id)
+        assert await worker.process_one(tenant_id=tenancy.b.tenant_id)
         await service.set_status(a, doc_a.id, approve=True)
         await service.set_status(b, doc_b.id, approve=True)
         answer_a = await service.search(a, "What are your opening hours?")
@@ -65,7 +66,7 @@ async def test_tenant_document_lifecycle_and_retrieval(
             assert chunks and all(chunk.tenant_id == a.tenant_id for chunk in chunks)
         await service.upload(a, "new-hours.md", b"# Hours\n\nOpen every day.", 1000000, doc_a.id)
         assert (await service.search(a, "What are your opening hours?")).status == "not_found"
-        assert await worker.process_one()
+        assert await worker.process_one(tenant_id=tenancy.a.tenant_id)
         await service.set_status(a, doc_a.id, approve=True)
         assert {
             s.document_name for s in (await service.search(a, "What are your hours?")).sources

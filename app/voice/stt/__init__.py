@@ -10,15 +10,10 @@ from app.voice.stt.base import (
     TranscriptionResult,
 )
 from app.voice.stt.deepgram import DeepgramSTTProvider
-from app.voice.stt.fallback import FallbackSTTProvider
-from app.voice.stt.mock import MockSTTProvider, MockSTTStream
 
 __all__ = [
     "AzureSTTProvider",
     "DeepgramSTTProvider",
-    "FallbackSTTProvider",
-    "MockSTTProvider",
-    "MockSTTStream",
     "STTError",
     "STTPermanentError",
     "STTRateLimitError",

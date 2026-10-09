@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -16,10 +17,14 @@ from app.api.telephony import run_media
 from app.audit.models import AuditEvent
 from app.calls.models import Call, PhoneNumber
 from app.calls.service import CallContext, CallService
+from app.conversation.store import MemoryConversationStateStore
 from app.database.rls import set_tenant_scope
 from app.errors import AuthorizationError, ConflictError, NotFoundError
 from app.main import create_app
 from app.voice.twilio import stream_token
+from tests.fake_llm import MockLLMProvider
+from tests.fake_stt import MockSTTProvider
+from tests.fake_tts import MockTTSProvider
 from tests.fakes import FakeDependency
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as pytestmark
@@ -107,8 +112,8 @@ async def test_signed_http_lifecycle_and_isolation(tenancy: TenancyFixture) -> N
 
 
 @pytest.mark.parametrize("ending", ["stop", "disconnect", "invalid", "bad_token", "bad_codec"])
-async def test_media_echo_and_cleanup(tenancy: TenancyFixture, ending: str) -> None:
-    config = voice_settings(tenancy.settings).model_copy(update={"telephony_mode": "echo"})
+async def test_media_reply_and_cleanup(tenancy: TenancyFixture, ending: str) -> None:
+    config = voice_settings(tenancy.settings)
     number = await seed_phone(tenancy)
     service = CallService(tenancy.database.session_factory)
     context = await service.receive(number, "CA" + uuid4().hex, uuid4())
@@ -117,7 +122,20 @@ async def test_media_echo_and_cleanup(tenancy: TenancyFixture, ending: str) -> N
     stream_sid = "MZ" + uuid4().hex
     inbound: asyncio.Queue[Message] = asyncio.Queue()
     outbound: asyncio.Queue[Message] = asyncio.Queue()
-    socket = WebSocket({"type": "websocket", "path": "/"}, inbound.get, outbound.put)
+    # Fake speech and model providers: nothing in this test reaches a real service.
+    state = SimpleNamespace(
+        telemetry=None,
+        resources=None,
+        stt_provider=MockSTTProvider(),
+        tts_provider=MockTTSProvider(),
+        llm_provider=MockLLMProvider(),
+        conversation_store=MemoryConversationStateStore(),
+    )
+    socket = WebSocket(
+        {"type": "websocket", "path": "/", "app": SimpleNamespace(state=state)},
+        inbound.get,
+        outbound.put,
+    )
     await inbound.put({"type": "websocket.connect"})
     await socket.accept()
     await outbound.get()
@@ -160,11 +178,15 @@ async def test_media_echo_and_cleanup(tenancy: TenancyFixture, ending: str) -> N
                 "media": {"track": "inbound", "payload": audio},
             }
         )
+        # The caller's frame is transcribed and answered with synthesized audio.
         async with asyncio.timeout(15):
-            response = await outbound.get()
-        assert response["type"] == "websocket.send"
-        echoed = json.loads(response["text"])
-        assert echoed == {"event": "media", "streamSid": stream_sid, "media": {"payload": audio}}
+            while True:
+                response = await outbound.get()
+                assert response["type"] == "websocket.send"
+                reply = json.loads(response["text"])
+                if reply["event"] == "media":
+                    break
+        assert reply["streamSid"] == stream_sid and reply["media"]["payload"]
         if ending == "disconnect":
             await inbound.put({"type": "websocket.disconnect", "code": 1006})
         elif ending == "invalid":
@@ -192,7 +214,7 @@ async def test_media_echo_and_cleanup(tenancy: TenancyFixture, ending: str) -> N
             row.status
             == {"stop": "completed", "disconnect": "disconnected", "invalid": "failed"}[ending]
         )
-        assert row.received_frames == row.sent_frames == 1 and row.ended_at is not None
+        assert row.received_frames == 1 and row.sent_frames >= 1 and row.ended_at is not None
         with pytest.raises(AuthorizationError):
             await service.start(context, stream_sid)
 

@@ -16,9 +16,9 @@ from starlette.websockets import WebSocket
 from app.api.telephony import run_media
 from app.calls.service import CallContext
 from app.config.settings import Settings
+from app.conversation.locales import LanguagePolicy
 from app.voice.circuit import CircuitBreaker, CircuitState
-from app.voice.factory import build_stt_provider, build_tts_provider
-from app.voice.metrics import VoiceMetrics
+from app.voice.factory import follows_caller_language, platform_stt, platform_tts
 from app.voice.pipeline import VoicePipeline
 from app.voice.processors.interruption import InterruptionConfig, InterruptionHandler
 from app.voice.stt.azure import AzureSTTProvider
@@ -30,19 +30,16 @@ from app.voice.stt.base import (
     TranscriptionResult,
 )
 from app.voice.stt.deepgram import DeepgramSTTProvider
-from app.voice.stt.fallback import FallbackSTTProvider
-from app.voice.stt.mock import MockSTTProvider
 from app.voice.tts.azure import AzureTTSProvider
 from app.voice.tts.base import (
     TTSPermanentError,
     TTSRateLimitError,
     TTSTimeoutError,
-    TTSTransientError,
 )
 from app.voice.tts.elevenlabs import ElevenLabsTTSProvider
-from app.voice.tts.fallback import FallbackTTSProvider
-from app.voice.tts.mock import MockTTSProvider
 from app.voice.twilio import stream_token
+from tests.fake_stt import MockSTTProvider
+from tests.fake_tts import MockTTSProvider
 from tests.test_telephony import voice_settings
 
 
@@ -203,54 +200,6 @@ async def test_azure_stt_success_and_errors() -> None:
         await to.transcribe(bytes(320))
 
 
-@pytest.mark.asyncio
-async def test_fallback_stt_provider() -> None:
-    primary = MockSTTProvider(results=[TranscriptionResult(text="primary text", is_final=True)])
-    fallback = MockSTTProvider(results=[TranscriptionResult(text="fallback text", is_final=True)])
-
-    metrics = VoiceMetrics()
-    cb = CircuitBreaker(name="test_stt", reset_seconds=0.1)
-    fb_provider = FallbackSTTProvider(
-        primary=primary,
-        fallback=fallback,
-        circuit_breaker=cb,
-        metrics=metrics,
-    )
-
-    # 1. Primary healthy: works normally
-    stream = await fb_provider.create_stream()
-    await stream.send_audio(bytes(320))
-    await stream.close()
-    res = [r async for r in stream.results()]
-    assert len(res) == 1
-    assert res[0].text == "primary text"
-    assert fb_provider.circuit.state == CircuitState.CLOSED
-
-    # 2. Make primary fail on create_stream: automatic fallback to secondary
-    class FailingSTT:
-        name = "failing_primary"
-
-        async def create_stream(self, sample_rate: int = 8000, encoding: str = "linear16") -> Any:
-            raise STTTransientError("Primary STT down")
-
-        async def health(self) -> bool:
-            return False
-
-    fb_provider_failing = FallbackSTTProvider(
-        primary=FailingSTT(),  # pyright: ignore[reportArgumentType]
-        fallback=fallback,
-        circuit_breaker=CircuitBreaker(name="failing_stt", reset_seconds=0.1),
-        metrics=metrics,
-    )
-
-    s2 = await fb_provider_failing.create_stream()
-    await s2.send_audio(bytes(320))
-    await s2.close()
-    res2 = [r async for r in s2.results()]
-    assert len(res2) == 1
-    assert res2[0].text == "fallback text"
-
-
 # ---------------------------------------------------------------------------
 # 3. TTS Provider Tests
 # ---------------------------------------------------------------------------
@@ -315,32 +264,6 @@ async def test_azure_tts_success_and_errors() -> None:
     to = AzureTTSProvider(speech_key=SecretStr("timeout"), client=to_client)
     with pytest.raises(TTSTimeoutError):
         _ = [c async for c in to.synthesize("hello")]
-
-
-@pytest.mark.asyncio
-async def test_fallback_tts_provider() -> None:
-    class FailingTTS:
-        name = "failing_tts"
-
-        async def synthesize(self, text: str, voice_id: str | None = None) -> Any:
-            raise TTSTransientError("TTS service unavailable")
-            yield b""  # unreachable
-
-        async def health(self) -> bool:
-            return False
-
-    secondary = MockTTSProvider(total_chunks=3)
-    metrics = VoiceMetrics()
-    fb = FallbackTTSProvider(
-        primary=FailingTTS(),  # pyright: ignore[reportArgumentType]
-        fallback=secondary,
-        circuit_breaker=CircuitBreaker(name="failing_tts", reset_seconds=0.1),
-        metrics=metrics,
-    )
-
-    chunks = [c async for c in fb.synthesize("test prompt")]
-    assert len(chunks) == 3
-    assert all(len(c) == 320 for c in chunks)
 
 
 # ---------------------------------------------------------------------------
@@ -452,74 +375,49 @@ async def test_voice_pipeline_flow_and_barge_in() -> None:
 # ---------------------------------------------------------------------------
 # 6. Factory Builder Tests
 # ---------------------------------------------------------------------------
-def test_voice_factory(settings: Settings) -> None:
-    # Mock settings with fallback="none"
-    cfg_mock = settings.model_copy(
+def test_platform_speech_comes_from_configured_keys_only(settings: Settings) -> None:
+    # No key, no provider: a call then fails instead of using a test provider.
+    assert platform_stt(settings) is None and platform_tts(settings) is None
+    configured = settings.model_copy(
         update={
-            "primary_stt_provider": "mock",
-            "fallback_stt_provider": "none",
-            "primary_tts_provider": "mock",
-            "fallback_tts_provider": "none",
-        }
-    )
-    stt = build_stt_provider(cfg_mock)
-    tts = build_tts_provider(cfg_mock)
-    assert stt.name == "mock"
-    assert tts.name == "mock"
-
-    # Fallback config with custom models and voices
-    cfg_fallback = settings.model_copy(
-        update={
-            "primary_stt_provider": "deepgram",
-            "fallback_stt_provider": "azure",
-            "primary_tts_provider": "elevenlabs",
-            "fallback_tts_provider": "azure",
             "deepgram_api_key": SecretStr("test-dg"),
             "deepgram_model": "nova-3",
             "deepgram_language": "fr",
-            "azure_speech_key": SecretStr("test-az"),
-            "azure_speech_region": "westus",
-            "azure_speech_language": "fr-FR",
-            "azure_speech_voice": "fr-FR-DeniseNeural",
             "elevenlabs_api_key": SecretStr("test-el"),
             "elevenlabs_model_id": "eleven_multilingual_v2",
             "elevenlabs_voice_id": "custom-voice-xyz",
         }
     )
-    stt_fb = build_stt_provider(cfg_fallback)
-    tts_fb = build_tts_provider(cfg_fallback)
-    assert isinstance(stt_fb, FallbackSTTProvider)
-    assert isinstance(tts_fb, FallbackTTSProvider)
-    assert stt_fb.name == "deepgram+azure"
-    assert tts_fb.name == "elevenlabs+azure"
-    assert isinstance(stt_fb.primary, DeepgramSTTProvider)
-    assert stt_fb.primary.model == "nova-3"
-    assert stt_fb.primary.language == "fr"
-    assert isinstance(stt_fb.fallback, AzureSTTProvider)
-    assert stt_fb.fallback.language == "fr-FR"
-    assert stt_fb.fallback.region == "westus"
-    assert isinstance(tts_fb.primary, ElevenLabsTTSProvider)
-    assert tts_fb.primary.model_id == "eleven_multilingual_v2"
-    assert tts_fb.primary.default_voice_id == "custom-voice-xyz"
-    assert isinstance(tts_fb.fallback, AzureTTSProvider)
-    assert tts_fb.fallback.default_voice == "fr-FR-DeniseNeural"
+    stt = platform_stt(configured)
+    tts = platform_tts(configured)
+    assert isinstance(stt, DeepgramSTTProvider) and stt.model == "nova-3" and stt.language == "fr"
+    assert isinstance(tts, ElevenLabsTTSProvider)
+    assert tts.model_id == "eleven_multilingual_v2" and tts.default_voice_id == "custom-voice-xyz"
+    assert not follows_caller_language(configured, None)
+    azure = configured.model_copy(
+        update={
+            "stt_provider": "azure",
+            "tts_provider": "azure",
+            "azure_speech_key": SecretStr("test-az"),
+            "azure_speech_region": "westus",
+            "azure_speech_language": "fr-FR",
+            "azure_speech_voice": "fr-FR-DeniseNeural",
+        }
+    )
+    azure_stt, azure_tts = platform_stt(azure), platform_tts(azure)
+    assert isinstance(azure_stt, AzureSTTProvider) and azure_stt.region == "westus"
+    assert isinstance(azure_tts, AzureTTSProvider)
+    assert azure_tts.default_voice == "fr-FR-DeniseNeural"
+    # Azure switches locale per call, so it follows a caller who changes language.
+    assert follows_caller_language(azure, None)
 
 
 # ---------------------------------------------------------------------------
 # 7. Telephony run_media WebSocket Pipeline Mode Test
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent_enabled", [False, True])
-async def test_run_media_pipeline_mode(settings: Settings, agent_enabled: bool) -> None:
-    config = voice_settings(settings).model_copy(
-        update={
-            "telephony_mode": "pipeline",
-            "primary_stt_provider": "mock",
-            "fallback_stt_provider": "none",
-            "primary_tts_provider": "mock",
-            "fallback_tts_provider": "none",
-        }
-    )
+async def test_run_media_pipeline_mode(settings: Settings) -> None:
+    config = voice_settings(settings)
     tenant_id = uuid4()
     call_id = uuid4()
     provider_call_id = "CA" + uuid4().hex
@@ -531,6 +429,9 @@ async def test_run_media_pipeline_mode(settings: Settings, agent_enabled: bool) 
     service.finish = AsyncMock()
     service.transfer_number = AsyncMock(return_value=None)
     service.operational_configuration = AsyncMock(return_value=None)
+    # The default speech-to-text follows the caller's language, so the call reads the
+    # tenant's language policy.
+    service.language_policy = AsyncMock(return_value=LanguagePolicy(default_language="en"))
 
     inbound: asyncio.Queue[Message] = asyncio.Queue()
     outbound: asyncio.Queue[Message] = asyncio.Queue()
@@ -538,10 +439,10 @@ async def test_run_media_pipeline_mode(settings: Settings, agent_enabled: bool) 
     app_mock = MagicMock()
     app_mock.state.resources = None
     app_mock.state.telemetry = None
-    app_mock.state.stt_provider = None
-    app_mock.state.tts_provider = None
-    config = config.model_copy(update={"agent_enabled": agent_enabled})
-    from app.agents.providers.mock import MockLLMProvider
+    # Substitute providers; nothing here reaches a real speech service.
+    app_mock.state.stt_provider = MockSTTProvider()
+    app_mock.state.tts_provider = MockTTSProvider()
+    from tests.fake_llm import MockLLMProvider
 
     app_mock.state.llm_provider = MockLLMProvider()
     from app.conversation.store import MemoryConversationStateStore
@@ -616,13 +517,12 @@ async def test_run_media_pipeline_mode(settings: Settings, agent_enabled: bool) 
     service.start.assert_awaited_once()
     service.finish.assert_awaited_once()
     finish_args = service.finish.await_args[0]
-    assert finish_args[1] == "completed"
+    assert (finish_args[1], finish_args[2]) == ("completed", "stream_stopped")
     assert finish_args[2] == "stream_stopped"
     assert finish_args[3] == 1
     persisted = await app_mock.state.conversation_store.get(tenant_id, call_id)
     assert persisted is not None and persisted.call_state.status.value == "completed"
     assert persisted.call_state.ended_at is not None
     assert persisted.utterance_count == 1
-    if agent_enabled:
-        assert persisted.active_intent == "book_appointment"
-        assert persisted.last_agent_response != "Test appointment booking"
+    assert persisted.active_intent == "book_appointment"
+    assert persisted.last_agent_response != "Test appointment booking"

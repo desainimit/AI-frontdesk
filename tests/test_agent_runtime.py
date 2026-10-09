@@ -9,7 +9,6 @@ from pydantic import BaseModel, SecretStr, ValidationError
 from app.agents.context import AgentContext
 from app.agents.prompts import build_request
 from app.agents.providers.base import LLMRequest, LLMResponse
-from app.agents.providers.mock import MockLLMProvider
 from app.agents.runtime import AgentRuntime
 from app.agents.schemas import AgentDecision, Intent, ToolCall
 from app.agents.tools import ReadTool, ToolRegistry
@@ -18,6 +17,7 @@ from app.calls.service import CallContext
 from app.config.settings import Settings
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import SafetyDecision
+from tests.fake_llm import MockLLMProvider
 
 
 class ScriptedProvider:
@@ -187,24 +187,16 @@ async def test_offline_intent_keeps_context() -> None:
     assert (await runtime.respond(context, state, "Tomorrow")).intent == Intent.BOOK_APPOINTMENT
 
 
-def test_agent_configuration_fails_closed(settings: Settings) -> None:
-    for update in (
-        {"agent_enabled": True, "llm_provider": "gemini"},
-        {"agent_enabled": True, "llm_provider": "openrouter"},
-        {"agent_enabled": True, "environment": "production", "llm_provider": "mock"},
-    ):
+def test_model_provider_choice_is_closed_and_keys_stay_hidden(settings: Settings) -> None:
+    # The offline demonstration model exists only in tests; it cannot be configured.
+    for provider in ("mock", "openai", ""):
         with pytest.raises(ValidationError):
-            Settings.model_validate(
-                {
-                    **settings.model_dump(),
-                    **update,
-                    "gemini_api_key": SecretStr(""),
-                    "openrouter_api_key": SecretStr(""),
-                }
-            )
-    assert "private-key" not in repr(
-        settings.model_copy(update={"gemini_api_key": SecretStr("private-key")})
+            Settings.model_validate({**settings.model_dump(), "llm_provider": provider})
+    chosen = settings.model_copy(
+        update={"llm_provider": "openrouter", "openrouter_api_key": SecretStr("private-key")}
     )
+    assert chosen.platform_llm_key.get_secret_value() == "private-key"
+    assert "private-key" not in repr(chosen)
 
 
 def test_structured_output_rejects_extra_fields_and_mixed_actions() -> None:

@@ -73,7 +73,6 @@ class TenantReadinessService:
 
     async def _checks(self, session: AsyncSession, tenant: Tenant) -> list[ReadinessCheck]:
         settings, tenant_id = self._settings, tenant.id
-        legacy = self._resolver.legacy_allowed(tenant_id)
         integrations = {
             (row.purpose, row.slot): row
             for row in await session.scalars(
@@ -87,8 +86,8 @@ class TenantReadinessService:
             row = integrations.get((purpose, "primary"))
             if row is not None and row.status == "verified" and row.active_version_id:
                 return _ready(key)
-            if row is None and legacy and platform_configured:
-                return _ready(key)  # Explicitly approved to use the platform account.
+            if row is None and platform_configured:
+                return _ready(key)  # No connection of its own: the platform account serves it.
             if row is None or row.status in {"not_configured", "revoked"}:
                 return _blocking(key, f"No {label} connection.", f"Connect {label}.")
             if row.status == "saved_unverified":
@@ -163,7 +162,7 @@ class TenantReadinessService:
                 )
         checks.append(
             _ready("public_callbacks")
-            if settings.telephony_enabled and settings.telephony_public_base_url
+            if settings.telephony_ready
             else _blocking(
                 "public_callbacks",
                 "The platform has no public telephony callback address.",
@@ -174,7 +173,7 @@ class TenantReadinessService:
             "telephony_connection",
             Purpose.TELEPHONY,
             "phone service",
-            bool(settings.twilio_account_sid and settings.twilio_auth_token.get_secret_value()),
+            settings.platform_twilio,
         )
         checks.append(telephony)
         row = integrations.get((Purpose.TELEPHONY, "primary"))
@@ -193,13 +192,12 @@ class TenantReadinessService:
                 "Select a number owned by the connected account.",
             )
         )
-        mock_voice = settings.telephony_mode == "echo"
         checks.append(
             connection(
                 "speech_to_text",
                 Purpose.STT,
                 "speech-to-text",
-                mock_voice or settings.primary_stt_provider == "mock" or _stt_key(settings),
+                _stt_key(settings),
             )
         )
         checks.append(
@@ -207,33 +205,21 @@ class TenantReadinessService:
                 "text_to_speech",
                 Purpose.TTS,
                 "text-to-speech",
-                mock_voice or settings.primary_tts_provider == "mock" or _tts_key(settings),
+                _tts_key(settings),
             )
         )
-        for purpose, key in ((Purpose.STT, "speech_to_text"), (Purpose.TTS, "text_to_speech")):
-            fallback = integrations.get((purpose, "fallback"))
-            if fallback is not None and fallback.status not in {"verified", "revoked"}:
-                checks.append(
-                    _blocking(
-                        f"{key}_fallback",
-                        "The fallback connection is configured but not verified.",
-                        "Verify the fallback or disconnect it.",
-                    )
-                )
-        if settings.agent_enabled:
-            checks.append(
-                connection(
-                    "agent",
-                    Purpose.LLM,
-                    "AI model",
-                    settings.llm_provider == "mock"
-                    or bool(settings.platform_llm_key.get_secret_value()),
-                )
+        checks.append(
+            connection(
+                "agent",
+                Purpose.LLM,
+                "AI model",
+                bool(settings.platform_llm_key.get_secret_value()),
             )
+        )
         knowledge = integrations.get((Purpose.EMBEDDINGS, "primary"))
         if not (
             (knowledge is not None and knowledge.status == "verified")
-            or (knowledge is None and legacy and settings.platform_llm_key.get_secret_value())
+            or (knowledge is None and settings.platform_llm_key.get_secret_value())
         ):
             checks.append(
                 ReadinessCheck(
@@ -321,7 +307,7 @@ class TenantReadinessService:
 def _stt_key(settings: Settings) -> bool:
     key = (
         settings.deepgram_api_key
-        if settings.primary_stt_provider == "deepgram"
+        if settings.stt_provider == "deepgram"
         else settings.azure_speech_key
     )
     return bool(key.get_secret_value())
@@ -330,7 +316,7 @@ def _stt_key(settings: Settings) -> bool:
 def _tts_key(settings: Settings) -> bool:
     key = (
         settings.elevenlabs_api_key
-        if settings.primary_tts_provider == "elevenlabs"
+        if settings.tts_provider == "elevenlabs"
         else settings.azure_speech_key
     )
     return bool(key.get_secret_value())

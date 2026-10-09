@@ -1,12 +1,6 @@
 # Tenant onboarding, login and provider connections
 
-This covers three features that are off by default and enabled independently:
-
-| Flag | What it turns on |
-| --- | --- |
-| `TENANT_ONBOARDING_ENABLED` | Platform creates a draft workspace with a pending administrator. No API token is issued. |
-| `TENANT_HUMAN_AUTH_ENABLED` | Email/password login for tenant users, emailed invitations, OTP password reset, team management. |
-| `TENANT_INTEGRATIONS_ENABLED` | Each tenant connects its own Twilio, speech, AI-model and embeddings accounts. Calls and jobs use only that tenant's credentials. |
+These features are always on. Each clinic may connect its own Twilio, speech, AI-model and embeddings accounts; anything it has not connected is served by the platform account configured in the environment.
 
 Run `python -m app.database.initialize` before starting the API and the worker. It applies every migration, provisions the restricted API and worker logins, and runs the optional Super Admin bootstrap. See [fresh installation](fresh-install.md).
 
@@ -22,7 +16,7 @@ All of these are platform infrastructure. Inject them from the deployment secret
 | `SMTP_*` | Invitations and password reset | TLS is required outside local/development. Mail is delivered by the worker (`python -m app.worker`). |
 | `TENANT_AUTH_PUBLIC_ORIGIN` | Invitation links | The frontend origin. HTTPS outside local/development. |
 
-The API and every worker that touches tenant credentials (knowledge worker, workflow worker, mail worker) need the keyring.
+The API and the worker (`python -m app.worker`) both need the keyring.
 
 ## Onboarding and administrator access
 
@@ -40,9 +34,8 @@ Login, acceptance and recovery are throttled per account and per source address 
 
 The legacy `POST /api/v1/platform/tenants` contract still returns a one-time `fd1` admin token and creates a tenant that is live immediately on the platform's provider accounts.
 
-New SaaS onboarding requires accepted administration, published configuration and
-funding readiness. Its activation remains blocked until funding and provider
-dispatch are implemented; verified credentials alone do not activate it.
+A workspace created through onboarding goes live once an administrator has accepted,
+its configuration is published and every required provider is available.
 
 ## Provider connections
 
@@ -66,10 +59,10 @@ Supported connections:
 | `telephony` | `twilio` | `auth_token`; optional `api_key_sid` + `api_key_secret` for REST | `account_identifier` (Account SID) |
 | `stt` | `deepgram`, `azure_speech` | `api_key` / `speech_key` | model and language / region and language |
 | `tts` | `elevenlabs`, `azure_speech` | `api_key` / `speech_key` | model and voice / region and voices |
-| `llm` | `gemini` | `api_key` | `model`, limited to `TENANT_LLM_MODELS`; optional `thinking_level` |
-| `embeddings` | `gemini` | `api_key` | `gemini-embedding-2` only, at 1536 dimensions to match the index |
+| `llm` | `gemini`, `openrouter` | `api_key` | `model`, limited to `TENANT_LLM_MODELS`; optional `thinking_level` |
+| `embeddings` | `gemini`, `openrouter` | `api_key` | `gemini-embedding-2` or `openai/text-embedding-3-small`, both at 1536 dimensions to match the index |
 
-`stt` and `tts` accept a `primary` and an optional `fallback` slot.
+There is one connection per purpose; speech has no separate fallback slot.
 
 Behaviour to rely on:
 
@@ -83,23 +76,11 @@ Behaviour to rely on:
 
 ## How calls use tenant credentials
 
-- An incoming webhook selects a candidate tenant from the destination number, then must carry a valid signature from that tenant's own Twilio connection and a matching `AccountSid`. Only then is the tenant established.
+- An incoming webhook selects a candidate tenant from the destination number, then must carry a valid signature and a matching `AccountSid` from that tenant's Twilio account: its own connection, or the platform account when it has none. Only then is the tenant established.
 - The call row records the connection and credential version it was accepted on. Later status callbacks, the media stream and transfers must authenticate against that same connection.
 - Speech, AI-model and embeddings providers are resolved from the call's or job's tenant at the time of use. Circuit breakers are kept per connection, so one tenant's provider failures do not open another tenant's circuit.
-- A tenant with a missing or disconnected connection fails closed (`integration_unavailable`). The provider keys in the environment are used only for tenant IDs listed in `LEGACY_PROVIDER_TENANT_IDS`.
+- Each provider is the tenant's own verified connection when it has one, otherwise the platform account from the environment. Another tenant's connection is never used. With neither, the call or job fails (`integration_unavailable`) before the caller hears anything.
 - `service_state` is separate from `is_active`. A workspace in `setup` can be administered but receives no calls. `activate` recomputes readiness in the same transaction that flips the state.
-
-## Migrating existing tenants
-
-Migration `0019` marks every existing tenant `live` so nothing changes while `TENANT_INTEGRATIONS_ENABLED=false`.
-
-Before setting it to `true`:
-
-1. Decide, per existing tenant, whether it keeps the platform accounts for now. List those tenant IDs in `LEGACY_PROVIDER_TENANT_IDS`. Any tenant not listed and without its own verified connections stops taking calls.
-2. Set `SECRET_ENCRYPTION_KEYS`, `SECRET_ENCRYPTION_ACTIVE_KEY` and `STREAM_TOKEN_KEY`, and give the workers the keyring.
-3. Move tenants off the allowlist one at a time: connect and verify their accounts, bind their number through the platform route (a platform-assigned number can only be rebound by the platform), point the number's webhooks at the URLs returned, then remove the tenant ID from the list.
-
-Rolling back to `TENANT_INTEGRATIONS_ENABLED=false` returns every tenant to the platform accounts and leaves stored connections, versions and call bindings intact. Numbers that were bound to a tenant connection are then refused until integrations are re-enabled, because their calls must be served by that connection.
 
 ## Not covered here
 

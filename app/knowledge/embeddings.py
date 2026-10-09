@@ -147,16 +147,14 @@ async def open_embedder(
 ) -> OwnedEmbedder:
     """Embedder for one tenant's request or job; the caller closes it.
 
-    Uses the tenant's own embeddings connection. The platform key serves only tenants
-    that are explicitly allowed to keep using platform provider accounts.
+    The tenant's own embeddings connection when it has one, otherwise the platform
+    account. With neither, the request fails instead of borrowing another key.
     """
     from app.integrations.resolver import IntegrationUnavailableError
 
-    if resolver is None or not resolver.enabled:
-        return platform_embedder(settings)
-    connection = await resolver.active(tenant_id, "embeddings")
+    connection = await resolver.active(tenant_id, "embeddings") if resolver else None
     if connection is not None:
         return build_embedder(connection.provider, connection.secret("api_key"))
-    if resolver.legacy_allowed(tenant_id) and settings.platform_llm_key.get_secret_value():
+    if settings.platform_llm_key.get_secret_value():
         return platform_embedder(settings)
     raise IntegrationUnavailableError()

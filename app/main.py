@@ -29,7 +29,6 @@ from app.integrations.resolver import TenantIntegrationResolver
 from app.observability.tracing import Telemetry
 from app.resources import Dependency, Resources
 from app.voice.circuit import CircuitRegistry
-from app.voice.factory import build_stt_provider, build_tts_provider
 
 logger = logging.getLogger(__name__)
 ResourceFactory = Callable[[Settings], Dependency]
@@ -63,9 +62,7 @@ def create_app(
             redis = redis_factory(config)
             stack.push_async_callback(redis.close)
             app.state.resources = Resources(database=database, redis=redis)
-            app.state.conversation_store = (
-                build_conversation_store(config, redis) if config.telephony_enabled else None
-            )
+            app.state.conversation_store = build_conversation_store(config, redis)
             # One resolver per process: tenant credentials are looked up per call or
             # request and never copied into process-wide settings.
             app.state.integration_resolver = (
@@ -74,18 +71,14 @@ def create_app(
                 else None
             )
             app.state.voice_circuits = CircuitRegistry()
+            # Speech providers are built per call from the clinic's connection or the
+            # platform keys. These two stay empty in production; a test sets them to
+            # substitute its own provider.
             app.state.stt_provider = None
             app.state.tts_provider = None
-            # Platform-account providers serve legacy tenants only. With tenant
-            # connections enabled they exist only if the platform keys are configured.
-            platform_voice = not config.tenant_integrations_enabled or bool(config.legacy_tenants)
-            if config.telephony_enabled and config.telephony_mode == "pipeline" and platform_voice:
-                app.state.stt_provider = build_stt_provider(config, telemetry)
-                app.state.tts_provider = build_tts_provider(config, telemetry)
+            # The platform model account, when its key is configured.
             app.state.llm_provider = None
-            if config.agent_enabled and (
-                config.llm_provider == "mock" or config.platform_llm_key.get_secret_value()
-            ):
+            if config.platform_llm_key.get_secret_value():
                 provider = build_llm_provider(config)
                 app.state.llm_provider = provider
                 stack.push_async_callback(provider.close)

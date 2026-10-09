@@ -1,7 +1,6 @@
 from enum import StrEnum
 from typing import Any, Literal, Self
 from urllib.parse import urlsplit
-from uuid import UUID
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,11 +38,8 @@ class Settings(BaseSettings):
     secret_encryption_keys: SecretStr = SecretStr("")
     secret_encryption_active_key: str = ""
     otp_hmac_key: SecretStr = SecretStr("")
-    # Tenant-owned provider connections. When enabled, calls and jobs resolve provider
-    # credentials per tenant; the provider keys below are used only for allowlisted
-    # legacy tenants and never as a silent fallback.
-    tenant_integrations_enabled: bool = False
-    legacy_provider_tenant_ids: str = ""
+    # A clinic's own verified provider connection is used when it has one; otherwise
+    # the platform account configured by the provider keys below.
     stream_token_key: SecretStr = SecretStr("")
     integration_cache_seconds: float = Field(default=15, ge=0, le=300)
     integration_verify_timeout_seconds: float = Field(default=8, gt=0, le=30)
@@ -74,23 +70,19 @@ class Settings(BaseSettings):
     outbox_lease_seconds: float = Field(default=90, ge=75, le=600)
     outbox_max_attempts: int = Field(default=5, ge=1, le=20)
     notification_provider: Literal["console"] = "console"
-    telephony_enabled: bool = False
     twilio_account_sid: str = ""
     twilio_auth_token: SecretStr = SecretStr("")
     telephony_public_base_url: str = ""
     telephony_idle_seconds: float = Field(default=30, ge=5, le=120)
     telephony_max_call_seconds: float = Field(default=600, ge=30, le=3600)
-    telephony_mode: Literal["pipeline", "echo"] = "pipeline"
-    primary_stt_provider: Literal["deepgram", "azure", "mock"] = "deepgram"
-    fallback_stt_provider: Literal["deepgram", "azure", "mock", "none"] = "azure"
-    primary_tts_provider: Literal["elevenlabs", "azure", "mock"] = "elevenlabs"
-    fallback_tts_provider: Literal["elevenlabs", "azure", "mock", "none"] = "azure"
+    stt_provider: Literal["deepgram", "azure"] = "deepgram"
+    tts_provider: Literal["elevenlabs", "azure"] = "elevenlabs"
 
     # Deepgram STT
     deepgram_api_key: SecretStr = SecretStr("")
-    multilingual_enabled: bool = False
-    deepgram_model: str = "nova-2"
-    deepgram_language: str = "en"
+    # "multi" follows a caller who mixes languages; set one language code to fix it.
+    deepgram_model: str = "nova-3"
+    deepgram_language: str = "multi"
     deepgram_base_url: str = "https://api.deepgram.com"
 
     # ElevenLabs TTS
@@ -133,8 +125,7 @@ class Settings(BaseSettings):
     conversation_default_language: Literal["en", "es", "fr", "de", "pt", "hi"] = "en"
     conversation_language_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     conversation_confirmation_timeout_seconds: float = Field(default=120.0, ge=10.0, le=600.0)
-    agent_enabled: bool = False
-    llm_provider: Literal["mock", "gemini", "openrouter"] = "mock"
+    llm_provider: Literal["gemini", "openrouter"] = "gemini"
     gemini_api_key: SecretStr = SecretStr("")
     openrouter_api_key: SecretStr = SecretStr("")
     # Empty uses the selected provider's default model.
@@ -158,57 +149,18 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def validate_multilingual(self) -> Self:
-        if self.multilingual_enabled:
-            if self.primary_stt_provider != "deepgram":
-                raise ValueError("Multilingual calls require Deepgram as primary STT")
-            if not self.deepgram_model.startswith("nova-3") or self.deepgram_language != "multi":
-                raise ValueError(
-                    "Multilingual calls require DEEPGRAM_MODEL=nova-3 and DEEPGRAM_LANGUAGE=multi"
-                )
-            if "elevenlabs" in {
-                self.primary_tts_provider,
-                self.fallback_tts_provider,
-            } and self.elevenlabs_model_id not in {
-                "eleven_turbo_v2_5",
-                "eleven_multilingual_v2",
-            }:
-                raise ValueError(
-                    "Multilingual calls require an ElevenLabs model supporting all launch languages"
-                )
-        return self
-
-    @model_validator(mode="after")
-    def validate_agent(self) -> Self:
-        if (
-            self.agent_enabled
-            and self.llm_provider != "mock"
-            and not self.tenant_integrations_enabled
-            and not self.platform_llm_key.get_secret_value()
-        ):
-            raise ValueError("The agent requires the API key of the selected LLM_PROVIDER")
-        if (
-            self.agent_enabled
-            and self.llm_provider == "mock"
-            and self.environment in {Environment.STAGING, Environment.PRODUCTION}
-        ):
-            raise ValueError("Mock LLM provider is restricted to local/development")
+    def validate_speech(self) -> Self:
+        if self.deepgram_language == "multi" and not self.deepgram_model.startswith("nova-3"):
+            raise ValueError("DEEPGRAM_LANGUAGE=multi requires a nova-3 model")
         return self
 
     @model_validator(mode="after")
     def validate_telephony(self) -> Self:
-        if self.telephony_enabled:
-            import re
-
+        """Calls are answered once a public HTTPS address for webhooks is configured."""
+        if self.deployed or self.telephony_public_base_url:
             url = urlsplit(self.telephony_public_base_url)
-            platform_account = bool(
-                re.fullmatch(r"AC[0-9a-fA-F]{32}", self.twilio_account_sid)
-                and self.twilio_auth_token.get_secret_value()
-            )
             if (
-                # Tenant connections supply the account; a platform account is optional.
-                not (platform_account or self.tenant_integrations_enabled)
-                or url.scheme != "https"
+                url.scheme != "https"
                 or not url.hostname
                 or url.username
                 or url.password
@@ -216,36 +168,25 @@ class Settings(BaseSettings):
                 or url.query
                 or url.fragment
             ):
-                raise ValueError(
-                    "Enabled telephony requires Twilio credentials and an HTTPS origin"
-                )
+                raise ValueError("Configure TELEPHONY_PUBLIC_BASE_URL as a public HTTPS origin")
         self.telephony_public_base_url = self.telephony_public_base_url.rstrip("/")
-        return self
-
-    @model_validator(mode="after")
-    def validate_tenant_integrations(self) -> Self:
-        if self.tenant_integrations_enabled:
-            from app.security.encryption import SecretCipher
-
-            SecretCipher(self.secret_encryption_keys, self.secret_encryption_active_key)
-            if self.telephony_enabled and len(self.stream_token_key.get_secret_value()) < 43:
-                raise ValueError(
-                    "Configure an independent random STREAM_TOKEN_KEY of at least 43 characters"
-                )
-            if not self.llm_models:
-                raise ValueError("Configure at least one TENANT_LLM_MODELS entry")
-        _ = self.legacy_tenants
+        stream_key = self.stream_token_key.get_secret_value()
+        if (self.deployed or stream_key) and len(stream_key) < 43:
+            raise ValueError(
+                "Configure an independent random STREAM_TOKEN_KEY of at least 43 characters"
+            )
+        if not self.llm_models:
+            raise ValueError("Configure at least one TENANT_LLM_MODELS entry")
         return self
 
     @property
-    def legacy_tenants(self) -> frozenset[UUID]:
-        """Tenants explicitly approved to keep using the platform's provider accounts."""
-        try:
-            return frozenset(
-                UUID(item.strip()) for item in self.legacy_provider_tenant_ids.split(",") if item
-            )
-        except ValueError:
-            raise ValueError("LEGACY_PROVIDER_TENANT_IDS must be comma-separated UUIDs") from None
+    def telephony_ready(self) -> bool:
+        return bool(self.telephony_public_base_url)
+
+    @property
+    def platform_twilio(self) -> bool:
+        """Whether the platform's own Twilio account is configured."""
+        return bool(self.twilio_account_sid and self.twilio_auth_token.get_secret_value())
 
     @property
     def platform_llm_key(self) -> SecretStr:

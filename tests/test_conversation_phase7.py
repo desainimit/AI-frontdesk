@@ -18,8 +18,8 @@ from app.conversation.state import (
 from app.conversation.store import MemoryConversationStateStore, RedisConversationStateStore
 from app.voice.pipeline import VoicePipeline
 from app.voice.stt.base import TranscriptionResult
-from app.voice.stt.mock import MockSTTProvider
-from app.voice.tts.mock import MockTTSProvider
+from tests.fake_stt import MockSTTProvider
+from tests.fake_tts import MockTTSProvider
 
 
 @pytest.mark.asyncio

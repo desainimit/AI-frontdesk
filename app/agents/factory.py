@@ -3,7 +3,6 @@ from typing import Any
 from pydantic import SecretStr
 
 from app.agents.providers.base import LLMProvider
-from app.agents.providers.mock import MockLLMProvider
 from app.config.settings import Settings
 
 
@@ -35,8 +34,6 @@ def _provider(
 
 def build_llm_provider(settings: Settings) -> LLMProvider:
     """The platform's own model account, from the environment."""
-    if settings.llm_provider == "mock":
-        return MockLLMProvider()
     return _provider(settings, settings.llm_provider, settings.platform_llm_key, settings.llm_model)
 
 

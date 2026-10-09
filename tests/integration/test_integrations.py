@@ -18,6 +18,7 @@ from app.auth.context import ActorType, RequestContext, Role
 from app.calls.models import Call, PhoneNumber
 from app.calls.service import CallBinding, CallService
 from app.config.settings import Settings
+from app.conversation.store import MemoryConversationStateStore
 from app.database.rls import set_tenant_scope
 from app.errors import AuthorizationError, ConflictError, NotFoundError
 from app.events.idempotency import IdempotencyConflictError
@@ -48,6 +49,9 @@ from app.platform.support import EnterSupportCommand, SupportAccessService
 from app.tenants.models import Tenant
 from app.tenants.readiness import NotReadyError, TenantReadinessService
 from app.users.models import User
+from tests.fake_llm import MockLLMProvider
+from tests.fake_stt import MockSTTProvider
+from tests.fake_tts import MockTTSProvider
 from tests.fakes import FakeDependency
 from tests.integration.platform_mfa_helpers import mfa_login
 from tests.integration.test_platform import seed_command
@@ -60,17 +64,13 @@ def integration_settings(base: Settings, **overrides: object) -> Settings:
     key = base64.b64encode(secrets.token_bytes(32)).decode()
     return base.model_copy(
         update={
-            "tenant_integrations_enabled": True,
             "secret_encryption_keys": SecretStr(json.dumps({"k1": key})),
             "secret_encryption_active_key": "k1",
             "stream_token_key": SecretStr(secrets.token_urlsafe(48)),
             "integration_cache_seconds": 0,
-            "telephony_enabled": True,
-            "telephony_mode": "echo",
             "telephony_public_base_url": "https://voice.example.test",
             "twilio_account_sid": "",
             "twilio_auth_token": SecretStr(""),
-            "agent_enabled": False,
             **overrides,
         }
     )
@@ -153,6 +153,13 @@ class Harness:
     async def voice(self, actor: Actor) -> None:
         await self.connect(actor, "stt", "deepgram", {"api_key": "dg-" + uuid4().hex})
         await self.connect(actor, "tts", "elevenlabs", {"api_key": "el-" + uuid4().hex})
+        await self.connect(
+            actor,
+            "llm",
+            "gemini",
+            {"api_key": "gm-" + uuid4().hex},
+            config={"model": "gemini-3.8-flash"},
+        )
 
 
 async def test_connections_are_isolated_and_secrets_are_write_only(
@@ -494,6 +501,7 @@ async def test_readiness_activation_and_number_ownership(tenancy: TenancyFixture
         "phone_number",
         "speech_to_text",
         "text_to_speech",
+        "agent",
     }
     with pytest.raises(NotReadyError):
         await harness.readiness.set_live(a, True)
@@ -659,7 +667,7 @@ async def test_two_twilio_accounts_route_to_two_tenants_over_http(
         headers = {"Authorization": f"Bearer {tenancy.a.token.get_secret_value()}"}
         listing = await client.get("/api/v1/integrations", headers=headers)
         assert listing.status_code == 200 and listing.headers["cache-control"] == "no-store"
-        assert len(listing.json()) == 3
+        assert len(listing.json()) == 4
         for secret in (token_a, token_b):
             assert secret not in listing.text
         own = next(item["id"] for item in listing.json() if item["purpose"] == "telephony")
@@ -685,28 +693,37 @@ async def test_two_twilio_accounts_route_to_two_tenants_over_http(
         assert readiness.status_code == 200 and readiness.json()["ready"] is True
 
 
-async def test_missing_connection_never_falls_back_to_platform_or_other_tenants(
+async def test_tenant_uses_its_own_connection_else_the_platform_account(
     tenancy: TenancyFixture,
 ) -> None:
-    platform_token = auth_token()
-    harness = Harness(
-        tenancy,
-        twilio_account_sid=account_sid(),
-        twilio_auth_token=SecretStr(platform_token),
-        legacy_provider_tenant_ids=str(tenancy.b.tenant_id),
-    )
     from app.api.telephony import resolve_call_providers, tenant_candidates
 
+    # With no platform account configured, a tenant without a connection has no account.
+    bare = Harness(tenancy)
+    app = create_app(bare.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
+    async with app.router.lifespan_context(app):
+        assert await tenant_candidates(app, tenancy.a.tenant_id) == []
+
+    platform_sid, platform_token = account_sid(), auth_token()
+    harness = Harness(
+        tenancy,
+        twilio_account_sid=platform_sid,
+        twilio_auth_token=SecretStr(platform_token),
+    )
     app = create_app(harness.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     async with app.router.lifespan_context(app):
-        # Tenant A has no connection and is not allowlisted: no account may sign for it.
-        assert await tenant_candidates(app, tenancy.a.tenant_id) == []
+        platform = await tenant_candidates(app, tenancy.a.tenant_id)
+        assert [(item.integration_id, item.account_sid) for item in platform] == [
+            (None, platform_sid)
+        ]
+        assert platform[0].auth_token.get_secret_value() == platform_token
+        # No speech or model key anywhere: the call fails before the caller hears anything.
         with pytest.raises(IntegrationUnavailableError):
             await resolve_call_providers(app, harness.settings, tenancy.a.tenant_id)
-        # Tenant B is explicitly approved to keep the platform account.
-        legacy = await tenant_candidates(app, tenancy.b.tenant_id)
-        assert [item.integration_id for item in legacy] == [None]
-        assert legacy[0].auth_token.get_secret_value() == platform_token
+        # Another tenant's connection is never borrowed.
+        await harness.twilio(tenancy.context(tenancy.b), account_sid(), auth_token())
+        borrowed = await tenant_candidates(app, tenancy.a.tenant_id, fresh=True)
+        assert [item.account_sid for item in borrowed] == [platform_sid]
         # Once A connects its own account, only that account is a candidate for A.
         sid, token = account_sid(), auth_token()
         await harness.twilio(tenancy.context(tenancy.a), sid, token)
@@ -743,6 +760,11 @@ async def test_media_stream_is_bound_to_the_calls_own_connection(
     app = FastAPI()
     app.state.settings = settings
     app.state.integration_resolver = harness.resolver
+    app.state.telemetry = None
+    app.state.stt_provider = MockSTTProvider()
+    app.state.tts_provider = MockTTSProvider()
+    app.state.llm_provider = MockLLMProvider()
+    app.state.conversation_store = MemoryConversationStateStore()
     service = CallService(harness.sessions)
     context = await service.receive(
         number,

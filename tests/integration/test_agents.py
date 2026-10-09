@@ -4,7 +4,6 @@ import pytest
 from sqlalchemy import select
 
 from app.agents.context import AgentContext
-from app.agents.providers.mock import MockLLMProvider
 from app.agents.runtime import AgentRuntime
 from app.agents.tools import directory_tools
 from app.audit.models import AuditEvent
@@ -18,6 +17,7 @@ from app.database.rls import set_tenant_scope
 from app.errors import AuthorizationError
 from app.locations.models import Location
 from app.providers.models import Provider
+from tests.fake_llm import MockLLMProvider
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as pytestmark
 from tests.integration.test_tenancy import tenancy as tenancy

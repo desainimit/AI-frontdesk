@@ -23,8 +23,8 @@ STREAM_TOKEN_SECONDS = 300
 class TwilioCredentials:
     """One Twilio account's identity and secrets for a single call or webhook.
 
-    `integration_id` is set for a tenant-owned connection and absent for the platform
-    account used by allowlisted legacy tenants.
+    `integration_id` is set for a clinic's own connection and absent for the platform
+    account.
     """
 
     account_sid: str
@@ -55,7 +55,7 @@ def signature_valid(
     websocket: bool = False,
     credentials: TwilioCredentials | None = None,
 ) -> bool:
-    if not settings.telephony_enabled or not signature:
+    if not settings.telephony_ready or not signature:
         return False
     token = (credentials or TwilioCredentials.from_settings(settings)).auth_token
     if not token.get_secret_value():
@@ -85,7 +85,7 @@ def matching_credentials(
     return None
 
 
-def _legacy_stream_token(settings: Settings, context: CallContext) -> str:
+def _platform_stream_token(settings: Settings, context: CallContext) -> str:
     binding = (
         f"frontdesk-stream-v1:{context.tenant_id}:{context.call_id}:{context.provider_call_id}"
     )
@@ -99,6 +99,9 @@ def _bound_stream_mac(
 ) -> str:
     # Application signing key, never a provider secret. Bound to tenant, connection,
     # account, call, audience and expiry.
+    if len(settings.stream_token_key.get_secret_value()) < 43:
+        # An empty key would sign every stream identically; refuse instead.
+        raise ValueError("STREAM_TOKEN_KEY is not configured")
     binding = (
         f"frontdesk-stream-v2:media:{context.tenant_id}:{credentials.integration_id}:"
         f"{credentials.account_sid}:{context.call_id}:{context.provider_call_id}:{expires}"
@@ -112,7 +115,7 @@ def stream_token(
     settings: Settings, context: CallContext, credentials: TwilioCredentials | None = None
 ) -> str:
     if credentials is None or credentials.integration_id is None:
-        return _legacy_stream_token(settings, context)
+        return _platform_stream_token(settings, context)
     expires = int(time.time()) + STREAM_TOKEN_SECONDS
     return f"v2.{expires}.{_bound_stream_mac(settings, context, credentials, expires)}"
 
@@ -126,28 +129,23 @@ def stream_token_valid(
     if not isinstance(token, str) or len(token) > 128:
         return False
     if credentials is None or credentials.integration_id is None:
-        return hmac.compare_digest(token, _legacy_stream_token(settings, context))
+        return hmac.compare_digest(token, _platform_stream_token(settings, context))
     version, _, rest = token.partition(".")
     expires_text, _, mac = rest.partition(".")
     if version != "v2" or not expires_text.isdigit() or len(expires_text) > 12:
         return False
     expires = int(expires_text)
-    return expires >= int(time.time()) and hmac.compare_digest(
-        mac, _bound_stream_mac(settings, context, credentials, expires)
-    )
+    try:
+        expected = _bound_stream_mac(settings, context, credentials, expires)
+    except ValueError:
+        return False
+    return expires >= int(time.time()) and hmac.compare_digest(mac, expected)
 
 
 def twiml(
     settings: Settings, context: CallContext, credentials: TwilioCredentials | None = None
 ) -> str:
     root = Element("Response")
-    SubElement(root, "Say").text = (
-        "This is an audio echo test. Please speak now."
-        if settings.telephony_mode == "echo"
-        else "Hello. How can I help you?"
-        if settings.agent_enabled
-        else "This is a speech test. Please speak now."
-    )
     connect = SubElement(root, "Connect")
     path = f"/webhooks/v1/twilio/{context.tenant_id}/{context.call_id}"
     stream = SubElement(

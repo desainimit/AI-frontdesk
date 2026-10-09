@@ -22,7 +22,6 @@ class Purpose(StrEnum):
 
 class ConnectionSlot(StrEnum):
     PRIMARY = "primary"
-    FALLBACK = "fallback"
 
 
 # The region becomes part of a provider hostname, so it is a closed list.
@@ -174,7 +173,6 @@ class ProviderSpec:
     suffix_field: str = "api_key"
 
 
-_BOTH = (ConnectionSlot.PRIMARY, ConnectionSlot.FALLBACK)
 _SPECS = (
     ProviderSpec(
         "twilio",
@@ -185,25 +183,23 @@ _SPECS = (
         account_pattern=r"^AC[0-9a-fA-F]{32}$",
         suffix_field="auth_token",
     ),
-    ProviderSpec("deepgram", Purpose.STT, "Deepgram", DeepgramConfig, ApiKeySecrets, _BOTH),
+    ProviderSpec("deepgram", Purpose.STT, "Deepgram", DeepgramConfig, ApiKeySecrets),
     ProviderSpec(
         "azure_speech",
         Purpose.STT,
         "Azure Speech",
         AzureSpeechToTextConfig,
         AzureSecrets,
-        _BOTH,
         locked_fields=frozenset({"region"}),
         suffix_field="speech_key",
     ),
-    ProviderSpec("elevenlabs", Purpose.TTS, "ElevenLabs", ElevenLabsConfig, ApiKeySecrets, _BOTH),
+    ProviderSpec("elevenlabs", Purpose.TTS, "ElevenLabs", ElevenLabsConfig, ApiKeySecrets),
     ProviderSpec(
         "azure_speech",
         Purpose.TTS,
         "Azure Speech",
         AzureTextToSpeechConfig,
         AzureSecrets,
-        _BOTH,
         locked_fields=frozenset({"region"}),
         suffix_field="speech_key",
     ),

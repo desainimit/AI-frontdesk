@@ -167,12 +167,7 @@ async def test_onboarding_http_flag_validation_and_credential_boundaries(
             }
         ),
     )
-    settings = tenancy.settings.model_copy(
-        update={
-            "telephony_enabled": False,
-            "agent_enabled": False,
-        }
-    )
+    settings = tenancy.settings.model_copy(update={})
     app = create_app(settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
 
     async def allow() -> None:

@@ -148,10 +148,7 @@ async def test_filter_parameters_are_validated_and_scoped_over_http(
     await PatientService(domain.uow).create(
         domain.context, CreatePatient(display_name="Http Filter Person", phone="+913333333333")
     )
-    settings = tenancy.settings.model_copy(
-        update={"telephony_enabled": False, "agent_enabled": False}
-    )
-    app = create_app(settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
+    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
     async with (
         app.router.lifespan_context(app),
         AsyncClient(transport=ASGITransport(app=app), base_url="http://test/api/v1/") as client,

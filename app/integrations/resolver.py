@@ -1,9 +1,9 @@
 """Resolve a tenant's own provider connection for calls and background jobs.
 
 Callers pass a tenant they have already established (a verified call, an authorized
-request or a claimed job). Nothing here mutates process configuration, and a tenant
-without a usable connection gets an error rather than another tenant's or the
-platform's key. Platform keys are used only for explicitly allowlisted legacy tenants.
+request or a claimed job). Nothing here mutates process configuration or ever returns
+another tenant's connection. A tenant without its own connection is served by the
+platform account, which callers take from settings.
 """
 
 import json
@@ -31,12 +31,6 @@ class IntegrationUnavailableError(ApplicationError):
     status_code = 503
     code = "integration_unavailable"
     public_message = "A required provider connection is not available for this workspace."
-
-
-class IntegrationsDisabledError(ApplicationError):
-    status_code = 503
-    code = "integrations_unavailable"
-    public_message = "Tenant provider connections are not enabled."
 
 
 def encryption_context(
@@ -80,14 +74,6 @@ class TenantIntegrationResolver:
         self._sessions, self._settings, self._role_check = sessions, settings, role_check
         self._cipher: SecretCipher | None = None
         self._cache: dict[tuple[UUID, str, str], tuple[float, ResolvedIntegration | None]] = {}
-
-    @property
-    def enabled(self) -> bool:
-        return self._settings.tenant_integrations_enabled
-
-    def legacy_allowed(self, tenant_id: UUID) -> bool:
-        """Whether this tenant may use the platform's provider accounts from settings."""
-        return not self.enabled or tenant_id in self._settings.legacy_tenants
 
     def invalidate(self, tenant_id: UUID) -> None:
         for key in [key for key in self._cache if key[0] == tenant_id]:
@@ -157,8 +143,6 @@ class TenantIntegrationResolver:
         self, tenant_id: UUID, purpose: str, slot: str = "primary", *, fresh: bool = False
     ) -> ResolvedIntegration | None:
         """The verified active connection, or None when the tenant has not configured one."""
-        if not self.enabled:
-            return None
         key = (tenant_id, purpose, slot)
         cached = self._cache.get(key)
         if cached is not None and not fresh and cached[0] > monotonic():

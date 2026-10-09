@@ -41,7 +41,6 @@ from app.integrations.catalog import (
 )
 from app.integrations.models import CredentialVersion, TenantIntegration
 from app.integrations.resolver import (
-    IntegrationsDisabledError,
     TenantIntegrationResolver,
     encryption_context,
 )
@@ -295,8 +294,6 @@ class IntegrationService:
         )
 
     def _cipher(self) -> SecretCipher:
-        if not self._settings.tenant_integrations_enabled:
-            raise IntegrationsDisabledError()
         return SecretCipher(
             self._settings.secret_encryption_keys, self._settings.secret_encryption_active_key
         )
@@ -797,7 +794,7 @@ class IntegrationService:
                     )
                     session.add(phone)
                 elif phone.integration_id is None and scope.platform_user_id is None:
-                    # A platform-assigned legacy number is migrated by the platform only.
+                    # A number assigned on the platform account is moved by the platform only.
                     raise ConflictError()
                 else:
                     phone.integration_id, phone.provider_number_sid = row.id, match.sid

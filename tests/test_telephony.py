@@ -8,14 +8,12 @@ from twilio.request_validator import RequestValidator  # pyright: ignore[reportM
 
 from app.calls.service import CallContext
 from app.config.settings import Settings
-from app.voice.echo import EchoSession
 from app.voice.twilio import decode_audio, parse_message, signature_valid, stream_token, twiml
 
 
 def voice_settings(settings: Settings) -> Settings:
     return settings.model_copy(
         update={
-            "telephony_enabled": True,
             "twilio_account_sid": "AC" + "1" * 32,
             "twilio_auth_token": SecretStr("test-only-signing-secret"),
             "telephony_public_base_url": "https://voice.example.test",
@@ -38,7 +36,7 @@ def test_signatures_and_stream_binding(settings: Settings) -> None:
     assert not signature_valid(config, path + "/other", signature, params)
     assert not signature_valid(config, path, signature, {**params, "To": "+15551234568"})
     assert not signature_valid(
-        settings.model_copy(update={"telephony_enabled": False}), path, signature, params
+        settings.model_copy(update={"telephony_public_base_url": ""}), path, signature, params
     )
     context = CallContext(uuid4(), uuid4(), params["CallSid"], uuid4())
     xml = fromstring(twiml(config, context))
@@ -54,7 +52,7 @@ def test_signatures_and_stream_binding(settings: Settings) -> None:
 
 @pytest.mark.parametrize(
     "origin",
-    ["http://test", "https://test/path", "https://test?x=1", "https://user:secret@test", ""],
+    ["http://test", "https://test/path", "https://test?x=1", "https://user:secret@test"],
 )
 def test_enabled_configuration_requires_https_origin(settings: Settings, origin: str) -> None:
     config = voice_settings(settings)
@@ -73,10 +71,3 @@ def test_message_bounds() -> None:
     for raw in ("[]", '{"event":1}', "x" * 16385):
         with pytest.raises(ValueError):
             parse_message(raw)
-
-
-async def test_real_pipecat_echo_pipeline() -> None:
-    async with EchoSession() as echo:
-        for pcm in (bytes(320), bytes(range(256)) * 2):
-            assert await echo.process(pcm) == pcm
-    assert echo.task is not None and echo.task.done()
