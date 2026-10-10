@@ -33,6 +33,9 @@ dependencies = [
 [project.optional-dependencies]
 knowledge = [
     "docling>=2,<3",
+    # docling brings these in; they are named so the CPU builds below apply to them.
+    "torch>=2,<3",
+    "torchvision>=0.20,<1",
 ]
 
 [dependency-groups]
@@ -48,6 +51,17 @@ dev = [
   "pyyaml>=6,<7",
   "boto3-stubs[s3]>=1.43,<2",
 ]
+
+# Documents are read on the CPU. The Linux builds on PyPI bundle several gigabytes of
+# GPU libraries the worker would never use.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

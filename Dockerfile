@@ -1,13 +1,15 @@
 FROM ghcr.io/astral-sh/uv:0.12.19 AS uv
 FROM python:3.12-slim-bookworm AS builder
 COPY --from=uv /uv /uvx /bin/
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
+# A slow connection needs longer than the default 30 seconds per download.
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_HTTP_TIMEOUT=300
 WORKDIR /srv/app
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --no-install-project
+# The cache mount keeps what was downloaded, so an interrupted build resumes.
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --no-install-project
 COPY app ./app
 COPY README.md ./README.md
-RUN uv sync --locked --no-dev --no-editable
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --no-editable
 
 FROM python:3.12-slim-bookworm AS runtime
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/srv/app/.venv/bin:$PATH"
@@ -25,7 +27,7 @@ CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port
 
 # The worker also parses uploaded documents, so only its image carries those libraries.
 FROM builder AS worker-builder
-RUN uv sync --locked --no-dev --extra knowledge --no-editable
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --extra knowledge --no-editable
 
 FROM runtime AS worker
 USER root
