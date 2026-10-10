@@ -25,7 +25,7 @@ from app.patients.models import Patient as Patient
 from app.platform.models import PlatformAuditEvent as PlatformAuditEvent
 from app.platform.models import PlatformConnection as PlatformConnection
 from app.platform.models import PlatformSettings as PlatformSettings
-from app.platform.onboarding_models import TenantOnboarding as TenantOnboarding
+from app.platform.models import WorkspaceCreation as WorkspaceCreation
 from app.postcall.models import CallTranscript as CallTranscript
 from app.postcall.models import FollowUpEvent as FollowUpEvent
 from app.postcall.models import PostCallReport as PostCallReport

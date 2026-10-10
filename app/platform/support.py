@@ -20,6 +20,7 @@ SUPPORT_ROUTES: dict[tuple[str, str], Permission | None] = {
     ("GET", "/api/v1/settings/history"): Permission.SETTINGS_READ,
     ("PUT", "/api/v1/settings/{section}"): Permission.SETTINGS_UPDATE,
     ("GET", "/api/v1/capabilities"): None,
+    ("GET", "/api/v1/getting-started"): Permission.TENANT_READ,
     ("GET", "/api/v1/permissions"): Permission.ROLE_READ,
     ("GET", "/api/v1/roles"): Permission.ROLE_READ,
     ("POST", "/api/v1/roles"): Permission.ROLE_CREATE,

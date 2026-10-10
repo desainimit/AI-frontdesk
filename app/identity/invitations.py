@@ -38,7 +38,7 @@ from app.identity.service import cancel_challenges, record, revoke_sessions
 from app.identity.sessions import WORKSPACE_SESSION, issue_session, platform_scope
 from app.identity.throttle import AuthenticationUnavailableError
 from app.identity.tokens import INVITATION, digest_token, issue_token, parse_token, token_matches
-from app.platform.onboarding_models import TenantOnboarding
+from app.platform.models import WorkspaceCreation
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.rbac.models import TenantRole
 from app.rbac.service import assert_custodian, grantable_role
@@ -203,7 +203,7 @@ class InvitationService:
             await platform_scope(db, context)
             await _tenant_lock(db, tenant_id)
             row = await db.scalar(
-                select(TenantOnboarding).where(TenantOnboarding.tenant_id == tenant_id)
+                select(WorkspaceCreation).where(WorkspaceCreation.tenant_id == tenant_id)
             )
             if row is None:
                 raise NotFoundError()
@@ -215,8 +215,6 @@ class InvitationService:
                 if user is None:
                     raise NotFoundError()
                 existing = await self.queue_invitation(db, user, digest)
-                row.status = "invited"
-                row.revision += 1
                 await db.flush()
                 await record(
                     db,

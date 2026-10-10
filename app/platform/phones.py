@@ -17,7 +17,11 @@ from app.core.database.rls import set_tenant_scope
 from app.core.errors import ApplicationError, ConflictError, NotFoundError
 from app.core.settings import Settings
 from app.identity.sessions import platform_scope
-from app.integrations.verifiers import HttpProviderVerifier, ProviderUnavailableError
+from app.integrations.verifiers import (
+    HttpProviderVerifier,
+    ProviderNumber,
+    ProviderUnavailableError,
+)
 from app.platform.models import PlatformAuditEvent
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.tenants.models import Tenant
@@ -114,60 +118,69 @@ class PlatformPhoneService:
             )
         return result
 
-    async def assign(self, context: PlatformContext, command: AssignNumber) -> PlatformNumber:
-        require_platform_permission(context, PlatformPermission.TENANT_UPDATE)
+    async def prove(self, number: str) -> ProviderNumber:
+        """Ask the phone service whether the platform account owns this number."""
         account, secrets = self._account()
         try:
             # Ownership is proven by the provider, never by a typed number.
             owned = await HttpProviderVerifier(
                 TWILIO_TIMEOUT_SECONDS, self._transport
-            ).twilio_numbers(account, secrets, command.number)
+            ).twilio_numbers(account, secrets, number)
         except ProviderUnavailableError:
             raise PhoneServiceUnavailableError() from None
-        match = next((item for item in owned if item.number == command.number), None)
+        match = next((item for item in owned if item.number == number), None)
         if match is None:
             raise NumberNotOwnedError()
+        return match
+
+    @staticmethod
+    async def attach(session: AsyncSession, tenant_id: UUID, match: ProviderNumber) -> PhoneNumber:
+        """Route a proven number to a clinic. Needs the clinic's scope on the session."""
         try:
-            async with self._sessions.begin() as session:
-                await platform_scope(session, context)
-                tenant = await session.scalar(
-                    select(Tenant).where(Tenant.id == command.tenant_id, Tenant.is_active.is_(True))
-                )
-                if tenant is None:
-                    raise NotFoundError()
-                await set_tenant_scope(session, tenant.id)
-                phone = await session.scalar(
-                    select(PhoneNumber)
-                    .where(PhoneNumber.number == command.number)
-                    .with_for_update()
-                )
-                if phone is not None and phone.tenant_id != tenant.id:
-                    raise NumberTakenError()
-                if phone is None:
-                    phone = PhoneNumber(tenant_id=tenant.id, number=command.number)
-                    session.add(phone)
-                phone.is_active, phone.provider_number_sid = True, match.sid
-                # A number on the platform account is not tied to a clinic's own connection.
-                phone.integration_id = None
-                await session.flush()
-                session.add(
-                    PlatformAuditEvent(
-                        user_id=context.user_id,
-                        action="phone_number_assigned",
-                        request_id=context.request_id,
-                        resource_id=phone.id,
-                        tenant_id=tenant.id,
-                    )
-                )
-                name = tenant.name
+            phone = await session.scalar(
+                select(PhoneNumber).where(PhoneNumber.number == match.number).with_for_update()
+            )
+            if phone is not None and phone.tenant_id != tenant_id:
+                raise NumberTakenError()
+            if phone is None:
+                phone = PhoneNumber(tenant_id=tenant_id, number=match.number)
+                session.add(phone)
+            phone.is_active, phone.provider_number_sid = True, match.sid
+            # A number on the platform account is not tied to a clinic's own connection.
+            phone.integration_id = None
+            await session.flush()
         except IntegrityError:
             raise NumberTakenError() from None
+        return phone
+
+    async def assign(self, context: PlatformContext, command: AssignNumber) -> PlatformNumber:
+        require_platform_permission(context, PlatformPermission.TENANT_UPDATE)
+        match = await self.prove(command.number)
+        async with self._sessions.begin() as session:
+            await platform_scope(session, context)
+            tenant = await session.scalar(
+                select(Tenant).where(Tenant.id == command.tenant_id, Tenant.is_active.is_(True))
+            )
+            if tenant is None:
+                raise NotFoundError()
+            await set_tenant_scope(session, tenant.id)
+            phone = await self.attach(session, tenant.id, match)
+            session.add(
+                PlatformAuditEvent(
+                    user_id=context.user_id,
+                    action="phone_number_assigned",
+                    request_id=context.request_id,
+                    resource_id=phone.id,
+                    tenant_id=tenant.id,
+                )
+            )
+            name = tenant.name
         return PlatformNumber(
             number=command.number,
             tenant_id=command.tenant_id,
             tenant_name=name,
             is_active=True,
-            webhooks_configured=await self._point_webhooks(account, secrets, match.sid),
+            webhooks_configured=await self.point_webhooks(match.sid),
         )
 
     async def release(self, context: PlatformContext, number: str) -> None:
@@ -191,8 +204,9 @@ class PlatformPhoneService:
                 )
             )
 
-    async def _point_webhooks(self, account: str, secrets: dict[str, str], sid: str) -> bool:
+    async def point_webhooks(self, sid: str) -> bool:
         """Tell the provider to send this number's calls here. False when it could not."""
+        account, secrets = self._account()
         base = self._settings.telephony_public_base_url
         if not base:
             return False

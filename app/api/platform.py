@@ -8,8 +8,7 @@ from app.api.dependencies import SessionToken, get_resources
 from app.api.tenancy import Cursor, DatabaseDependency, Limit, Search
 from app.core.database.pages import Page, decode_cursor, page
 from app.core.security.rate_limit import enforce_rate_limit
-from app.identity.invitations import InvitationService
-from app.identity.schemas import InvitationView, OpenWorkspace, SupportVisit
+from app.identity.schemas import OpenWorkspace, SupportVisit
 from app.identity.service import IdentityService
 from app.identity.sessions import authenticate_platform
 from app.integrations.catalog import ProviderCatalogEntry, Purpose, catalog_entries
@@ -20,17 +19,17 @@ from app.platform.connections import (
     SaveConnection,
     TestMail,
 )
-from app.platform.onboarding import (
-    OnboardingDefaults,
-    OnboardingDraft,
-    OnboardingView,
-    TenantOnboardingService,
-    UpdateOnboardingDraft,
-    onboarding_defaults,
-)
+from app.platform.defaults import DefaultsView, WorkspaceDefaults, WorkspaceDefaultsService
 from app.platform.phones import AssignNumber, PlatformNumber, PlatformPhoneService
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.platform.tenants import PlatformTenantService, TenantStatusCommand
+from app.platform.workspaces import (
+    CreatedWorkspace,
+    NewWorkspace,
+    Owner,
+    WorkspaceService,
+    WorkspaceView,
+)
 from app.tenants.schemas import TenantView
 
 router = APIRouter(prefix="/api/v1/platform", tags=["platform"])
@@ -108,56 +107,86 @@ async def set_tenant_active(
     )
 
 
-@router.post("/tenants/{tenant_id}/admin-invitations", status_code=201)
-async def invite_tenant_admin(
+def _workspaces(request: Request, database: DatabaseDependency) -> WorkspaceService:
+    return WorkspaceService(
+        database.session_factory,
+        request.app.state.settings,
+        getattr(request.app.state, "provider_transport", None),
+    )
+
+
+IdempotencyKey = Annotated[str, Header(min_length=1, max_length=128)]
+
+
+@router.post("/workspaces", status_code=201)
+async def create_workspace(
+    command: NewWorkspace,
+    request: Request,
+    context: PlatformIdentity,
+    database: DatabaseDependency,
+    idempotency_key: IdempotencyKey,
+) -> CreatedWorkspace:
+    """Create a clinic that works at once: settings, roles, appointment types, owner.
+
+    The owner's invitation, a phone number and going live are part of the same request
+    when asked for. If one of those cannot be done the clinic is still created and
+    `warnings` says what is left. A retry with the same key creates nothing new.
+    """
+    return await _workspaces(request, database).create(context, command, idempotency_key)
+
+
+@router.get("/workspaces/{tenant_id}")
+async def get_workspace(
+    tenant_id: UUID, request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> WorkspaceView:
+    return await _workspaces(request, database).get(context, tenant_id)
+
+
+@router.post("/workspaces/{tenant_id}/invitation")
+async def invite_workspace_owner(
     tenant_id: UUID,
     request: Request,
     context: PlatformIdentity,
     database: DatabaseDependency,
-    idempotency_key: Annotated[str, Header(min_length=1, max_length=128)],
-) -> InvitationView:
-    return await InvitationService(
-        database.session_factory, request.app.state.settings
-    ).invite_initial_admin(context, tenant_id, idempotency_key)
+    idempotency_key: IdempotencyKey,
+) -> WorkspaceView:
+    """Send the owner's invitation; a new key sends a fresh link and cancels the last."""
+    return await _workspaces(request, database).invite_owner(context, tenant_id, idempotency_key)
 
 
-@router.get("/tenant-onboardings/defaults")
-async def tenant_onboarding_defaults(context: PlatformIdentity) -> OnboardingDefaults:
-    require_platform_permission(context, PlatformPermission.TENANT_CREATE)
-    return onboarding_defaults()
-
-
-@router.post("/tenant-onboardings", status_code=201)
-async def create_onboarding(
-    command: OnboardingDraft,
-    context: PlatformIdentity,
-    database: DatabaseDependency,
-    idempotency_key: Annotated[str, Header(min_length=1, max_length=128)],
-) -> OnboardingView:
-    """Save a draft and pending admin. Does not issue credentials or send invitations."""
-    return await TenantOnboardingService(database.session_factory).create(
-        context, command, idempotency_key
-    )
-
-
-@router.get("/tenants/{tenant_id}/onboarding")
-async def get_onboarding(
-    tenant_id: UUID, context: PlatformIdentity, database: DatabaseDependency
-) -> OnboardingView:
-    return await TenantOnboardingService(database.session_factory).get(context, tenant_id)
-
-
-@router.patch("/tenants/{tenant_id}/onboarding")
-async def update_onboarding(
+@router.put("/workspaces/{tenant_id}/owner")
+async def change_workspace_owner(
     tenant_id: UUID,
-    command: UpdateOnboardingDraft,
+    command: Owner,
+    request: Request,
     context: PlatformIdentity,
     database: DatabaseDependency,
-) -> OnboardingView:
-    """Update pending setup with a revision guard; replay of the last update is safe."""
-    return await TenantOnboardingService(database.session_factory).update(
-        context, tenant_id, command
-    )
+) -> WorkspaceView:
+    """Correct the owner's name or email while their invitation is unanswered."""
+    return await _workspaces(request, database).change_owner(context, tenant_id, command)
+
+
+@router.get("/defaults")
+async def workspace_defaults(
+    context: PlatformIdentity, database: DatabaseDependency
+) -> DefaultsView:
+    """What a new clinic starts with."""
+    return await WorkspaceDefaultsService(database.session_factory).get(context)
+
+
+@router.put("/defaults")
+async def save_workspace_defaults(
+    command: WorkspaceDefaults, context: PlatformIdentity, database: DatabaseDependency
+) -> DefaultsView:
+    return await WorkspaceDefaultsService(database.session_factory).save(context, command)
+
+
+@router.delete("/defaults")
+async def reset_workspace_defaults(
+    context: PlatformIdentity, database: DatabaseDependency
+) -> DefaultsView:
+    """Go back to the product's own defaults."""
+    return await WorkspaceDefaultsService(database.session_factory).save(context, None)
 
 
 def _connections(request: Request, database: DatabaseDependency) -> PlatformConnectionService:

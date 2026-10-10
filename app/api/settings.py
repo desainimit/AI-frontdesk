@@ -21,6 +21,7 @@ from app.rbac.schemas import (
 from app.rbac.service import RoleService
 from app.settings.schemas import SettingsChangePage, SettingsSection, SettingsView
 from app.settings.service import SettingsService
+from app.tenants.getting_started import GettingStarted, GettingStartedService
 
 router = APIRouter(prefix="/api/v1", tags=["settings"])
 
@@ -46,6 +47,12 @@ async def settings_history(
     context: Context, database: DatabaseDependency, limit: Limit = 50, cursor: Cursor = None
 ) -> SettingsChangePage:
     return await SettingsService(database.session_factory).history(context, limit, cursor)
+
+
+@router.get("/getting-started")
+async def getting_started(context: Context, database: DatabaseDependency) -> GettingStarted:
+    """What a new clinic still has to do, worked out from what it has done."""
+    return await GettingStartedService(database.session_factory).get(context)
 
 
 @router.get("/capabilities")

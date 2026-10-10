@@ -116,10 +116,11 @@ class TenantReadinessService:
         checks.append(
             _ready("administrator")
             if accepted
-            else _blocking(
-                "administrator",
-                "No administrator has accepted an invitation.",
-                "Send or resend the administrator invitation.",
+            else ReadinessCheck(
+                key="administrator",
+                status="optional",
+                reason="Nobody at the clinic has signed in yet.",
+                next_action="Send or resend the owner's invitation.",
             )
         )
         checks.append(

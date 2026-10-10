@@ -43,7 +43,6 @@ from app.identity.throttle import (
 from app.identity.totp import totp
 from app.main import create_app
 from app.platform.models import PlatformAuditEvent
-from app.platform.onboarding import TenantOnboardingService
 from app.users.models import User
 from app.users.service import UserService
 from tests.fakes import FakeDependency
@@ -92,8 +91,7 @@ async def test_invitation_first_sign_in_and_single_workspace(tenancy: TenancyFix
     invite = await harness.invitations.invite_initial_admin(platform, clinic.tenant_id, key)
     replay = await harness.invitations.invite_initial_admin(platform, clinic.tenant_id, key)
     assert replay.id == invite.id and "token" not in invite.model_dump_json()
-    onboarding = TenantOnboardingService(harness.sessions)
-    assert (await onboarding.get(platform, clinic.tenant_id)).invitation_status == "queued"
+    assert await harness.invitation_status(platform, clinic.tenant_id) == "queued"
 
     # The invited person has an account but no password: there is no way in yet.
     with pytest.raises(AuthenticationError):
@@ -118,7 +116,7 @@ async def test_invitation_first_sign_in_and_single_workspace(tenancy: TenancyFix
     assert context.tenant_id == clinic.tenant_id and context.actor_id == clinic.admin_id
     with pytest.raises(AuthenticationError):
         await harness.accept(token)  # Single use.
-    assert (await onboarding.get(platform, clinic.tenant_id)).invitation_status == "accepted"
+    assert await harness.invitation_status(platform, clinic.tenant_id) == "accepted"
 
     # From now on: email and password, straight into the one workspace.
     signed_in = await harness.login(email.upper())

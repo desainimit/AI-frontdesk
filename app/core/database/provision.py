@@ -166,10 +166,6 @@ async def provision_runtime_role(settings: Settings) -> None:
             await connection.exec_driver_sql(
                 f"GRANT SELECT, INSERT ON tenant_onboardings TO {quoted_role}"
             )
-            await connection.exec_driver_sql(
-                "GRANT UPDATE (draft, revision, status, updated_at) "
-                f"ON tenant_onboardings TO {quoted_role}"
-            )
             # Sign-in data. The API login can never make an account a platform
             # administrator: that column is outside both its INSERT and UPDATE rights.
             await connection.exec_driver_sql(

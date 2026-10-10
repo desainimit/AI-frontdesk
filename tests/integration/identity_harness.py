@@ -4,6 +4,7 @@ import base64
 import json
 import re
 import secrets
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from pydantic import SecretStr
@@ -18,8 +19,8 @@ from app.identity.models import AuthChallenge, AuthMail
 from app.identity.schemas import AcceptInvitation, Login, OpenWorkspace, SessionView
 from app.identity.service import IdentityService
 from app.identity.sessions import authenticate_platform, authenticate_workspace
-from app.platform.onboarding import OnboardingDraft, OnboardingView, TenantOnboardingService
 from app.platform.policies import PlatformContext
+from app.platform.workspaces import NewWorkspace, WorkspaceService
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.workspaces import PASSWORD, PlatformAdmin, create_platform_admin
 
@@ -38,6 +39,16 @@ def mail_settings(base: Settings) -> Settings:
     )
 
 
+@dataclass(frozen=True)
+class Clinic:
+    """A clinic made through the product's own creation, with its pending owner."""
+
+    tenant_id: UUID
+    admin_id: UUID
+    invitation_status: str
+    service_state: str
+
+
 class IdentityHarness:
     def __init__(self, tenancy: TenancyFixture) -> None:
         self.tenancy = tenancy
@@ -45,6 +56,7 @@ class IdentityHarness:
         self.sessions = tenancy.database.session_factory
         self.identity = IdentityService(self.sessions, self.settings)
         self.invitations = InvitationService(self.sessions, self.settings)
+        self.workspaces = WorkspaceService(self.sessions, self.settings)
         self.mfa = MfaService(self.sessions, self.settings)
         self.cipher = SecretCipher(self.settings.secret_encryption_keys, "k1")
 
@@ -65,16 +77,26 @@ class IdentityHarness:
         )
         return await authenticate_workspace(self.sessions, admin.token.get_secret_value(), uuid4())
 
-    async def onboard(self, context: PlatformContext, email: str) -> OnboardingView:
-        draft = OnboardingDraft.model_validate(
+    async def onboard(
+        self, context: PlatformContext, email: str, *, send_invitation: bool = False
+    ) -> Clinic:
+        command = NewWorkspace.model_validate(
             {
                 "name": f"Clinic {uuid4()}",
-                "administrator": {"email": email, "display_name": "Clinic Admin"},
-                "location": {"name": "Main", "timezone": "Asia/Kolkata"},
-                "language_policy": {"default_language": "en", "enabled_languages": ["en"]},
+                "owner": {"email": email, "display_name": "Clinic Admin"},
+                "send_invitation": send_invitation,
             }
         )
-        return await TenantOnboardingService(self.sessions).create(context, draft, str(uuid4()))
+        created = (await self.workspaces.create(context, command, str(uuid4()))).workspace
+        assert created.owner is not None
+        return Clinic(
+            created.id, created.owner.user_id, created.owner.invitation, created.service_state
+        )
+
+    async def invitation_status(self, context: PlatformContext, tenant_id: UUID) -> str:
+        owner = (await self.workspaces.get(context, tenant_id)).owner
+        assert owner is not None
+        return owner.invitation
 
     async def mail(
         self, *, user_id: UUID | None = None, email: str | None = None
