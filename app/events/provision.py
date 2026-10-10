@@ -64,20 +64,6 @@ async def provision_worker(settings: Settings) -> None:
             await connection.exec_driver_sql(f"REVOKE ALL ON {integration_tables} FROM {quoted}")
             await connection.exec_driver_sql(f"GRANT SELECT ON {integration_tables} TO {quoted}")
             await connection.exec_driver_sql(f"REVOKE ALL ON outbox_events FROM {quoted}")
-            # This globally claimable table contains publication IDs and versions,
-            # never configuration contents. The worker cannot alter event bindings.
-            await connection.exec_driver_sql(f"REVOKE ALL ON configuration_events FROM {quoted}")
-            await connection.exec_driver_sql(f"GRANT SELECT ON configuration_events TO {quoted}")
-            await connection.exec_driver_sql(
-                f"GRANT UPDATE (delivered_at) ON configuration_events TO {quoted}"
-            )
-            await connection.exec_driver_sql(
-                "DROP POLICY IF EXISTS configuration_event_delivery ON configuration_events"
-            )
-            await connection.exec_driver_sql(
-                f"CREATE POLICY configuration_event_delivery ON configuration_events TO {quoted} "
-                "USING (true) WITH CHECK (true)"
-            )
             await connection.exec_driver_sql(f"GRANT SELECT ON outbox_events TO {quoted}")
             await connection.exec_driver_sql(
                 "GRANT UPDATE (status, attempts, available_at, lease_token, lease_until, "
@@ -106,8 +92,7 @@ async def provision_worker(settings: Settings) -> None:
                 f"REVOKE ALL ON tenants, calls, appointments FROM {quoted}"
             )
             await connection.exec_driver_sql(
-                "GRANT SELECT (id, is_active, language_policy, verification_policy, "
-                f"service_state) ON tenants TO {quoted}"
+                f"GRANT SELECT (id, is_active, service_state) ON tenants TO {quoted}"
             )
             await connection.exec_driver_sql(
                 "GRANT SELECT (id, tenant_id, status, ended_at, started_at, created_at, "

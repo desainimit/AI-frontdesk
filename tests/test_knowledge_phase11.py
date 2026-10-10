@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
 from app.agents.language import spoken
-from app.auth.context import ActorType, RequestContext, Role
+from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
 from app.core.errors import AuthorizationError
 from app.knowledge.models import DocumentChunk
@@ -40,7 +40,6 @@ def test_upload_format_validation_and_access_control() -> None:
         uuid4(),
         uuid4(),
         ActorType.USER,
-        Role.MEMBER,
         role_id=uuid4(),
         capabilities=frozenset({Permission.KNOWLEDGE_READ.value}),
     )

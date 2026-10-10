@@ -8,8 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.calls.access import active_call
 from app.calls.models import Call, PhoneNumber
 from app.calls.service import CallContext, audit
-from app.configuration.models import PublishedConfiguration
-from app.configuration.schemas import OperationalConfiguration
+from app.clinic.models import Service
 from app.core.database.rls import set_tenant_scope, verify_runtime_role
 from app.core.errors import AuthorizationError
 from app.locations.models import Location
@@ -33,74 +32,11 @@ class CallDirectoryService:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
-    async def business_read(
-        self, context: CallContext, kind: Literal["services", "staff"], query: DirectoryQuery
-    ) -> DirectoryResult:
-        """Read public facts from this call's pinned publication, never contact credentials."""
-        async with self._sessions.begin() as session:
-            await verify_runtime_role(session)
-            await set_tenant_scope(session, context.tenant_id)
-            call = await active_call(session, context)
-            publication = await session.scalar(
-                select(PublishedConfiguration).where(
-                    PublishedConfiguration.tenant_id == context.tenant_id,
-                    PublishedConfiguration.version == call.configuration_version,
-                )
-            )
-            if publication is None:
-                return DirectoryResult(items=[])
-            snapshot = OperationalConfiguration.model_validate(publication.document).directory
-            items: list[dict[str, str | None]] = []
-            if kind == "services":
-                records = sorted(
-                    (
-                        row
-                        for row in snapshot.services
-                        if row.is_active
-                        and (
-                            call.location_id is None or row.location_id in (None, call.location_id)
-                        )
-                    ),
-                    key=lambda row: (row.name, row.id),
-                )
-                items = [
-                    {
-                        "id": str(row.id),
-                        "name": row.name,
-                        "description": row.description[:500],
-                        "price_minor": str(row.price_minor),
-                        "currency": row.currency,
-                        "duration_minutes": str(row.duration_minutes),
-                        "location_id": str(row.location_id) if row.location_id else None,
-                    }
-                    for row in records[query.offset : query.offset + min(query.limit, 10)]
-                ]
-            else:
-                staff = sorted(
-                    (
-                        row
-                        for row in snapshot.staff
-                        if row.is_active
-                        and (
-                            call.location_id is None or row.location_id in (None, call.location_id)
-                        )
-                    ),
-                    key=lambda row: (row.name, row.id),
-                )
-                items = [
-                    {
-                        "id": str(row.id),
-                        "name": row.name,
-                        "job_title": row.job_title,
-                        "location_id": str(row.location_id) if row.location_id else None,
-                    }
-                    for row in staff[query.offset : query.offset + min(query.limit, 10)]
-                ]
-            audit(session, context, "agent_business_" + kind + "_read")
-            return DirectoryResult(items=items)
-
     async def read(
-        self, context: CallContext, kind: Literal["locations", "providers"], query: DirectoryQuery
+        self,
+        context: CallContext,
+        kind: Literal["locations", "providers", "services"],
+        query: DirectoryQuery,
     ) -> DirectoryResult:
         query = DirectoryQuery.model_validate(query.model_dump(), strict=True)
         async with self._sessions.begin() as session:
@@ -133,12 +69,36 @@ class CallDirectoryService:
                     .offset(query.offset)
                 )
                 items = [
-                    {"id": str(row.id), "name": row.name, "timezone": row.timezone} for row in rows
+                    {
+                        "id": str(row.id),
+                        "name": row.name,
+                        "timezone": row.timezone,
+                        "address": row.address or None,
+                        "phone": row.phone or None,
+                    }
+                    for row in rows
+                ]
+            elif kind == "services":
+                services = await session.scalars(
+                    select(Service)
+                    .where(Service.tenant_id == context.tenant_id, Service.is_active.is_(True))
+                    .order_by(Service.name, Service.id)
+                    .limit(query.limit)
+                    .offset(query.offset)
+                )
+                items = [
+                    {
+                        "id": str(row.id),
+                        "name": row.name,
+                        "description": row.description[:500] or None,
+                        "duration_minutes": str(row.duration_minutes),
+                    }
+                    for row in services
                 ]
             elif kind == "providers":
                 providers = await session.scalars(
                     select(Provider)
-                    .where(Provider.tenant_id == context.tenant_id)
+                    .where(Provider.tenant_id == context.tenant_id, Provider.is_active.is_(True))
                     .order_by(Provider.id)
                     .limit(query.limit)
                     .offset(query.offset)

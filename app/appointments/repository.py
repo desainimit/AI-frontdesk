@@ -5,40 +5,9 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.appointments.models import Appointment, Availability
+from app.appointments.models import Appointment
 from app.auth.context import ActorType, RequestContext
 from app.core.database.domain import ScopedRepository
-
-
-class AvailabilityRepository(ScopedRepository[Availability]):
-    def __init__(self, session: AsyncSession, context: RequestContext) -> None:
-        super().__init__(Availability, session, context)
-
-    async def between(
-        self, provider_id: UUID, start: datetime, end: datetime
-    ) -> Sequence[Availability]:
-        return (
-            await self._session.scalars(
-                select(Availability)
-                .where(
-                    Availability.tenant_id == self._context.tenant_id,
-                    Availability.provider_id == provider_id,
-                    Availability.starts_at < end,
-                    Availability.ends_at > start,
-                )
-                .order_by(Availability.starts_at)
-            )
-        ).all()
-
-    async def containing(self, provider_id: UUID, start: datetime) -> Availability | None:
-        return await self._session.scalar(
-            select(Availability).where(
-                Availability.tenant_id == self._context.tenant_id,
-                Availability.provider_id == provider_id,
-                Availability.starts_at <= start,
-                Availability.ends_at > start,
-            )
-        )
 
 
 class AppointmentRepository(ScopedRepository[Appointment]):

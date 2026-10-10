@@ -10,7 +10,12 @@ from app.core.database.search import contains
 from app.core.database.unit_of_work import UnitOfWork
 from app.core.errors import ConflictError, NotFoundError
 from app.patients.models import Patient
-from app.patients.schemas import CreatePatient, PatientView, UpdatePatientVerification
+from app.patients.schemas import (
+    CreatePatient,
+    PatientView,
+    UpdatePatient,
+    UpdatePatientVerification,
+)
 
 
 class PatientService:
@@ -40,6 +45,22 @@ class PatientService:
             if entity is None:
                 raise NotFoundError()
             AuditService(tx.audit).record(context, AuditAction.PATIENT_VIEWED, "patient", entity.id)
+            return PatientView.model_validate(entity)
+
+    async def update(
+        self, context: RequestContext, patient_id: UUID, command: UpdatePatient
+    ) -> PatientView:
+        require_permission(context, Permission.PATIENT_WRITE)
+        async with self._uow.transaction(context) as tx:
+            entity = await tx.patients.get(patient_id, lock=True)
+            if entity is None:
+                raise NotFoundError()
+            for field, value in command.model_dump().items():
+                setattr(entity, field, value)
+            await tx.patients.flush()
+            AuditService(tx.audit).record(
+                context, AuditAction.PATIENT_UPDATED, "patient", entity.id
+            )
             return PatientView.model_validate(entity)
 
     async def set_verification(

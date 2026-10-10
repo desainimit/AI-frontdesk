@@ -15,8 +15,8 @@ from starlette.websockets import WebSocket
 
 from app.api.telephony import run_media
 from app.calls.service import CallContext
-from app.conversation.locales import LanguagePolicy
 from app.core.settings import Settings
+from app.settings.defaults import default_settings
 from app.voice.circuit import CircuitBreaker, CircuitState
 from app.voice.factory import follows_caller_language, platform_stt, platform_tts
 from app.voice.pipeline import VoicePipeline
@@ -427,11 +427,9 @@ async def test_run_media_pipeline_mode(settings: Settings) -> None:
     service = MagicMock()
     service.start = AsyncMock()
     service.finish = AsyncMock()
-    service.transfer_number = AsyncMock(return_value=None)
-    service.operational_configuration = AsyncMock(return_value=None)
+    service.settings = AsyncMock(return_value=default_settings("Test Clinic"))
     # The default speech-to-text follows the caller's language, so the call reads the
     # tenant's language policy.
-    service.language_policy = AsyncMock(return_value=LanguagePolicy(default_language="en"))
 
     inbound: asyncio.Queue[Message] = asyncio.Queue()
     outbound: asyncio.Queue[Message] = asyncio.Queue()
@@ -496,8 +494,8 @@ async def test_run_media_pipeline_mode(settings: Settings) -> None:
         }
     )
 
-    # Yield to let pipeline process the audio frame
-    await asyncio.sleep(0.05)
+    # Let the greeting finish and the pipeline process the audio frame.
+    await asyncio.sleep(0.5)
 
     # Send stop frame
     await send(

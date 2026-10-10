@@ -51,7 +51,7 @@ from tests.integration.identity_harness import IdentityHarness
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as pytestmark
 from tests.integration.test_tenancy import tenancy as tenancy
-from tests.integration.workspaces import PASSWORD
+from tests.integration.workspaces import PASSWORD, member_role
 
 NEW_PASSWORD = "an entirely different passphrase"
 
@@ -209,14 +209,24 @@ async def test_existing_account_joins_another_workspace_with_its_own_password(
     member_email = f"{uuid4()}@example.test"
     # First membership: a new account.
     first = await harness.invitations.invite_member(
-        owner, InviteMember(email=member_email.upper(), display_name="Member"), str(uuid4())
+        owner,
+        InviteMember(
+            email=member_email.upper(),
+            display_name="Member",
+            role_id=member_role(tenancy.a.tenant_id),
+        ),
+        str(uuid4()),
     )
     session = await harness.accept(await harness.link_token(user_id=first.user_id))
     assert session is not None
     # Second workspace invites the same address.
     second = await harness.invitations.invite_member(
         tenancy.context(tenancy.b),
-        InviteMember(email=member_email, display_name="Member again"),
+        InviteMember(
+            email=member_email,
+            display_name="Member again",
+            role_id=member_role(tenancy.b.tenant_id),
+        ),
         str(uuid4()),
     )
     token = await harness.link_token(user_id=second.user_id)
@@ -482,19 +492,31 @@ async def test_team_invitations_roles_and_last_administrator(tenancy: TenancyFix
     email = f"{uuid4()}@example.test"
     key = str(uuid4())
     invite = await harness.invitations.invite_member(
-        owner, InviteMember(email=email, display_name="Front Desk"), key
+        owner,
+        InviteMember(
+            email=email,
+            display_name="Front Desk",
+            role_id=member_role(tenancy.a.tenant_id),
+        ),
+        key,
     )
     assert (await harness.invitations.invite_member(owner, invite.user_id, key)).id == invite.id
     with pytest.raises(ConflictError):  # Already a member of this workspace.
         await harness.invitations.invite_member(
-            owner, InviteMember(email=email.upper(), display_name="Again"), str(uuid4())
+            owner,
+            InviteMember(
+                email=email.upper(),
+                display_name="Again",
+                role_id=member_role(tenancy.a.tenant_id),
+            ),
+            str(uuid4()),
         )
     listed = await UserService(UnitOfWork(harness.sessions)).list(owner, 10, 0)
     assert {user.status for user in listed} == {"active", "invited"}
     # A pending member cannot be switched on by editing them.
     with pytest.raises(ConflictError):
         await harness.invitations.manage_member(
-            owner, invite.user_id, TeamMemberUpdate(role="member", is_active=True)
+            owner, invite.user_id, TeamMemberUpdate(is_active=True)
         )
 
     # Resending replaces the link; only the newest one works.
@@ -509,14 +531,20 @@ async def test_team_invitations_roles_and_last_administrator(tenancy: TenancyFix
     assert member.role_name == "Member"
     with pytest.raises(AuthorizationError):
         await harness.invitations.invite_member(
-            member, InviteMember(email=f"{uuid4()}@example.test", display_name="No"), str(uuid4())
+            member,
+            InviteMember(
+                email=f"{uuid4()}@example.test",
+                display_name="No",
+                role_id=member_role(tenancy.a.tenant_id),
+            ),
+            str(uuid4()),
         )
     with pytest.raises(ConflictError):  # Accepted: there is nothing left to resend.
         await harness.invitations.invite_member(owner, invite.user_id, str(uuid4()))
 
     # Deactivating signs the member out of this workspace at once.
     await harness.invitations.manage_member(
-        owner, invite.user_id, TeamMemberUpdate(role="member", is_active=False)
+        owner, invite.user_id, TeamMemberUpdate(is_active=False)
     )
     with pytest.raises(AuthenticationError):
         await harness.identity.me(session.access_token, uuid4())
@@ -526,9 +554,7 @@ async def test_team_invitations_roles_and_last_administrator(tenancy: TenancyFix
     signed_in = await harness.login(email)
     assert signed_in.next == "choose_workspace"
     assert await harness.identity.workspaces(signed_in.access_token) == []
-    await harness.invitations.manage_member(
-        owner, invite.user_id, TeamMemberUpdate(role="member", is_active=True)
-    )
+    await harness.invitations.manage_member(owner, invite.user_id, TeamMemberUpdate(is_active=True))
     assert (await harness.login(email)).next == "workspace"
     # "Sign out everywhere" for one member, without changing them.
     live = (await harness.login(email)).access_token
@@ -538,14 +564,14 @@ async def test_team_invitations_roles_and_last_administrator(tenancy: TenancyFix
 
     # The last administrator cannot be demoted or deactivated.
     for change in (
-        TeamMemberUpdate(role="member", is_active=True),
-        TeamMemberUpdate(role="admin", is_active=False),
+        TeamMemberUpdate(role_id=member_role(tenancy.a.tenant_id), is_active=True),
+        TeamMemberUpdate(is_active=False),
     ):
         with pytest.raises(ConflictError):
             await harness.invitations.manage_member(owner, tenancy.a.user_id, change)
     with pytest.raises(NotFoundError):  # Another workspace's member is invisible.
         await harness.invitations.manage_member(
-            owner, tenancy.b.user_id, TeamMemberUpdate(role="member", is_active=True)
+            owner, tenancy.b.user_id, TeamMemberUpdate(is_active=True)
         )
     async with tenancy.admin.begin() as db:
         await set_tenant_scope(db, tenancy.a.tenant_id)

@@ -23,6 +23,10 @@ class CreateProvider(BaseModel):
     )
 
 
+class UpdateProvider(CreateProvider):
+    is_active: bool = True
+
+
 class ProviderView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
@@ -30,4 +34,5 @@ class ProviderView(BaseModel):
     location_id: UUID
     display_name: str
     specialty: str | None
+    is_active: bool
     created_at: datetime

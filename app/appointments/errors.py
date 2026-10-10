@@ -6,11 +6,6 @@ class SlotUnavailableError(ConflictError):
     public_message = "The requested time is not available."
 
 
-class ScheduleOverlapError(ConflictError):
-    code = "schedule_overlap"
-    public_message = "This availability window overlaps an existing window."
-
-
 class StaleAppointmentError(ConflictError):
     code = "stale_appointment"
     public_message = "The appointment has changed. Retrieve it and try again."
@@ -19,6 +14,11 @@ class StaleAppointmentError(ConflictError):
 class AppointmentStateError(ConflictError):
     code = "appointment_state_conflict"
     public_message = "This appointment can no longer be changed."
+
+
+class TooLateToChangeError(ConflictError):
+    code = "too_late_to_change"
+    public_message = "It is too close to the appointment to change it. Please call the clinic."
 
 
 class PastTimeError(ApplicationError):

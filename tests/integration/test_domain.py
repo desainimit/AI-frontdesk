@@ -4,33 +4,34 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid5
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from app.appointments.availability import AvailabilityService
 from app.appointments.commands import (
     BookAppointment,
     CancelAppointment,
-    DefineAvailability,
     RescheduleAppointment,
 )
 from app.appointments.errors import (
     AppointmentStateError,
     PastTimeError,
-    ScheduleOverlapError,
     SlotUnavailableError,
     StaleAppointmentError,
 )
-from app.appointments.models import Appointment, Availability
+from app.appointments.models import Appointment
 from app.appointments.schemas import AppointmentView
 from app.appointments.service import AppointmentService
 from app.audit.events import AuditAction
 from app.audit.models import AuditEvent
 from app.audit.service import AuditService
 from app.auth.context import RequestContext
+from app.clinic.models import ProviderSchedule
+from app.clinic.schemas import ScheduleWindow, WeeklySchedule
+from app.clinic.service import ClinicService
 from app.core.database.rls import set_tenant_scope
 from app.core.database.session import Database
 from app.core.database.unit_of_work import UnitOfWork
@@ -80,11 +81,12 @@ async def seed(uow: UnitOfWork, context: RequestContext) -> DomainFixture:
     start = (datetime.now(UTC) + timedelta(days=2)).replace(
         hour=9, minute=0, second=0, microsecond=0
     )
-    await AvailabilityService(uow).define(
-        context,
-        provider.id,
-        DefineAvailability(starts_at=start, ends_at=start + timedelta(hours=2), slot_minutes=30),
+    # The provider works one two-hour window, on the weekday `start` falls on.
+    local = start.astimezone(ZoneInfo("Asia/Kolkata"))
+    window = ScheduleWindow(
+        weekday=local.weekday(), starts=local.time(), ends=(local + timedelta(hours=2)).time()
     )
+    await ClinicService(uow).set_schedule(context, provider.id, WeeklySchedule(windows=[window]))
     return DomainFixture(uow, context, location.id, provider.id, patient.id, start)
 
 
@@ -128,18 +130,20 @@ async def test_http_booking_lifecycle_and_audit(tenancy: TenancyFixture) -> None
         )
         assert response.status_code == 201
         patient = response.json()["id"]
-        start = (datetime.now(UTC) + timedelta(days=3)).replace(microsecond=0)
+        # 09:00 UTC is 14:30 in Kolkata; the provider works two hours from then that day.
+        start = (datetime.now(UTC) + timedelta(days=3)).replace(
+            hour=9, minute=0, second=0, microsecond=0
+        )
         query = {
             "starts_at": start.isoformat(),
             "ends_at": (start + timedelta(hours=2)).isoformat(),
         }
-        response = await client.post(
-            f"providers/{provider}/availability", json={**query, "slot_minutes": 30}
+        weekday = start.astimezone(ZoneInfo("Asia/Kolkata")).weekday()
+        response = await client.put(
+            f"providers/{provider}/schedule",
+            json={"windows": [{"weekday": weekday, "starts": "14:30", "ends": "16:30"}]},
         )
-        assert response.status_code == 201
-        assert (
-            len((await client.get(f"providers/{provider}/availability", params=query)).json()) == 1
-        )
+        assert response.status_code == 200 and response.json()["timezone"] == "Asia/Kolkata"
         slots_url = f"providers/{provider}/slots"
         slots = (await client.get(slots_url, params=query)).json()
         assert len(slots) == 4
@@ -175,15 +179,15 @@ async def test_http_booking_lifecycle_and_audit(tenancy: TenancyFixture) -> None
             assert response.json()["version"] == 3
         assert len((await client.get(slots_url, params=query)).json()) == 4
         assert (await client.get(f"appointments/{identity}")).status_code == 200
-        assert len((await client.get("appointments")).json()) == 1
+        assert len((await client.get("appointments")).json()["items"]) == 1
         assert (await client.get(f"patients/{patient}")).status_code == 200
-        assert len((await client.get("patients")).json()) == 1
-        audit = (await client.get("audit-events")).json()
+        assert len((await client.get("patients")).json()["items"]) == 1
+        audit = (await client.get("audit-events")).json()["items"]
         for action in (
             "location_created",
             "provider_created",
             "patient_created",
-            "availability_defined",
+            "provider_schedule_updated",
             "appointment_created",
             "appointment_rescheduled",
             "appointment_cancelled",
@@ -244,7 +248,7 @@ async def test_http_validation_permissions_and_cross_tenant(
             await session.execute(
                 update(User)
                 .where(User.id == tenancy.a.user_id)
-                .values(role="member", role_id=uuid5(tenancy.a.tenant_id, "role:member"))
+                .values(role_id=uuid5(tenancy.a.tenant_id, "role:member"))
             )
         assert (await client.get("providers")).status_code == 200
         assert (await client.get("patients")).status_code == 403
@@ -310,16 +314,6 @@ async def test_schedule_and_booking_validation(domain: DomainFixture) -> None:
                 update={"starts_at": datetime.now(UTC) - timedelta(days=1)}
             ),
         )
-    with pytest.raises(ScheduleOverlapError):
-        await AvailabilityService(domain.uow).define(
-            domain.context,
-            domain.provider_id,
-            DefineAvailability(
-                starts_at=domain.start + timedelta(minutes=30),
-                ends_at=domain.start + timedelta(hours=3),
-                slot_minutes=30,
-            ),
-        )
 
 
 async def test_failed_audit_rolls_back_booking(
@@ -343,7 +337,7 @@ async def test_domain_rls_and_composite_foreign_keys(
     other = await seed(domain.uow, tenancy.context(tenancy.b))
     await AppointmentService(domain.uow).book(domain.context, domain.booking())
     await AppointmentService(domain.uow).book(other.context, other.booking())
-    models = (Location, Provider, Patient, Availability, Appointment)
+    models = (Location, Provider, Patient, ProviderSchedule, Appointment)
     for scope in (tenancy.a.tenant_id, tenancy.b.tenant_id, None):
         async with tenancy.database.session_factory.begin() as session:
             if scope is not None:

@@ -29,7 +29,8 @@ from app.core.errors import AuthorizationError, ConflictError, NotFoundError
 from app.events.models import OutboxEvent
 from app.patients.schemas import UpdatePatientVerification
 from app.patients.service import PatientService
-from app.tenants.service import TenantService
+from app.settings.schemas import PrivacySettings, SettingsSection
+from app.settings.service import SettingsService
 from tests.integration.test_domain import seed
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as pytestmark
@@ -219,6 +220,16 @@ async def test_access_scope_lockout_and_closed_call(tenancy: TenancyFixture):
         await access.identify(context.call, code.code)
 
 
+async def set_verification(
+    tenancy: TenancyFixture, admin: RequestContext, policy: VerificationPolicy
+) -> None:
+    await SettingsService(tenancy.database.session_factory).save(
+        admin,
+        SettingsSection.PRIVACY,
+        PrivacySettings(caller_verification=policy).model_dump(mode="json"),
+    )
+
+
 async def test_configured_verification_blocks_reads_and_revokes_old_access(
     tenancy: TenancyFixture,
 ) -> None:
@@ -232,7 +243,8 @@ async def test_configured_verification_blocks_reads_and_revokes_old_access(
         domain.patient_id,
         UpdatePatientVerification(date_of_birth=date(1990, 4, 9), account_identifier="PAT-137"),
     )
-    await TenantService(domain.uow).set_verification_policy(
+    await set_verification(
+        tenancy,
         admin,
         VerificationPolicy(
             required_factors=["reception_attestation", "date_of_birth", "account_identifier"],
@@ -307,7 +319,7 @@ async def test_configured_verification_blocks_reads_and_revokes_old_access(
         )
     )["status"] == "identified"
     assert await flow.appointments.list(caller_context(context, state), 10, 0) == []
-    await TenantService(domain.uow).set_verification_policy(admin, VerificationPolicy())
+    await set_verification(tenancy, admin, VerificationPolicy())
     with pytest.raises(AuthorizationError):
         await flow.appointments.list(caller_context(context, state), 10, 0)
 
@@ -488,9 +500,7 @@ async def test_booking_through_voice_websocket_without_external_providers(
     service.sessions = tenancy.database.session_factory
     service.start = AsyncMock(return_value=call)
     service.finish = AsyncMock(side_effect=calls.finish)
-    service.transfer_number = AsyncMock(return_value=None)
-    service.operational_configuration = AsyncMock(side_effect=calls.operational_configuration)
-    service.language_policy = AsyncMock(side_effect=calls.language_policy)
+    service.settings = AsyncMock(side_effect=calls.settings)
     inbound: asyncio.Queue[Message] = asyncio.Queue()
     outbound: asyncio.Queue[Message] = asyncio.Queue()
     socket = WebSocket({"type": "websocket", "path": "/", "app": app}, inbound.get, outbound.put)

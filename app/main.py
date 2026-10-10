@@ -16,7 +16,7 @@ from app.api.knowledge import router as knowledge_router
 from app.api.middleware import RequestTelemetryMiddleware
 from app.api.platform import router as platform_router
 from app.api.postcall import router as postcall_router
-from app.api.saas import router as saas_router
+from app.api.settings import router as settings_router
 from app.api.telephony import router as telephony_router
 from app.api.tenancy import router as tenancy_router
 from app.conversation.factory import build_conversation_store
@@ -111,5 +111,5 @@ def create_app(
     app.include_router(integrations_router)
     app.include_router(postcall_router)
     app.include_router(telephony_router)
-    app.include_router(saas_router)
+    app.include_router(settings_router)
     return app

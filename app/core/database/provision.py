@@ -83,33 +83,13 @@ async def provision_runtime_role(settings: Settings) -> None:
                 f"TO {quoted_role}"
             )
             await connection.exec_driver_sql(
-                f"GRANT SELECT, INSERT, UPDATE ON configuration_drafts TO {quoted_role}"
+                f"GRANT SELECT, INSERT, UPDATE ON tenant_settings, services TO {quoted_role}"
             )
             await connection.exec_driver_sql(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON business_hours_policies, "
-                f"business_opening_windows, business_holidays TO {quoted_role}"
+                f"GRANT SELECT, INSERT ON settings_changes TO {quoted_role}"
             )
             await connection.exec_driver_sql(
-                "GRANT SELECT, INSERT, UPDATE ON business_services, business_staff, "
-                f"business_resources TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON business_service_staff, "
-                "business_service_resources, business_staff_windows, "
-                f"business_staff_holidays TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                f"GRANT SELECT, INSERT ON business_directory_mutations TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                f"GRANT SELECT, INSERT ON configuration_resources TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                "GRANT UPDATE (name, is_active, revision, updated_at) "
-                f"ON configuration_resources TO {quoted_role}"
-            )
-            await connection.exec_driver_sql(
-                "GRANT SELECT, INSERT ON published_configurations, configuration_events "
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON provider_schedules, provider_time_off "
                 f"TO {quoted_role}"
             )
             await connection.exec_driver_sql(
@@ -121,9 +101,8 @@ async def provision_runtime_role(settings: Settings) -> None:
             await connection.exec_driver_sql(f"GRANT INSERT ON audit_events TO {quoted_role}")
             await connection.exec_driver_sql(f"GRANT INSERT ON tenants, users TO {quoted_role}")
             await connection.exec_driver_sql(
-                "GRANT UPDATE (name, is_active, updated_at, language_policy, "
-                "human_transfer_number, verification_policy, service_state) "
-                f"ON tenants TO {quoted_role}"
+                f"GRANT UPDATE (name, is_active, updated_at, service_state) ON tenants "
+                f"TO {quoted_role}"
             )
             integration_tables = "tenant_integrations, integration_credential_versions"
             await connection.exec_driver_sql(
@@ -151,7 +130,7 @@ async def provision_runtime_role(settings: Settings) -> None:
                 f"GRANT UPDATE (name, source_type, status, active_version, updated_at) "
                 f"ON documents TO {quoted_role}"
             )
-            domain_tables = "locations, providers, patients, availability, appointments"
+            domain_tables = "locations, providers, patients, appointments"
             await connection.exec_driver_sql(
                 f"REVOKE ALL ON phone_numbers, calls FROM {quoted_role}"
             )
@@ -164,10 +143,15 @@ async def provision_runtime_role(settings: Settings) -> None:
             )
             await connection.exec_driver_sql(f"GRANT UPDATE ON appointments TO {quoted_role}")
             await connection.exec_driver_sql(
-                f"GRANT UPDATE (name, timezone, updated_at) ON locations TO {quoted_role}"
+                "GRANT UPDATE (name, timezone, address, phone, updated_at) ON locations "
+                f"TO {quoted_role}"
             )
             await connection.exec_driver_sql(
-                "GRANT UPDATE (email, display_name, is_active, role, role_id, updated_at, "
+                "GRANT UPDATE (location_id, display_name, specialty, is_active, updated_at) "
+                f"ON providers TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (email, display_name, is_active, role_id, updated_at, "
                 "account_id, accepted_at) "
                 f"ON users TO {quoted_role}"
             )

@@ -5,8 +5,8 @@ from app.agents.catalog import APPOINTMENT_TOOLS as APPOINTMENT_TOOLS
 from app.agents.catalog import MUTATION_TOOLS as MUTATION_TOOLS
 from app.agents.catalog import SAFE_READ_TOOLS as SAFE_READ_TOOLS
 from app.calls.service import CallContext
-from app.configuration.schemas import OperationalConfiguration
 from app.conversation.state import CallStatus, ConversationState, SafetyDecision
+from app.settings.schemas import ClinicConfiguration
 
 
 class AgentAuthorizationError(RuntimeError):
@@ -20,8 +20,8 @@ class AgentContext:
     business_name: str = ""
     instructions: str = ""
     tone: str = "professional"
-    configuration_version: int | None = None
-    configuration: OperationalConfiguration | None = None
+    # The clinic's settings as the call started.
+    configuration: ClinicConfiguration | None = None
 
     def validate_binding(self, state: ConversationState) -> None:
         if (

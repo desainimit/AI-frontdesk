@@ -14,10 +14,10 @@ from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
 from app.calls.models import Call, PhoneNumber
 from app.calls.service import CallContext, audit
-from app.calls.verification import VerificationPolicy
 from app.core.database.rls import set_tenant_scope, verify_runtime_role
 from app.core.errors import AuthorizationError, ConflictError
 from app.patients.models import Patient
+from app.settings.store import load_settings
 from app.tenants.models import Tenant
 from app.users.models import User
 
@@ -99,7 +99,6 @@ class CallPatientAccess:
                     select(User.id).where(
                         User.id == context.actor_id,
                         User.tenant_id == context.tenant_id,
-                        User.role == context.role,
                         User.is_active.is_(True),
                     )
                 )
@@ -112,10 +111,7 @@ class CallPatientAccess:
                 raise AuthorizationError()
             binding = CallContext(context.tenant_id, call_id, provider_call_id, context.request_id)
             call = await active_call(session, binding, lock=True)
-            tenant = await session.get(Tenant, context.tenant_id)
-            if tenant is None:
-                raise AuthorizationError()
-            policy = VerificationPolicy.model_validate(tenant.verification_policy or {})
+            policy = (await load_settings(session, context.tenant_id)).privacy.caller_verification
             if call.verified_patient_id is not None and (
                 call.verification_expires_at is None
                 or call.verification_expires_at <= datetime.now(UTC)
@@ -184,10 +180,7 @@ class CallPatientAccess:
                     and call.verification_expires_at > datetime.now(UTC)
                     else None
                 )
-            tenant = await session.get(Tenant, context.tenant_id)
-            if tenant is None:
-                raise AuthorizationError()
-            policy = VerificationPolicy.model_validate(tenant.verification_policy or {})
+            policy = (await load_settings(session, context.tenant_id)).privacy.caller_verification
             if call.access_attempts >= policy.max_code_attempts:
                 return None
             call.access_attempts += 1

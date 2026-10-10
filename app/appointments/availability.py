@@ -1,78 +1,73 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy.exc import IntegrityError
-
-from app.appointments.commands import DefineAvailability, SlotQuery
-from app.appointments.errors import PastTimeError, ScheduleOverlapError
-from app.appointments.models import Availability
-from app.appointments.schemas import AvailabilityView, Slot
+from app.appointments.commands import SlotQuery
+from app.appointments.schemas import Slot
 from app.appointments.slots import available_slots
-from app.audit.events import AuditAction
-from app.audit.service import AuditService
-from app.auth.context import RequestContext
+from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
-from app.core.database.unit_of_work import UnitOfWork
+from app.core.database.unit_of_work import Transaction, UnitOfWork
 from app.core.errors import NotFoundError
+from app.settings.schemas import ClinicConfiguration
+
+
+async def appointment_minutes(
+    tx: Transaction, settings: ClinicConfiguration, service_id: UUID | None
+) -> int:
+    """How long an appointment of this type lasts; the clinic's usual length without one."""
+    if service_id is None:
+        return settings.scheduling.default_appointment_minutes
+    service = await tx.schedule.service(service_id)
+    if service is None or not service.is_active:
+        raise NotFoundError()
+    return service.duration_minutes
+
+
+def booking_window(
+    context: RequestContext, settings: ClinicConfiguration, now: datetime
+) -> tuple[datetime, datetime | None]:
+    """Earliest and latest start a booking may have.
+
+    The clinic's notice and how-far-ahead rules are for patients booking through the
+    receptionist. Staff may book any future time.
+    """
+    if context.actor_type != ActorType.CALLER:
+        return now, None
+    rules = settings.scheduling
+    return (
+        now + timedelta(minutes=rules.minimum_notice_minutes),
+        now + timedelta(days=rules.booking_horizon_days),
+    )
 
 
 class AvailabilityService:
     def __init__(self, uow: UnitOfWork) -> None:
         self._uow = uow
 
-    async def define(
-        self,
-        context: RequestContext,
-        provider_id: UUID,
-        command: DefineAvailability,
-    ) -> AvailabilityView:
-        require_permission(context, Permission.DIRECTORY_WRITE)
-        if command.starts_at <= datetime.now(UTC):
-            raise PastTimeError()
-        try:
-            async with self._uow.transaction(context) as tx:
-                if await tx.providers.get(provider_id) is None:
-                    raise NotFoundError()
-                entity = await tx.availability.add(
-                    Availability(
-                        tenant_id=context.tenant_id,
-                        provider_id=provider_id,
-                        **command.model_dump(),
-                    )
-                )
-                AuditService(tx.audit).record(
-                    context, AuditAction.AVAILABILITY_DEFINED, "availability", entity.id
-                )
-                return AvailabilityView.model_validate(entity)
-        except IntegrityError as exc:
-            if getattr(exc.orig, "sqlstate", None) == "23P01":
-                raise ScheduleOverlapError() from None
-            raise
-
-    async def list_windows(
+    async def slots(
         self,
         context: RequestContext,
         provider_id: UUID,
         query: SlotQuery,
-    ) -> list[AvailabilityView]:
-        require_permission(context, Permission.DIRECTORY_READ)
-        async with self._uow.transaction(context) as tx:
-            if await tx.providers.get(provider_id) is None:
-                raise NotFoundError()
-            return [
-                AvailabilityView.model_validate(row)
-                for row in await tx.availability.between(
-                    provider_id, query.starts_at, query.ends_at
-                )
-            ]
-
-    async def slots(
-        self, context: RequestContext, provider_id: UUID, query: SlotQuery
+        service_id: UUID | None = None,
     ) -> list[Slot]:
         require_permission(context, Permission.DIRECTORY_READ)
         async with self._uow.transaction(context) as tx:
-            if await tx.providers.get(provider_id) is None:
+            settings = await tx.schedule.settings()
+            calendar = await tx.schedule.calendar(provider_id, settings)
+            if calendar is None:
                 raise NotFoundError()
-            windows = await tx.availability.between(provider_id, query.starts_at, query.ends_at)
-            occupied = await tx.appointments.between(provider_id, query.starts_at, query.ends_at)
-            return available_slots(windows, occupied, query, datetime.now(UTC))
+            minutes = await appointment_minutes(tx, settings, service_id)
+            earliest, latest = booking_window(context, settings, datetime.now(UTC))
+            starts_at = max(query.starts_at, earliest)
+            ends_at = min(query.ends_at, latest) if latest else query.ends_at
+            if ends_at <= starts_at:
+                return []
+            occupied = await tx.appointments.between(provider_id, starts_at, ends_at)
+            return available_slots(
+                calendar,
+                [(row.starts_at, row.ends_at) for row in occupied],
+                starts_at=starts_at,
+                ends_at=ends_at,
+                minutes=minutes,
+            )

@@ -39,21 +39,6 @@ class Call(TenantRecord):
             name="fk_calls_scope_location_id",
         ),
         ForeignKeyConstraint(
-            ["tenant_id", "agent_id"],
-            ["configuration_resources.tenant_id", "configuration_resources.id"],
-            name="fk_calls_scope_agent_id",
-        ),
-        ForeignKeyConstraint(
-            ["tenant_id", "channel_id"],
-            ["configuration_resources.tenant_id", "configuration_resources.id"],
-            name="fk_calls_scope_channel_id",
-        ),
-        ForeignKeyConstraint(
-            ["tenant_id", "configuration_version"],
-            ["published_configurations.tenant_id", "published_configurations.version"],
-            name="fk_calls_configuration_version",
-        ),
-        ForeignKeyConstraint(
             ["tenant_id", "access_patient_id"],
             ["patients.tenant_id", "patients.id"],
             name="fk_calls_access_patient_id_patients",
@@ -90,10 +75,7 @@ class Call(TenantRecord):
     # Provider binding pinned when the call was accepted; later events must match it.
     integration_id: Mapped[UUID | None]
     credential_version_id: Mapped[UUID | None]
-    configuration_version: Mapped[int | None]
     location_id: Mapped[UUID | None]
-    agent_id: Mapped[UUID | None]
-    channel_id: Mapped[UUID | None]
     access_patient_id: Mapped[UUID | None]
     verified_patient_id: Mapped[UUID | None]
     access_digest: Mapped[str | None] = mapped_column(String(128))

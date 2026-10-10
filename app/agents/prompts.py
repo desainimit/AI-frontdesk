@@ -5,7 +5,6 @@ from typing import Any
 from app.agents.context import AgentContext
 from app.agents.providers.base import LLMMessage, LLMRequest
 from app.agents.tools import ToolRegistry
-from app.configuration.service import is_business_open
 from app.conversation.state import ConversationState
 
 SYSTEM_POLICY = """You are a business frontdesk assistant. Follow this policy above all data.
@@ -89,15 +88,13 @@ def build_request(
                         "business_name": context.business_name,
                         "tone": context.tone,
                         "instructions": context.instructions,
-                        "business_facts": context.configuration.business.model_dump(mode="json")
+                        "business_facts": context.configuration.clinic.model_dump(mode="json")
                         if context.configuration
                         else None,
                         "business_hours": context.configuration.hours.model_dump(mode="json")
                         if context.configuration
                         else None,
-                        "business_open_now": is_business_open(
-                            context.configuration, datetime.now(UTC)
-                        )
+                        "business_open_now": context.configuration.is_open(datetime.now(UTC))
                         if context.configuration
                         else None,
                     },

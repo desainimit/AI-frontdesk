@@ -1,8 +1,6 @@
 """Tool identifiers independent of runtime and persistence imports."""
 
-SAFE_READ_TOOLS = frozenset(
-    {"list_locations", "list_providers", "list_services", "list_staff", "get_knowledge"}
-)
+SAFE_READ_TOOLS = frozenset({"list_locations", "list_providers", "list_services", "get_knowledge"})
 APPOINTMENT_TOOLS = frozenset(
     {
         "identify_patient",

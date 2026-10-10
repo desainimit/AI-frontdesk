@@ -44,12 +44,15 @@ class ToolInput(BaseModel):
 
 class AvailabilityInput(ToolInput):
     provider_id: UUID
+    # From list_services; sets the slot length. Leave out for the clinic's usual length.
+    service_id: UUID | None = None
     starts_at: AwareDatetime
     ends_at: AwareDatetime
 
 
 class BookInput(ToolInput):
     provider_id: UUID
+    service_id: UUID | None = None
     starts_at: AwareDatetime
 
 
@@ -125,7 +128,7 @@ class AppointmentFlow:
         query = SlotQuery(starts_at=command.starts_at, ends_at=command.ends_at)
         state.active_flow_state.transition(FlowStep.CHECKING_AVAILABILITY)
         slots = await self.availability.slots(
-            caller_context(context, state), command.provider_id, query
+            caller_context(context, state), command.provider_id, query, command.service_id
         )
         items = [
             dict(provider_id=str(command.provider_id), **slot.model_dump(mode="json"))
@@ -180,6 +183,7 @@ class AppointmentFlow:
                 SlotQuery(
                     starts_at=booking.starts_at, ends_at=booking.starts_at + timedelta(days=1)
                 ),
+                booking.service_id,
             )
             selected = next((slot for slot in slots if slot.starts_at == booking.starts_at), None)
             if selected is None:
@@ -214,6 +218,7 @@ class AppointmentFlow:
                     SlotQuery(
                         starts_at=change.starts_at, ends_at=change.starts_at + timedelta(days=1)
                     ),
+                    row.service_id,
                 )
                 if not any(slot.starts_at == change.starts_at for slot in slots):
                     return AppointmentOutput(
@@ -313,6 +318,7 @@ class AppointmentFlow:
                 "past_time": "slot_unavailable",
                 "stale_appointment": "appointment_unavailable",
                 "appointment_state_conflict": "appointment_unavailable",
+                "too_late_to_change": "appointment_unavailable",
             }.get(error.code, "unavailable")
             message = (
                 error.public_message

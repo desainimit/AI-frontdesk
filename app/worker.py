@@ -20,7 +20,6 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 # Every table must be registered in this process: queue rows reference tables whose
 # models no queue imports by itself.
 import app.core.database.models  # noqa: F401  # pyright: ignore[reportUnusedImport]
-from app.configuration.dispatch import ConfigurationDispatcher, ValkeyRevisionPublisher
 from app.core.database.session import Database
 from app.core.logging import configure_logging
 from app.core.redis import RedisClient
@@ -94,17 +93,10 @@ async def build_queues(settings: Settings, stack: AsyncExitStack) -> list[Queue]
         telemetry=telemetry,
     )
     jobs = JobRunner(WorkflowIntentStore(sessions), WorkflowActivities(sessions))
-    configuration = ConfigurationDispatcher(
-        sessions,
-        ValkeyRevisionPublisher(redis),
-        timeout_seconds=settings.dependency_timeout_seconds,
-    )
-    await configuration.check()
     await redis.ping()
     queues = [
         Queue("outbox", events.process_one, 1),
         Queue("jobs", jobs.process_one, 1),
-        Queue("configuration", configuration.process_one, 1),
     ]
     if settings.mail_enabled:
         # Fail at start, not on the first message, when the keyring is unusable.

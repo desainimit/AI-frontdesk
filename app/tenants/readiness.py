@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.audit.models import AuditEvent
 from app.auth.policies import Permission
 from app.calls.models import PhoneNumber
-from app.configuration.models import ConfigurationDraft
 from app.core.errors import ApplicationError, NotFoundError
 from app.core.settings import Settings
 from app.integrations.catalog import Purpose
@@ -26,6 +25,7 @@ from app.integrations.service import Actor, ActorScope, enter_actor
 from app.platform.models import PlatformAuditEvent
 from app.platform.policies import PlatformPermission
 from app.rbac.models import RolePermission
+from app.settings.store import load_settings
 from app.tenants.models import Tenant
 from app.users.models import User
 
@@ -122,30 +122,6 @@ class TenantReadinessService:
                 "Send or resend the administrator invitation.",
             )
         )
-        if tenant.requires_saas_activation:
-            # New onboarding must never inherit legacy token-only activation behavior.
-            published = await session.scalar(
-                select(ConfigurationDraft.published_version).where(
-                    ConfigurationDraft.tenant_id == tenant_id
-                )
-            )
-            checks.append(
-                _ready("published_configuration")
-                if published is not None
-                else _blocking(
-                    "published_configuration",
-                    "No configuration is published.",
-                    "Validate and publish workspace configuration.",
-                )
-            )
-            if not accepted:
-                checks.append(
-                    _blocking(
-                        "accepted_administrator",
-                        "The workspace administrator has not accepted membership.",
-                        "Send the setup invitation and complete administrator acceptance.",
-                    )
-                )
         checks.append(
             _ready("public_callbacks")
             if settings.telephony_ready
@@ -215,13 +191,13 @@ class TenantReadinessService:
                     next_action="Connect an embeddings provider to enable knowledge.",
                 )
             )
-        if tenant.human_transfer_number is None:
+        if (await load_settings(session, tenant_id)).calls.transfer_number is None:
             checks.append(
                 ReadinessCheck(
                     key="transfer_destination",
                     status="optional",
                     reason="Callers cannot be transferred to staff.",
-                    next_action="Set a staff transfer number.",
+                    next_action="Add a transfer number in Settings, AI receptionist.",
                 )
             )
         return checks

@@ -11,7 +11,7 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.auth.context import ActorType, RequestContext, Role
+from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission
 from app.core.database.rls import set_tenant_scope, verify_runtime_role
 from app.core.errors import ApplicationError, AuthenticationError, AuthorizationError
@@ -141,9 +141,7 @@ async def workspace_context(
     )
     if user is None:
         raise WorkspaceRequiredError()
-    context = RequestContext(
-        request_id, tenant.id, user.id, ActorType.USER, Role(user.role), session_id=row.id
-    )
+    context = RequestContext(request_id, tenant.id, user.id, ActorType.USER, session_id=row.id)
     return await bind_user_permissions(db, context, user)
 
 

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException
 
 from app.core.errors import ApplicationError as ApplicationError
-from app.core.errors import AuthenticationError
+from app.core.errors import AuthenticationError, ValidationFailedError
 from app.core.errors import ConflictError as ConflictError
 from app.core.errors import NotFoundError as NotFoundError
 from app.core.logging import request_id_var
@@ -16,9 +16,16 @@ from app.core.logging import request_id_var
 logger = logging.getLogger(__name__)
 
 
+class FieldError(BaseModel):
+    field: str
+    message: str
+
+
 class ErrorDetail(BaseModel):
     code: str
     message: str
+    # Present when a form was rejected: which inputs to fix.
+    fields: list[FieldError] | None = None
 
 
 class ErrorResponse(BaseModel):
@@ -26,18 +33,39 @@ class ErrorResponse(BaseModel):
     request_id: str
 
 
-def error_response(request: Request, status: int, code: str, message: str) -> JSONResponse:
+def error_response(
+    request: Request,
+    status: int,
+    code: str,
+    message: str,
+    fields: list[tuple[str, str]] | None = None,
+) -> JSONResponse:
     request_id = getattr(request.state, "request_id", None) or str(uuid4())
-    body = ErrorResponse(error=ErrorDetail(code=code, message=message), request_id=request_id)
+    detail = ErrorDetail(
+        code=code,
+        message=message,
+        fields=[FieldError(field=field, message=text) for field, text in fields]
+        if fields
+        else None,
+    )
+    body = ErrorResponse(error=detail, request_id=request_id)
     return JSONResponse(
-        status_code=status, content=body.model_dump(), headers={"X-Request-ID": request_id}
+        status_code=status,
+        content=body.model_dump(exclude_none=True),
+        headers={"X-Request-ID": request_id},
     )
 
 
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApplicationError)
     async def application_error(request: Request, exc: ApplicationError) -> JSONResponse:
-        response = error_response(request, exc.status_code, exc.code, exc.public_message)
+        response = error_response(
+            request,
+            exc.status_code,
+            exc.code,
+            exc.public_message,
+            exc.fields if isinstance(exc, ValidationFailedError) else None,
+        )
         if isinstance(exc, AuthenticationError):
             response.headers["WWW-Authenticate"] = "Bearer"
         return response

@@ -100,11 +100,11 @@ async def test_platform_administrator_signs_in_and_manages_workspaces(
         # Oldest first: read every page so the result does not depend on how many
         # workspaces earlier tests left in the shared database.
         listed: set[str] = set()
-        for offset in range(0, 10001, 100):
-            page = (await client.get(f"platform/tenants?limit=100&offset={offset}")).json()
-            listed.update(t["id"] for t in page)
-            if len(page) < 100:
-                break
+        cursor: str | None = ""
+        while cursor is not None:
+            page = (await client.get(f"platform/tenants?limit=100&cursor={cursor}")).json()
+            listed.update(t["id"] for t in page["items"])
+            cursor = page["next_cursor"]
         assert {str(tenancy.a.tenant_id), str(tenancy.b.tenant_id)}.issubset(listed)
 
         tenant_id = str(tenancy.a.tenant_id)

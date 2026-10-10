@@ -41,7 +41,7 @@ from app.identity.tokens import INVITATION, digest_token, issue_token, parse_tok
 from app.platform.onboarding_models import TenantOnboarding
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.rbac.models import TenantRole
-from app.rbac.service import assert_custodian, grantable_role, legacy_role
+from app.rbac.service import assert_custodian, grantable_role
 from app.tenants.models import Tenant
 from app.users.models import User
 
@@ -166,7 +166,7 @@ class InvitationService:
         )
         db.add(challenge)
         tenant = await db.get(Tenant, user.tenant_id)
-        role = await db.get(TenantRole, user.role_id) if user.role_id is not None else None
+        role = await db.get(TenantRole, user.role_id)
         account = await db.get(Account, user.account_id)
         origin = self._settings.tenant_auth_public_origin.rstrip("/")
         step = (
@@ -259,8 +259,7 @@ class InvitationService:
                     )
                 ):
                     raise ConflictError()
-                role_id = command.role_id or await legacy_role(db, context.tenant_id, command.role)
-                await grantable_role(db, context, role_id)
+                await grantable_role(db, context, command.role_id)
                 account = await ensure_account(db, command.email, command.display_name)
                 # Not active until the invited person proves they read this mailbox.
                 user = User(
@@ -269,8 +268,7 @@ class InvitationService:
                     account_id=account.id,
                     email=command.email,
                     display_name=command.display_name,
-                    role=command.role,
-                    role_id=role_id,
+                    role_id=command.role_id,
                     is_active=False,
                 )
                 db.add(user)
@@ -312,7 +310,7 @@ class InvitationService:
             challenge, user, account, tenant = await self._open(
                 db, command.token.get_secret_value(), lock=False
             )
-            role = await db.get(TenantRole, user.role_id) if user.role_id is not None else None
+            role = await db.get(TenantRole, user.role_id)
             return InvitationDetails(
                 workspace_name=tenant.name,
                 email=account.email,
@@ -384,16 +382,12 @@ class InvitationService:
                 if command.is_active and not target.is_active and target.accepted_at is None:
                     # A pending invitation cannot be activated by editing the member.
                     raise ConflictError()
-                if target.role_id is not None:
-                    await grantable_role(db, context, target.role_id)
-                if command.role_id is not None or command.role != target.role:
+                await grantable_role(db, context, target.role_id)
+                if command.role_id is not None and command.role_id != target.role_id:
                     require_permission(context, Permission.ROLE_ASSIGN)
-                    role_id = command.role_id or await legacy_role(
-                        db, context.tenant_id, command.role
-                    )
-                    await grantable_role(db, context, role_id)
-                    target.role_id = role_id
-                target.is_active, target.role = command.is_active, command.role
+                    await grantable_role(db, context, command.role_id)
+                    target.role_id = command.role_id
+                target.is_active = command.is_active
                 await db.flush()
                 await assert_custodian(db, context.tenant_id)
                 if not command.is_active:

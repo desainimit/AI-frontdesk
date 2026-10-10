@@ -112,10 +112,10 @@ class AgentRuntime:
                         results.append({"name": call.name, "result": result})
                         if call.name == "get_knowledge" and result.get("status") == "not_found":
                             message = (
-                                context.configuration.agent.unknown_answer
+                                context.configuration.receptionist.unknown_answer
                                 if context.configuration
                                 and state.language
-                                == context.configuration.languages.default_language
+                                == context.configuration.receptionist.languages.default_language
                                 else spoken(state.language, "knowledge_unavailable")
                             )
                             ConversationStateManager.record_agent_response(state, message)

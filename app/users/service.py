@@ -34,21 +34,20 @@ class UserService:
         offset: int,
         *,
         q: str | None = None,
-        role: str | None = None,
         role_id: UUID | None = None,
         is_active: bool | None = None,
     ) -> list[UserView]:
         require_permission(context, Permission.USER_READ)
         async with self._uow.transaction(context) as transaction:
             users = await transaction.users.list(
-                limit, offset, q=q, role=role, role_id=role_id, is_active=is_active
+                limit, offset, q=q, role_id=role_id, is_active=is_active
             )
             names = await transaction.users.role_names()
             AuditService(transaction.audit).record(context, AuditAction.USERS_VIEWED, "users")
             views: list[UserView] = []
             for user in users:
                 view = UserView.model_validate(user)
-                view.role_name = names.get(view.role_id, "") if view.role_id else ""
+                view.role_name = names.get(view.role_id, "")
                 if not user.is_active:
                     view.status = "deactivated" if user.accepted_at else "invited"
                 views.append(view)

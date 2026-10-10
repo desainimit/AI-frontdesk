@@ -21,6 +21,9 @@ class CreateLocation(BaseModel):
         default="Asia/Kolkata", min_length=1, max_length=100, examples=["Asia/Kolkata"]
     )
 
+    address: str = Field(default="", max_length=1000)
+    phone: str = Field(default="", max_length=20, pattern=r"^(|\+[1-9][0-9]{7,14})$")
+
     @field_validator("timezone")
     @classmethod
     def valid_timezone(cls, value: str) -> str:
@@ -37,4 +40,6 @@ class LocationView(BaseModel):
     tenant_id: UUID
     name: str
     timezone: str
+    address: str
+    phone: str
     created_at: datetime

@@ -6,9 +6,10 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.appointments.repository import AppointmentRepository, AvailabilityRepository
+from app.appointments.repository import AppointmentRepository
 from app.audit.repository import AuditRepository
 from app.auth.context import ActorType, RequestContext
+from app.clinic.repository import ScheduleRepository
 from app.core.database.rls import set_tenant_scope, verify_runtime_role
 from app.core.errors import AuthenticationError, AuthorizationError
 from app.events.idempotency import IdempotencyRepository
@@ -32,7 +33,7 @@ class Transaction:
     locations: LocationRepository
     providers: ProviderRepository
     patients: PatientRepository
-    availability: AvailabilityRepository
+    schedule: ScheduleRepository
     appointments: AppointmentRepository
     idempotency: IdempotencyRepository
     outbox: OutboxRepository
@@ -56,7 +57,6 @@ async def enter_tenant_scope(session: AsyncSession, context: RequestContext) -> 
                 User.tenant_id == context.tenant_id,
                 User.is_active.is_(True),
                 Tenant.is_active.is_(True),
-                User.role == context.role,
             )
             .with_for_update(read=True, of=User)
         )
@@ -122,7 +122,7 @@ class UnitOfWork:
                 locations=LocationRepository(session, context),
                 providers=ProviderRepository(session, context),
                 patients=PatientRepository(session, context),
-                availability=AvailabilityRepository(session, context),
+                schedule=ScheduleRepository(session, context),
                 appointments=AppointmentRepository(session, context),
                 idempotency=IdempotencyRepository(session, context),
                 outbox=OutboxRepository(session, context),

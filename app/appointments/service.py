@@ -1,19 +1,20 @@
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 
+from app.appointments.availability import appointment_minutes, booking_window
 from app.appointments.commands import BookAppointment, CancelAppointment, RescheduleAppointment
 from app.appointments.errors import (
     AppointmentStateError,
     PastTimeError,
     SlotUnavailableError,
     StaleAppointmentError,
+    TooLateToChangeError,
 )
 from app.appointments.models import Appointment
 from app.appointments.schemas import AppointmentView
-from app.appointments.slots import slot_end
 from app.audit.events import AuditAction
 from app.audit.service import AuditService
 from app.auth.context import ActorType, RequestContext
@@ -47,15 +48,15 @@ class AppointmentService:
                     or await tx.patients.get(command.patient_id) is None
                 ):
                     raise NotFoundError()
-                end = slot_end(
-                    await tx.availability.containing(command.provider_id, command.starts_at),
-                    command.starts_at,
+                end = await self._end(
+                    context, tx, command.provider_id, command.service_id, command.starts_at
                 )
                 entity = await tx.appointments.add(
                     Appointment(
                         tenant_id=context.tenant_id,
                         provider_id=command.provider_id,
                         patient_id=command.patient_id,
+                        service_id=command.service_id,
                         starts_at=command.starts_at,
                         ends_at=end,
                         status="booked",
@@ -89,11 +90,15 @@ class AppointmentService:
         patients: dict[UUID, str] = {}
         if has_permission(context, Permission.PATIENT_READ):
             patients = await tx.patients.display_names({row.patient_id for row in entities})
+        services = await tx.schedule.service_names(
+            {row.service_id for row in entities if row.service_id}
+        )
         return [
             AppointmentView.model_validate(row).model_copy(
                 update={
                     "provider_name": providers.get(row.provider_id),
                     "patient_name": patients.get(row.patient_id),
+                    "service_name": services.get(row.service_id) if row.service_id else None,
                 }
             )
             for row in entities
@@ -145,6 +150,7 @@ class AppointmentService:
             if entity.status == "cancelled":
                 return tx.idempotency.save(AppointmentView.model_validate(entity))
             self._require_mutable(entity, command.expected_version)
+            await self._require_notice(context, tx, entity)
             entity.status = "cancelled"
             entity.version += 1
             await tx.appointments.flush()
@@ -178,9 +184,9 @@ class AppointmentService:
                     raise PastTimeError()
                 entity = await self._get(tx, appointment_id, lock=True)
                 self._require_mutable(entity, command.expected_version)
-                end = slot_end(
-                    await tx.availability.containing(entity.provider_id, command.starts_at),
-                    command.starts_at,
+                await self._require_notice(context, tx, entity, rescheduling=True)
+                end = await self._end(
+                    context, tx, entity.provider_id, entity.service_id, command.starts_at
                 )
                 if entity.starts_at == command.starts_at and entity.ends_at == end:
                     return tx.idempotency.save(AppointmentView.model_validate(entity))
@@ -197,6 +203,40 @@ class AppointmentService:
             if getattr(exc.orig, "sqlstate", None) == "23P01":
                 raise SlotUnavailableError() from None
             raise
+
+    @staticmethod
+    async def _end(
+        context: RequestContext,
+        tx: Transaction,
+        provider_id: UUID,
+        service_id: UUID | None,
+        starts_at: datetime,
+    ) -> datetime:
+        """When an appointment starting here ends, once the schedule and rules allow it."""
+        settings = await tx.schedule.settings()
+        calendar = await tx.schedule.calendar(provider_id, settings)
+        if calendar is None:
+            raise SlotUnavailableError()
+        earliest, latest = booking_window(context, settings, datetime.now(UTC))
+        if starts_at < earliest or (latest is not None and starts_at > latest):
+            raise SlotUnavailableError()
+        return calendar.require_bookable(
+            starts_at, await appointment_minutes(tx, settings, service_id)
+        )
+
+    @staticmethod
+    async def _require_notice(
+        context: RequestContext, tx: Transaction, entity: Appointment, *, rescheduling: bool = False
+    ) -> None:
+        """A patient changing their own booking must respect the clinic's notice rules."""
+        if context.actor_type != ActorType.CALLER:
+            return
+        rules = (await tx.schedule.settings()).scheduling
+        notice = timedelta(minutes=rules.cancellation_notice_minutes)
+        if (rescheduling and not rules.rescheduling_enabled) or (
+            entity.starts_at - datetime.now(UTC) < notice
+        ):
+            raise TooLateToChangeError()
 
     @staticmethod
     async def _get(tx: Transaction, identity: UUID, *, lock: bool = False) -> Appointment:

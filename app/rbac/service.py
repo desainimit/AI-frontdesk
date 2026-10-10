@@ -12,7 +12,7 @@ from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
 from app.core.database.unit_of_work import enter_tenant_scope
 from app.core.errors import AuthorizationError, ConflictError, NotFoundError
-from app.rbac.catalog import CUSTODIAN_PERMISSIONS, template_permissions
+from app.rbac.catalog import CUSTODIAN_PERMISSIONS, ROLE_TEMPLATES, template_permissions
 from app.rbac.models import RolePermission, TenantRole
 from app.rbac.schemas import PermissionGrant, RoleCommand, RoleOption, RoleView, UpdateRole
 from app.tenants.models import Tenant
@@ -26,13 +26,13 @@ class RevisionConflictError(ConflictError):
 
 
 async def seed_roles(session: AsyncSession, tenant_id: UUID) -> dict[str, UUID]:
-    """Called inside tenant creation, or once to bind legacy development accounts."""
+    """Give a new clinic its starting roles. Safe to call again."""
     await session.scalar(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update())
     existing = (
         await session.scalars(select(TenantRole).where(TenantRole.tenant_id == tenant_id))
     ).all()
     roles = {row.template_key: row.id for row in existing if row.template_key}
-    for key in ("owner", "admin", "operator", "analyst", "member"):
+    for key, name, description in ROLE_TEMPLATES:
         if key in roles:
             continue
         identity = uuid5(tenant_id, f"role:{key}")
@@ -40,8 +40,8 @@ async def seed_roles(session: AsyncSession, tenant_id: UUID) -> dict[str, UUID]:
             TenantRole(
                 id=identity,
                 tenant_id=tenant_id,
-                name=key.title(),
-                description=f"Initial {key} template",
+                name=name,
+                description=description,
                 template_key=key,
                 revision=1,
             )
@@ -67,9 +67,6 @@ async def seed_roles(session: AsyncSession, tenant_id: UUID) -> dict[str, UUID]:
 async def bind_user_permissions(
     session: AsyncSession, context: RequestContext, user: User, *, lock: bool = False
 ) -> RequestContext:
-    if user.role_id is None:
-        user.role_id = await legacy_role(session, user.tenant_id, user.role)
-        await session.flush()
     query = select(TenantRole).where(
         TenantRole.id == user.role_id, TenantRole.tenant_id == user.tenant_id
     )
@@ -95,17 +92,6 @@ async def bind_user_permissions(
         authorization_revision=role.revision,
         capabilities=frozenset(grants) & known,
     )
-
-
-async def legacy_role(session: AsyncSession, tenant_id: UUID, key: str) -> UUID:
-    identity = await session.scalar(
-        select(TenantRole.id).where(
-            TenantRole.tenant_id == tenant_id, TenantRole.template_key == key
-        )
-    )
-    if identity is None:
-        raise NotFoundError()
-    return identity
 
 
 def audit(
@@ -356,8 +342,7 @@ class RoleService:
             )
             if user is None or role is None:
                 raise NotFoundError()
-            if user.role_id is not None:
-                await grantable_role(session, context, user.role_id)
+            await grantable_role(session, context, user.role_id)
             grants = {
                 grant.key
                 for grant in (await self._view(session, role)).permissions

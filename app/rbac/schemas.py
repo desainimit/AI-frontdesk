@@ -57,9 +57,7 @@ class RoleView(BaseModel):
 
 
 class CapabilitiesView(BaseModel):
-    tenant_id: UUID
     actor_id: UUID | None
     role_id: UUID | None
     role_name: str
-    authorization_revision: int
     permissions: list[Permission]

@@ -105,30 +105,18 @@ def directory_tools(service: CallDirectoryService, timeout_seconds: float = 3) -
         )
 
     async def services(context: AgentContext, payload: BaseModel) -> BaseModel:
-        return await service.business_read(
+        return await service.read(
             context.call, "services", DirectoryQuery.model_validate(payload.model_dump())
-        )
-
-    async def staff(context: AgentContext, payload: BaseModel) -> BaseModel:
-        return await service.business_read(
-            context.call, "staff", DirectoryQuery.model_validate(payload.model_dump())
         )
 
     return ToolRegistry(
         [
             ReadTool(
                 "list_services",
-                "Read published services, prices in minor currency units and durations. "
-                "This does not check booking availability.",
+                "List the appointment types this clinic offers, with their length in minutes. "
+                "Pass an id as service_id when checking availability or booking.",
                 DirectoryQuery,
                 services,
-            ),
-            ReadTool(
-                "list_staff",
-                "Read published staff names and job titles. "
-                "This does not check booking availability.",
-                DirectoryQuery,
-                staff,
             ),
             ReadTool(
                 "list_locations",

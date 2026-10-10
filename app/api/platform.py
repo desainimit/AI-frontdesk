@@ -4,7 +4,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Request
 
 from app.api.dependencies import SessionToken, get_resources
-from app.api.tenancy import DatabaseDependency, Limit, Offset, Search
+from app.api.tenancy import Cursor, DatabaseDependency, Limit, Search
+from app.core.database.pages import Page, decode_cursor, page
 from app.core.security.rate_limit import enforce_rate_limit
 from app.identity.invitations import InvitationService
 from app.identity.schemas import InvitationView, OpenWorkspace, SupportVisit
@@ -66,14 +67,16 @@ async def tenants(
     context: PlatformIdentity,
     database: DatabaseDependency,
     limit: Limit = 50,
-    offset: Offset = 0,
+    cursor: Cursor = None,
     q: Search = None,
     is_active: bool | None = None,
     service_state: Literal["setup", "live"] | None = None,
-) -> list[TenantView]:
-    return await PlatformTenantService(database.session_factory).list(
-        context, limit, offset, q=q, is_active=is_active, service_state=service_state
+) -> Page[TenantView]:
+    offset = decode_cursor(cursor)
+    rows = await PlatformTenantService(database.session_factory).list(
+        context, limit + 1, offset, q=q, is_active=is_active, service_state=service_state
     )
+    return page(rows, limit, offset)
 
 
 @router.patch("/tenants/{tenant_id}")

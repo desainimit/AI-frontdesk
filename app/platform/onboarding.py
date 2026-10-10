@@ -1,7 +1,7 @@
-"""Atomic draft provisioning, separate from legacy token-based tenant creation.
+"""Create a clinic workspace with everything it needs to work.
 
-A draft creates the workspace, its first location and an inactive pending administrator.
-It never issues an API credential; access starts when the invitation is accepted.
+One transaction creates the workspace, its starting settings, roles, appointment types,
+first location and a pending administrator. Access starts when the invitation is accepted.
 """
 
 import hashlib
@@ -15,15 +15,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.audit.models import AuditEvent
-from app.auth.context import ActorType, Role
-from app.configuration.defaults import (
-    DEFAULT_LOCATION_NAME,
-    DEFAULTS_VERSION,
-    initial_language_policy,
-    tenant_defaults,
-)
-from app.configuration.models import ConfigurationDraft
-from app.configuration.schemas import OperationalConfiguration
+from app.auth.context import ActorType
+from app.clinic.models import Service
 from app.conversation.locales import LanguagePolicy
 from app.core.database.rls import set_tenant_scope
 from app.core.errors import ConflictError, NotFoundError
@@ -36,8 +29,15 @@ from app.locations.schemas import CreateLocation
 from app.platform.models import PlatformAuditEvent
 from app.platform.onboarding_models import TenantOnboarding
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
+from app.settings.defaults import DEFAULT_LOCATION_NAME, DEFAULT_SERVICES, DEFAULT_TIMEZONE
+from app.settings.models import TenantSettings
+from app.settings.store import seed_settings
 from app.tenants.models import Tenant
 from app.users.models import User
+
+
+def initial_language_policy() -> LanguagePolicy:
+    return LanguagePolicy(default_language="en", enabled_languages=["en"])
 
 
 class PendingAdministrator(BaseModel):
@@ -60,19 +60,16 @@ class OnboardingDraft(BaseModel):
 
 
 class OnboardingDefaults(BaseModel):
-    version: int
     location_name: str
     timezone: str
     language_policy: LanguagePolicy
 
 
 def onboarding_defaults() -> OnboardingDefaults:
-    values = tenant_defaults()
     return OnboardingDefaults(
-        version=DEFAULTS_VERSION,
         location_name=DEFAULT_LOCATION_NAME,
-        timezone=values.business.timezone,
-        language_policy=values.languages,
+        timezone=DEFAULT_TIMEZONE,
+        language_policy=initial_language_policy(),
     )
 
 
@@ -116,6 +113,11 @@ async def _view(session: AsyncSession, row: TenantOnboarding) -> OnboardingView:
             "draft": row.draft,
         }
     )
+
+
+def _apply_languages(settings: TenantSettings, policy: LanguagePolicy) -> None:
+    receptionist = {**settings.document["receptionist"], "languages": policy.model_dump()}
+    settings.document = {**settings.document, "receptionist": receptionist}
 
 
 def _audit(session: AsyncSession, context: PlatformContext, tenant_id: UUID, action: str) -> None:
@@ -167,28 +169,21 @@ class TenantOnboardingService:
                 return await _view(session, existing)
             tenant_id, admin_id, location_id = uuid4(), uuid4(), uuid4()
             await set_tenant_scope(session, tenant_id)
-            session.add(
-                Tenant(
-                    id=tenant_id,
-                    name=command.name,
-                    language_policy=command.language_policy.model_dump(mode="json"),
-                    # Administration works immediately; calls stay off until activation.
-                    service_state="setup",
-                )
-            )
+            # Managing the clinic works at once; calls stay off until it goes live.
+            tenant = Tenant(id=tenant_id, name=command.name, service_state="setup")
+            session.add(tenant)
             await session.flush()
             from app.rbac.service import seed_roles
 
             roles = await seed_roles(session, tenant_id)
-            from app.configuration.service import seed_configuration
-
-            tenant = await session.get(Tenant, tenant_id)
-            if tenant is None:
-                raise ConflictError()
-            configuration = await seed_configuration(session, tenant)
-            document = OperationalConfiguration.model_validate(configuration.document)
-            document.business.timezone = command.location.timezone
-            configuration.document = document.model_dump(mode="json")
+            settings = await seed_settings(session, tenant, command.location.timezone)
+            _apply_languages(settings, command.language_policy)
+            session.add_all(
+                [
+                    Service(tenant_id=tenant_id, name=name, duration_minutes=minutes)
+                    for name, minutes in DEFAULT_SERVICES
+                ]
+            )
             account = await ensure_account(
                 session, command.administrator.email, command.administrator.display_name
             )
@@ -200,7 +195,6 @@ class TenantOnboardingService:
                         account_id=account.id,
                         email=command.administrator.email,
                         display_name=command.administrator.display_name,
-                        role=Role.ADMIN,
                         role_id=roles["owner"],
                         is_active=False,
                     ),
@@ -281,19 +275,21 @@ class TenantOnboardingService:
             # Once the administrator has accepted, the workspace belongs to the tenant.
             if (await membership_state(session, admin))[1] == "accepted":
                 raise ConflictError()
-            configuration = await session.scalar(
-                select(ConfigurationDraft).where(ConfigurationDraft.tenant_id == tenant_id)
+            settings = await session.scalar(
+                select(TenantSettings)
+                .where(TenantSettings.tenant_id == tenant_id)
+                .with_for_update()
             )
-            if configuration is None or configuration.published_version is not None:
+            if settings is None:
                 raise ConflictError()
-            document = OperationalConfiguration.model_validate(configuration.document)
-            document.business.name = command.name
-            document.business.timezone = command.location.timezone
-            document.languages = command.language_policy
-            configuration.document = document.model_dump(mode="json")
-            configuration.revision += 1
+            clinic = {
+                **settings.document["clinic"],
+                "name": command.name,
+                "timezone": command.location.timezone,
+            }
+            settings.document = {**settings.document, "clinic": clinic}
+            _apply_languages(settings, command.language_policy)
             tenant.name = command.name
-            tenant.language_policy = command.language_policy.model_dump(mode="json")
             if admin.email != command.administrator.email:
                 # A link mailed to the old address must not open the new membership.
                 await cancel_challenges(session, purpose="invitation", user_id=admin.id)

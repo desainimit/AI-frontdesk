@@ -5,7 +5,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
-from app.api.tenancy import Context, DatabaseDependency, Limit, Offset, Search
+from app.api.tenancy import Context, Cursor, DatabaseDependency, Limit, Search
+from app.core.database.pages import Page, decode_cursor, page
 from app.core.database.unit_of_work import UnitOfWork
 from app.core.settings import Settings
 from app.knowledge.embeddings import open_embedder
@@ -73,14 +74,16 @@ async def list_documents(
     context: Context,
     database: DatabaseDependency,
     limit: Limit = 50,
-    offset: Offset = 0,
+    cursor: Cursor = None,
     status: Literal["draft", "approved", "archived"] | None = None,
     q: Search = None,
-) -> list[DocumentView]:
+) -> Page[DocumentView]:
     # Listing existing records needs no embedding provider or ingestion worker.
-    return await service(request, database).list_documents(
-        context, limit, offset, status=status, q=q
+    offset = decode_cursor(cursor)
+    rows = await service(request, database).list_documents(
+        context, limit + 1, offset, status=status, q=q
     )
+    return page(rows, limit, offset)
 
 
 @router.get("/documents/{document_id}/versions")

@@ -95,7 +95,7 @@ async def test_draft_retry_revision_isolation_and_no_credential(
 
         async with tenancy.admin.begin() as session:
             admin = await session.get(User, first.admin_id)
-            assert admin and not admin.is_active and admin.role == "admin"
+            assert admin and not admin.is_active
             # Invited only: nothing lets this person in until they accept.
             assert admin.accepted_at is None
             location = await session.get(Location, first.location_id)

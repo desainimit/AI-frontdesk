@@ -4,8 +4,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from app.auth.context import Role
-
 
 class UserView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -13,8 +11,7 @@ class UserView(BaseModel):
     tenant_id: UUID
     email: str
     display_name: str
-    role: Role
-    role_id: UUID | None = None
+    role_id: UUID
     role_name: str = ""
     is_active: bool
     created_at: datetime

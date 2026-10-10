@@ -13,9 +13,6 @@ from app.audit.models import AuditEvent
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
 from app.calls.models import Call, PhoneNumber
-from app.configuration.models import PublishedConfiguration
-from app.configuration.schemas import OperationalConfiguration
-from app.conversation.locales import LanguagePolicy
 from app.core.database.rls import set_tenant_scope, verify_runtime_role
 from app.core.errors import AuthorizationError, ConflictError, NotFoundError
 from app.identity.sessions import platform_scope
@@ -23,6 +20,8 @@ from app.platform.models import PlatformAuditEvent
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.postcall.models import CallTranscript
 from app.postcall.schemas import PostCallInput
+from app.settings.schemas import ClinicConfiguration
+from app.settings.store import load_settings
 from app.tenants.models import Tenant
 from app.users.models import User
 from app.workflows.intent import add_intent
@@ -181,36 +180,9 @@ class CallService:
             )
             call = await session.scalar(select(Call).where(Call.provider_call_id == sid))
             if call is None:
-                from app.configuration.service import published_for_tenant
-
-                operational = await published_for_tenant(session, phone.tenant_id)
-                if operational is not None and not operational[1].voice.enabled:
+                # A clinic that switched phone answering off takes no new calls.
+                if not (await load_settings(session, phone.tenant_id)).calls.enabled:
                     raise AuthorizationError()
-                from app.configuration.resolution import resolve_configuration
-
-                selected = None
-                if operational is not None:
-                    routes = [
-                        (identity, scope)
-                        for identity, scope in operational[1].scopes.channels.items()
-                        if scope.kind == "voice"
-                    ]
-                    channel_id = next(
-                        (
-                            identity
-                            for identity, scope in routes
-                            if scope.phone_number_id == phone.id
-                        ),
-                        None,
-                    )
-                    if routes and channel_id is None:
-                        raise AuthorizationError()
-                    selected = resolve_configuration(
-                        operational[1], operational[0], channel_id=channel_id
-                    )
-                    await self._scope_resources_active(
-                        session, selected.agent_id, selected.channel_id
-                    )
                 call = Call(
                     id=uuid4(),
                     tenant_id=phone.tenant_id,
@@ -218,10 +190,6 @@ class CallService:
                     provider_call_id=sid,
                     integration_id=pinned.integration_id,
                     credential_version_id=pinned.credential_version_id,
-                    configuration_version=operational[0] if operational else None,
-                    location_id=selected.location_id if selected else None,
-                    agent_id=selected.agent_id if selected else None,
-                    channel_id=selected.channel_id if selected else None,
                 )
                 session.add(call)
                 await session.flush()
@@ -237,14 +205,13 @@ class CallService:
                 raise ConflictError("Call is no longer awaiting a stream")
             return CallContext(call.tenant_id, call.id, sid, request_id)
 
-    async def operational_configuration(
-        self, context: CallContext
-    ) -> tuple[int, OperationalConfiguration] | None:
+    async def settings(self, context: CallContext) -> ClinicConfiguration:
+        """The clinic's settings as this call starts; the call keeps them until it ends."""
         async with self.sessions.begin() as session:
             await verify_runtime_role(session)
             await set_tenant_scope(session, context.tenant_id)
             call = await session.scalar(
-                select(Call).where(
+                select(Call.id).where(
                     Call.tenant_id == context.tenant_id,
                     Call.id == context.call_id,
                     Call.provider_call_id == context.provider_call_id,
@@ -252,47 +219,7 @@ class CallService:
             )
             if call is None:
                 raise AuthorizationError()
-            if call.configuration_version is None:
-                return None
-            row = await session.scalar(
-                select(PublishedConfiguration).where(
-                    PublishedConfiguration.tenant_id == context.tenant_id,
-                    PublishedConfiguration.version == call.configuration_version,
-                )
-            )
-            if row is None:
-                raise AuthorizationError()
-            from app.configuration.resolution import resolve_configuration
-
-            if call.status == "received":
-                await self._scope_resources_active(session, call.agent_id, call.channel_id)
-            resolved = resolve_configuration(
-                OperationalConfiguration.model_validate(row.document),
-                row.version,
-                location_id=call.location_id,
-                agent_id=call.agent_id,
-                channel_id=call.channel_id,
-            )
-            return row.version, resolved.document
-
-    async def _scope_resources_active(
-        self, session: AsyncSession, agent_id: UUID | None, channel_id: UUID | None
-    ) -> None:
-        from app.configuration.models import ConfigurationResource
-
-        for kind, identity in (("agent", agent_id), ("channel", channel_id)):
-            if identity is not None:
-                resource = await session.scalar(
-                    select(ConfigurationResource)
-                    .where(
-                        ConfigurationResource.id == identity,
-                        ConfigurationResource.kind == kind,
-                        ConfigurationResource.is_active.is_(True),
-                    )
-                    .with_for_update(read=True)
-                )
-                if resource is None:
-                    raise AuthorizationError()
+            return await load_settings(session, context.tenant_id)
 
     async def _active(self, session: AsyncSession, tenant_id: UUID, *, live: bool = False) -> None:
         query = select(Tenant.id).where(Tenant.id == tenant_id, Tenant.is_active.is_(True))
@@ -308,7 +235,6 @@ class CallService:
             await set_tenant_scope(session, context.tenant_id)
             await self._active(session, context.tenant_id)
             call = await self._locked(session, context)
-            await self._scope_resources_active(session, call.agent_id, call.channel_id)
             phone = await session.get(PhoneNumber, call.phone_number_id)
             if (
                 call.status != "received"
@@ -426,7 +352,6 @@ class CallService:
                     select(User.id).where(
                         User.id == context.actor_id,
                         User.is_active.is_(True),
-                        User.role == context.role,
                     )
                 )
                 is None
@@ -460,38 +385,6 @@ class CallService:
                 )
             )
             return result
-
-    async def language_policy(
-        self, context: CallContext, default_language: str = "en"
-    ) -> LanguagePolicy:
-        async with self.sessions.begin() as session:
-            await verify_runtime_role(session)
-            await set_tenant_scope(session, context.tenant_id)
-            await self._active(session, context.tenant_id)
-            call = await self._locked(session, context)
-            if call.status != "active":
-                raise AuthorizationError()
-            tenant = await session.get(Tenant, context.tenant_id)
-            if tenant is None:
-                raise AuthorizationError()
-            return LanguagePolicy.model_validate(
-                tenant.language_policy or {"default_language": default_language}
-            )
-
-    async def transfer_number(self, context: CallContext) -> str | None:
-        async with self.sessions.begin() as session:
-            await verify_runtime_role(session)
-            await set_tenant_scope(session, context.tenant_id)
-            await self._active(session, context.tenant_id)
-            call = await self._locked(session, context)
-            if call.status != "active":
-                raise AuthorizationError()
-            tenant = await session.get(Tenant, context.tenant_id)
-            inbound = await session.get(PhoneNumber, call.phone_number_id)
-            if tenant is None or inbound is None:
-                raise AuthorizationError()
-            number = tenant.human_transfer_number
-            return number if number and number != inbound.number else None
 
     async def record_safety_event(self, context: CallContext, action: AuditAction) -> None:
         if action not in {

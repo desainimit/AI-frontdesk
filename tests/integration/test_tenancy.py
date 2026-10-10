@@ -16,7 +16,7 @@ from sqlalchemy.pool import NullPool
 from app.audit.events import AuditAction
 from app.audit.models import AuditEvent
 from app.audit.service import AuditService
-from app.auth.context import ActorType, RequestContext, Role
+from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission
 from app.core.database.rls import UnsafeDatabaseRoleError, set_tenant_scope
 from app.core.database.session import Database
@@ -56,7 +56,6 @@ class TenancyFixture:
             tenant.tenant_id,
             tenant.user_id,
             ActorType.USER,
-            Role.ADMIN,
             role_id=uuid5(tenant.tenant_id, "role:owner"),
             authorization_revision=1,
             capabilities=frozenset(item.value for item in Permission),
@@ -294,19 +293,19 @@ async def test_api_tenant_resolution_permissions_and_audit(tenancy: TenancyFixtu
         assert (await client.get("/api/v1/users/me")).json()["id"] == str(tenancy.a.user_id)
         response = await client.get("/api/v1/users", headers={"X-Request-ID": request_id})
         assert response.status_code == 200
-        assert [user["id"] for user in response.json()] == [str(tenancy.a.user_id)]
+        assert [user["id"] for user in response.json()["items"]] == [str(tenancy.a.user_id)]
         assert "token_digest" not in response.text
         assert (await client.get("/api/v1/users?limit=101")).status_code == 422
         # The workspace comes from the session; a workspace named by the browser is ignored.
         named = await client.get("/api/v1/users", headers={"X-Tenant-ID": str(tenancy.b.tenant_id)})
-        assert [user["id"] for user in named.json()] == [str(tenancy.a.user_id)]
-        audits = (await client.get("/api/v1/audit-events")).json()
+        assert [user["id"] for user in named.json()["items"]] == [str(tenancy.a.user_id)]
+        audits = (await client.get("/api/v1/audit-events")).json()["items"]
         assert any(event["request_id"] == request_id for event in audits)
         async with tenancy.admin.begin() as session:
             await session.execute(
                 update(User)
                 .where(User.id == tenancy.a.user_id)
-                .values(role="member", role_id=uuid5(tenancy.a.tenant_id, "role:member"))
+                .values(role_id=uuid5(tenancy.a.tenant_id, "role:member"))
             )
         assert (await client.get("/api/v1/tenants/current")).status_code == 200
         assert (await client.get("/api/v1/users")).status_code == 403

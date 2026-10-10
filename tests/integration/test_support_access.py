@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -92,7 +93,7 @@ async def test_administrator_reads_and_adds_knowledge_in_the_opened_workspace(
         await open_workspace(client, tenancy.a.tenant_id, "Reviewing the knowledge documents")
         listing = await client.get("knowledge/documents")
         assert listing.status_code == 200
-        assert [row["id"] for row in listing.json()] == [str(first.id)]
+        assert [row["id"] for row in listing.json()["items"]] == [str(first.id)]
         versions = await client.get(f"knowledge/documents/{first.id}/versions")
         assert versions.json()[0]["status"] == "ready"
         # The other workspace's document does not exist from here.
@@ -138,7 +139,7 @@ async def test_visit_is_scoped_to_one_workspace_attributed_and_ends(
 
         patients = await client.get("patients")
         assert patients.status_code == 200
-        assert {row["id"] for row in patients.json()} == {str(a_patient_id)}
+        assert {row["id"] for row in patients.json()["items"]} == {str(a_patient_id)}
         assert patients.headers["cache-control"] == "no-store"
         for route in ("calls", "follow-ups", "appointments", "locations", "audit-events", "users"):
             response = await client.get(route)
@@ -146,7 +147,7 @@ async def test_visit_is_scoped_to_one_workspace_attributed_and_ends(
         assert (await client.get(f"patients/{b_patient_id}")).status_code == 404
         # Naming another workspace in a header changes nothing.
         named = await client.get("patients", headers={"X-Tenant-ID": str(tenancy.b.tenant_id)})
-        assert {row["id"] for row in named.json()} == {str(a_patient_id)}
+        assert {row["id"] for row in named.json()["items"]} == {str(a_patient_id)}
         # A route with no decision for visiting administrators is refused and recorded.
         assert (await client.get("users/me")).status_code == 403
         created = await client.post(
@@ -222,7 +223,8 @@ async def test_visit_is_scoped_to_one_workspace_attributed_and_ends(
         await open_workspace(client, tenancy.a.tenant_id, "Back in A")
         second_visit = await open_workspace(client, tenancy.b.tenant_id, "Now helping B")
         assert second_visit["id"] != visit["id"]
-        assert {row["id"] for row in (await client.get("patients")).json()} == {str(b_patient_id)}
+        visible = (await client.get("patients")).json()["items"]
+        assert {row["id"] for row in visible} == {str(b_patient_id)}
         # A visit ends by itself after its time is up.
         expires = datetime.fromisoformat(second_visit["expires_at"])
         assert timedelta(0) < expires - datetime.now(UTC) <= timedelta(minutes=30)
@@ -276,13 +278,12 @@ async def test_administrator_changes_are_attributed_and_safe_to_retry(
     ):
         visit = await open_workspace(client, tenancy.a.tenant_id, "Fixing an appointment")
         visit_id = UUID(visit["id"])
-        updated = await client.put(
-            "tenants/current/languages",
-            json={"default_language": "en", "enabled_languages": ["en"], "auto_detect": False},
-        )
-        assert updated.status_code == 200, updated.text
-        renamed = await client.patch("tenants/current", json={"name": "Renamed Clinic"})
-        assert renamed.status_code == 200 and renamed.json()["name"] == "Renamed Clinic"
+        clinic = (await client.get("settings")).json()["settings"]["clinic"]
+        renamed = await client.put("settings/clinic", json={**clinic, "name": "Renamed Clinic"})
+        assert renamed.status_code == 200, renamed.text
+        assert (await client.get("tenants/current")).json()["name"] == "Renamed Clinic"
+        history = (await client.get("settings/history")).json()["items"]
+        assert history[0]["changed_by"] == "AI Frontdesk support"
         location = await client.post(
             "locations", json={"name": "Support Clinic", "timezone": "Asia/Kolkata"}
         )
@@ -295,16 +296,16 @@ async def test_administrator_changes_are_attributed_and_safe_to_retry(
             "patients", json={"display_name": "Support Patient", "phone": "+916666666666"}
         )
         assert patient.status_code == 201, patient.text
-        start = (datetime.now(UTC) + timedelta(days=3)).replace(microsecond=0)
-        available = await client.post(
-            f"providers/{provider.json()['id']}/availability",
-            json={
-                "starts_at": start.isoformat(),
-                "ends_at": (start + timedelta(hours=2)).isoformat(),
-                "slot_minutes": 30,
-            },
+        # 09:00 UTC is 14:30 in Kolkata; the provider works two hours from then that day.
+        start = (datetime.now(UTC) + timedelta(days=3)).replace(
+            hour=9, minute=0, second=0, microsecond=0
         )
-        assert available.status_code == 201, available.text
+        weekday = start.astimezone(ZoneInfo("Asia/Kolkata")).weekday()
+        schedule = await client.put(
+            f"providers/{provider.json()['id']}/schedule",
+            json={"windows": [{"weekday": weekday, "starts": "14:30", "ends": "16:30"}]},
+        )
+        assert schedule.status_code == 200, schedule.text
         booking = {
             "provider_id": provider.json()["id"],
             "patient_id": patient.json()["id"],
@@ -348,7 +349,7 @@ async def test_administrator_changes_are_attributed_and_safe_to_retry(
                     select(AuditEvent).where(
                         AuditEvent.support_session_id == visit_id,
                         AuditEvent.action.in_(
-                            ["tenant_languages_updated", "patient_created", "appointment_created"]
+                            ["settings_clinic_updated", "patient_created", "appointment_created"]
                         ),
                     )
                 )

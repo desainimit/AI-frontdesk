@@ -25,7 +25,6 @@ from app.safety.engine import SafetyEngine
 from app.safety.normalization import normalize_transcript
 from app.safety.rules import deterministic_rule
 from app.safety.transfer import TransferError, transfer_call, transfer_twiml
-from app.tenants.schemas import TransferDestination
 
 
 class CountingProvider:
@@ -254,8 +253,6 @@ async def test_twilio_transfer_updates_only_bound_call(settings: Settings) -> No
     assert captured[0].headers["authorization"].startswith("Basic ")
     with pytest.raises(ValueError):
         transfer_twiml("https://malicious.example")
-    with pytest.raises(ValueError):
-        TransferDestination(number="12345")
 
 
 async def test_twilio_transfer_failure_is_explicit(settings: Settings) -> None:

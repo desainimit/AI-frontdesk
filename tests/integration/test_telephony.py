@@ -78,9 +78,9 @@ async def test_signed_http_lifecycle_and_isolation(tenancy: TenancyFixture) -> N
         auth_a = {"Authorization": "Bearer " + tenancy.a.token.get_secret_value()}
         auth_b = {"Authorization": "Bearer " + tenancy.b.token.get_secret_value()}
         calls = await client.get("/api/v1/calls", headers=auth_a)
-        assert calls.status_code == 200 and len(calls.json()) == 1
-        identity = calls.json()[0]["id"]
-        assert (await client.get("/api/v1/calls", headers=auth_b)).json() == []
+        assert calls.status_code == 200 and len(calls.json()["items"]) == 1
+        identity = calls.json()["items"][0]["id"]
+        assert (await client.get("/api/v1/calls", headers=auth_b)).json()["items"] == []
         assert (await client.get("/api/v1/calls/" + identity, headers=auth_b)).status_code == 404
         status_path = "/webhooks/v1/twilio/status"
         terminal = {**params, "CallStatus": "completed"}

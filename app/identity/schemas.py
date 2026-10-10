@@ -98,16 +98,15 @@ class OpenWorkspace(_Command):
 class InviteMember(_Command):
     email: str = Field(min_length=3, max_length=254, pattern=EMAIL_PATTERN)
     display_name: str = Field(min_length=1, max_length=200)
-    role: str = Field(default="member", pattern="^(admin|member)$")
-    role_id: UUID | None = None
+    role_id: UUID
 
     _email = field_validator("email", mode="before")(_normalized_email)
 
 
 class TeamMemberUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    role: str = Field(pattern="^(admin|member)$")
     is_active: bool
+    # Leave out to keep the member's current role.
     role_id: UUID | None = None
 
 

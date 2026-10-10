@@ -7,7 +7,7 @@ administrator. Nothing here is reachable from the HTTP application.
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from pydantic import SecretStr
 from sqlalchemy import select
@@ -16,17 +16,26 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.audit.events import AuditAction
 from app.audit.repository import AuditRepository
 from app.audit.service import AuditService
-from app.auth.context import ActorType, RequestContext, Role
-from app.configuration.service import seed_configuration
+from app.auth.context import ActorType, RequestContext
+from app.auth.policies import Permission
 from app.core.database.rls import set_tenant_scope
 from app.identity.models import Account
 from app.identity.passwords import hash_password
 from app.identity.sessions import issue_session
+from app.rbac.models import RolePermission, TenantRole
 from app.rbac.service import seed_roles
+from app.settings.store import seed_settings
 from app.tenants.models import Tenant
 from app.users.models import User
 
 PASSWORD = "correct horse battery staple"
+# A narrow role for tests that need someone who may look but not touch.
+MEMBER_PERMISSIONS = (Permission.TENANT_READ, Permission.DIRECTORY_READ, Permission.KNOWLEDGE_READ)
+
+
+def member_role(tenant_id: UUID) -> UUID:
+    """The id of the test-only "Member" role in a workspace made by create_workspace."""
+    return uuid5(tenant_id, "role:member")
 
 
 @cache
@@ -78,13 +87,24 @@ async def create_workspace(
         tenant_id = uuid4()
         context = RequestContext(uuid4(), tenant_id, None, ActorType.SYSTEM)
         await set_tenant_scope(session, tenant_id)
-        tenant = Tenant(
-            id=tenant_id, name=name, service_state="live", requires_saas_activation=False
-        )
+        tenant = Tenant(id=tenant_id, name=name, service_state="live")
         session.add(tenant)
         await session.flush()
         roles = await seed_roles(session, tenant.id)
-        await seed_configuration(session, tenant)
+        session.add(TenantRole(id=member_role(tenant.id), tenant_id=tenant.id, name="Member"))
+        await session.flush()
+        session.add_all(
+            [
+                RolePermission(
+                    tenant_id=tenant.id,
+                    role_id=member_role(tenant.id),
+                    key=item.value,
+                    allowed=item in MEMBER_PERMISSIONS,
+                )
+                for item in Permission
+            ]
+        )
+        await seed_settings(session, tenant)
         account = await account_for(session, email, display_name)
         user = User(
             id=uuid4(),
@@ -92,7 +112,6 @@ async def create_workspace(
             account_id=account.id,
             email=account.email,
             display_name=display_name,
-            role=Role.ADMIN,
             role_id=roles["owner"],
             accepted_at=datetime.now(UTC),
         )
@@ -112,7 +131,6 @@ async def add_member(
     tenant_id: UUID,
     email: str,
     display_name: str,
-    role: str = "member",
     role_id: UUID | None = None,
     user_id: UUID | None = None,
 ) -> User:
@@ -124,8 +142,7 @@ async def add_member(
         account_id=account.id,
         email=account.email,
         display_name=display_name,
-        role=role,
-        role_id=role_id,
+        role_id=role_id or member_role(tenant_id),
         accepted_at=datetime.now(UTC),
     )
     session.add(user)

@@ -14,7 +14,7 @@ from sqlalchemy import select, update
 from twilio.request_validator import RequestValidator  # pyright: ignore[reportMissingTypeStubs]
 
 from app.audit.models import AuditEvent
-from app.auth.context import ActorType, RequestContext, Role
+from app.auth.context import ActorType, RequestContext
 from app.calls.models import Call, PhoneNumber
 from app.calls.service import CallBinding, CallService
 from app.conversation.store import MemoryConversationStateStore
@@ -389,7 +389,7 @@ async def test_only_tenant_admins_and_explicit_platform_actions_manage_connectio
             display_name="Member",
             user_id=member_id,
         )
-    member = RequestContext(uuid4(), tenant_id, member_id, ActorType.USER, Role.MEMBER)
+    member = RequestContext(uuid4(), tenant_id, member_id, ActorType.USER)
     identity = IdentityHarness(tenancy)
     platform_admin = await identity.admin()
     platform = await identity.platform(platform_admin)

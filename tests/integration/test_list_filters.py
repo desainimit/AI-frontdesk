@@ -24,7 +24,7 @@ from tests.integration.test_domain import domain as domain
 from tests.integration.test_tenancy import TenancyFixture
 from tests.integration.test_tenancy import pytestmark as pytestmark
 from tests.integration.test_tenancy import tenancy as tenancy
-from tests.integration.workspaces import add_member
+from tests.integration.workspaces import add_member, member_role
 
 
 async def test_search_and_filters_match_in_the_database(
@@ -117,8 +117,8 @@ async def test_search_and_filters_match_in_the_database(
     users = UserService(uow)
     assert [row.id for row in await users.list(context, 50, 0, q="filter mem")] == [member_id]
     assert [row.id for row in await users.list(context, 50, 0, q="FILTERS-MEMBER@")] == [member_id]
-    assert member_id not in {row.id for row in await users.list(context, 50, 0, role="admin")}
-    assert {row.id for row in await users.list(context, 50, 0, role="member")} == {member_id}
+    by_role = await users.list(context, 50, 0, role_id=member_role(context.tenant_id))
+    assert {row.id for row in by_role} == {member_id}
     assert await users.list(context, 50, 0, is_active=False) == []
 
     audit = AuditQueryService(uow)
@@ -155,16 +155,17 @@ async def test_filter_parameters_are_validated_and_scoped_over_http(
         b = {"Authorization": f"Bearer {tenancy.b.token.get_secret_value()}"}
         found = await client.get("patients", params={"q": "http filter"}, headers=a)
         assert found.status_code == 200
-        assert [row["display_name"] for row in found.json()] == ["Http Filter Person"]
+        assert [row["display_name"] for row in found.json()["items"]] == ["Http Filter Person"]
         # The same search from another tenant finds nothing.
-        assert (await client.get("patients", params={"q": "http filter"}, headers=b)).json() == []
+        other = await client.get("patients", params={"q": "http filter"}, headers=b)
+        assert other.json() == {"items": [], "next_cursor": None}
         for path, params in (
             ("appointments", {"status": "deleted"}),
             ("appointments", {"provider_id": "not-a-uuid"}),
             ("appointments", {"starts_from": "yesterday"}),
             ("calls", {"status": "ringing"}),
             ("audit-events", {"action": "DROP TABLE"}),
-            ("users", {"role": "owner"}),
+            ("users", {"role_id": "owner"}),
             ("patients", {"q": "x" * 101}),
             ("knowledge/documents", {"status": "published"}),
             ("follow-ups", {"status": "open"}),
@@ -188,5 +189,5 @@ async def test_filter_parameters_are_validated_and_scoped_over_http(
             assert accepted.status_code == 200, (path, params, accepted.text)
             assert all(
                 row.get("tenant_id", str(tenancy.a.tenant_id)) == str(tenancy.a.tenant_id)
-                for row in accepted.json()
+                for row in accepted.json()["items"]
             )

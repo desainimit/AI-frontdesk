@@ -21,11 +21,11 @@ from fastapi import (
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.agents.appointment_tools import appointment_tools
-from app.agents.context import ALL_TOOLS, AgentContext
+from app.agents.context import AgentContext
 from app.agents.providers.base import LLMProvider
 from app.agents.runtime import AgentRuntime
 from app.api.platform import PlatformIdentity
-from app.api.tenancy import Context, DatabaseDependency, Limit, Offset, Since, Until
+from app.api.tenancy import Context, Cursor, DatabaseDependency, Limit, Since, Until
 from app.audit.events import AuditAction
 from app.calls.access import CallPatientAccess, IssuePatientAccess, PatientAccessCode
 from app.calls.service import (
@@ -37,9 +37,10 @@ from app.calls.service import (
     PhoneView,
 )
 from app.conversation import ConversationStateManager, build_conversation_store
-from app.conversation.locales import LOCALES, LanguagePolicy, base_language
+from app.conversation.locales import LOCALES, base_language
 from app.conversation.state import CallStatus, ConversationState, SafetyDecision
 from app.conversation.store import ConversationStateStore
+from app.core.database.pages import Page, decode_cursor, page
 from app.core.database.session import Database
 from app.core.errors import ApplicationError, NotFoundError
 from app.core.security.rate_limit import enforce_rate_limit
@@ -85,6 +86,9 @@ IDLE_SECONDS = 30
 MAX_CALL_SECONDS = 600
 CONVERSATION_TTL_SECONDS = 3600
 TOOL_TIMEOUT_SECONDS = 3
+# Model requests and tool calls allowed while answering one thing the caller said.
+AGENT_MAX_STEPS = 3
+AGENT_MAX_TOOL_CALLS = 4
 
 
 @router.post("/api/v1/platform/phone-numbers", status_code=201)
@@ -96,9 +100,14 @@ async def assign_phone(
 
 @router.get("/api/v1/platform/phone-numbers")
 async def list_phones(
-    context: PlatformIdentity, database: DatabaseDependency, limit: Limit = 50, offset: Offset = 0
-) -> list[PhoneView]:
-    return await CallService(database.session_factory).phones(context, limit, offset)
+    context: PlatformIdentity,
+    database: DatabaseDependency,
+    limit: Limit = 50,
+    cursor: Cursor = None,
+) -> Page[PhoneView]:
+    offset = decode_cursor(cursor)
+    rows = await CallService(database.session_factory).phones(context, limit + 1, offset)
+    return page(rows, limit, offset)
 
 
 @router.get("/api/v1/calls")
@@ -106,19 +115,21 @@ async def list_calls(
     context: Context,
     database: DatabaseDependency,
     limit: Limit = 50,
-    offset: Offset = 0,
+    cursor: Cursor = None,
     status: Literal["received", "active", "completed", "disconnected", "failed"] | None = None,
     created_from: Since = None,
     created_to: Until = None,
-) -> list[CallView]:
-    return await CallService(database.session_factory).list(
+) -> Page[CallView]:
+    offset = decode_cursor(cursor)
+    rows = await CallService(database.session_factory).list(
         context,
-        limit,
+        limit + 1,
         offset,
         status=status,
         created_from=created_from,
         created_to=created_to,
     )
+    return page(rows, limit, offset)
 
 
 @router.get("/api/v1/calls/{call_id}")
@@ -473,9 +484,8 @@ async def run_media(
             providers.multilingual,
         )
         tts = providers.tts
-        operational = await service.operational_configuration(context)
-        configuration_version = operational[0] if operational else None
-        configuration = operational[1] if operational else None
+        configuration = await service.settings(context)
+        receptionist = configuration.receptionist
         conv_store = socket.app.state.conversation_store or build_conversation_store(
             settings, redis_dep
         )
@@ -485,15 +495,7 @@ async def run_media(
             tenant_id=tenant_id,
             telephony_call_id=sid,
             caller_phone=getattr(context, "caller_phone", None),
-            language_policy=(
-                configuration.languages
-                if configuration is not None
-                else await service.language_policy(context)
-                if multilingual
-                else LanguagePolicy(
-                    default_language="en", enabled_languages=["en"], auto_detect=False
-                )
-            ),
+            language_policy=receptionist.languages,
         )
 
         def speech_locale() -> str:
@@ -503,11 +505,7 @@ async def run_media(
         conversation_state = initial_conv_state
         initial_conv_state.call_state.stream_sid = stream_sid
         await conv_store.save(initial_conv_state, ttl_seconds=CONVERSATION_TTL_SECONDS)
-        transfer_number = (
-            configuration.voice.transfer_number
-            if configuration is not None
-            else await service.transfer_number(context)
-        )
+        transfer_number = configuration.calls.transfer_number
         # Adds one model request per caller turn; the deterministic rules always run.
         classifier = LLMSafetyClassifier(llm) if settings.safety_semantic_enabled else None
         safety_engine = SafetyEngine(
@@ -523,17 +521,16 @@ async def run_media(
             registry,
             appointment_flow=appointment_flow,
             safety_engine=safety_engine,
-            max_steps=configuration.agent.max_steps if configuration else 3,
-            max_tool_calls=configuration.agent.max_tool_calls if configuration else 4,
+            max_steps=AGENT_MAX_STEPS,
+            max_tool_calls=AGENT_MAX_TOOL_CALLS,
             metrics=voice_metrics,
         )
         agent_context = AgentContext(
             context,
-            frozenset(configuration.agent.allowed_tools) if configuration else ALL_TOOLS,
-            business_name=configuration.business.name if configuration else "",
-            instructions=configuration.agent.instructions if configuration else "",
-            tone=configuration.agent.tone if configuration else "professional",
-            configuration_version=configuration_version,
+            receptionist.allowed_tools,
+            business_name=configuration.clinic.name,
+            instructions=receptionist.instructions,
+            tone=receptionist.tone,
             configuration=configuration,
         )
 
@@ -613,12 +610,8 @@ async def run_media(
         previous_sequence = int(message["sequenceNumber"])
         try:
             await pipeline.start()
-            if configuration is not None:
-                await pipeline.speak(configuration.agent.greeting)
-            call_seconds = (
-                configuration.voice.max_duration_minutes * 60 if configuration else MAX_CALL_SECONDS
-            )
-            async with asyncio.timeout(call_seconds):
+            await pipeline.speak(receptionist.greeting)
+            async with asyncio.timeout(configuration.calls.max_duration_minutes * 60):
                 while True:
                     async with asyncio.timeout(IDLE_SECONDS):
                         message = parse_message(await socket.receive_text())

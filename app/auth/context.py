@@ -11,18 +11,12 @@ class ActorType(StrEnum):
     PLATFORM_SUPPORT = "platform_support"
 
 
-class Role(StrEnum):
-    ADMIN = "admin"
-    MEMBER = "member"
-
-
 @dataclass(frozen=True)
 class RequestContext:
     request_id: UUID
     tenant_id: UUID
     actor_id: UUID | None
     actor_type: ActorType
-    role: Role | None = None
     call_id: UUID | None = None
     patient_id: UUID | None = None
     provider_call_id: str | None = None
@@ -39,17 +33,13 @@ class RequestContext:
 
     def __post_init__(self) -> None:
         if self.actor_type == ActorType.CALLER and (
-            self.call_id is None
-            or self.provider_call_id is None
-            or self.actor_id is not None
-            or self.role is not None
+            self.call_id is None or self.provider_call_id is None or self.actor_id is not None
         ):
             raise ValueError("Caller context requires a server call binding")
-        if self.actor_type == ActorType.USER and (self.actor_id is None or self.role is None):
-            raise ValueError("User context requires an actor and role")
+        if self.actor_type == ActorType.USER and self.actor_id is None:
+            raise ValueError("User context requires an actor")
         if self.actor_type == ActorType.PLATFORM_SUPPORT and (
             self.actor_id is not None
-            or self.role is not None
             or self.platform_user_id is None
             or self.session_id is None
             or self.support_session_id is None

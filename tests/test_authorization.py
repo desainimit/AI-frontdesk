@@ -13,7 +13,7 @@ from app.api.postcall import router as postcall_router
 from app.api.telephony import router as telephony_router
 from app.api.tenancy import get_context
 from app.api.tenancy import router as tenancy_router
-from app.auth.context import ActorType, RequestContext, Role
+from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission, require_tenant
 from app.core.errors import AuthorizationError
 from app.core.settings import Settings
@@ -23,7 +23,7 @@ from tests.fakes import FakeDependency
 
 
 def test_context_is_immutable_and_requires_user_identity() -> None:
-    context = RequestContext(uuid4(), uuid4(), uuid4(), ActorType.USER, Role.ADMIN)
+    context = RequestContext(uuid4(), uuid4(), uuid4(), ActorType.USER)
     with pytest.raises(FrozenInstanceError):
         context.tenant_id = uuid4()  # pyright: ignore[reportAttributeAccessIssue]
     with pytest.raises(ValueError, match="requires"):
@@ -36,7 +36,6 @@ def test_permissions_and_tenant_claims_fail_closed() -> None:
         uuid4(),
         uuid4(),
         ActorType.USER,
-        Role.MEMBER,
         role_id=uuid4(),
         capabilities=frozenset({Permission.TENANT_READ.value}),
     )
@@ -51,7 +50,7 @@ def test_permissions_and_tenant_claims_fail_closed() -> None:
         )
     with pytest.raises(AuthorizationError):
         require_permission(
-            RequestContext(uuid4(), uuid4(), uuid4(), ActorType.USER, Role.ADMIN),
+            RequestContext(uuid4(), uuid4(), uuid4(), ActorType.USER),
             Permission.TENANT_READ,
         )
 
@@ -73,7 +72,7 @@ def support_context(*capabilities: Permission) -> RequestContext:
 def test_visiting_administrator_keeps_their_own_identity_and_needs_each_permission() -> None:
     context = support_context(Permission.TENANT_READ, Permission.PATIENT_READ)
     # Never a workspace member: no member id and no role.
-    assert context.actor_id is None and context.role is None
+    assert context.actor_id is None and context.role_id is None
     assert context.platform_user_id is not None and context.support_session_id is not None
     require_permission(context, Permission.PATIENT_READ)
     with pytest.raises(AuthorizationError):

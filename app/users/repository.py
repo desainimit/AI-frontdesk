@@ -34,7 +34,6 @@ class UserRepository:
         offset: int,
         *,
         q: str | None = None,
-        role: str | None = None,
         role_id: UUID | None = None,
         is_active: bool | None = None,
     ) -> Sequence[User]:
@@ -42,8 +41,6 @@ class UserRepository:
         search = contains(q, User.display_name, User.email)
         if search is not None:
             query = query.where(search)
-        if role is not None:
-            query = query.where(User.role == role)
         if role_id is not None:
             query = query.where(User.role_id == role_id)
         if is_active is not None:

@@ -1,25 +1,12 @@
 """Explicit model registration for Alembic metadata; no runtime database access."""
 
 from app.appointments.models import Appointment as Appointment
-from app.appointments.models import Availability as Availability
 from app.audit.models import AuditEvent as AuditEvent
-from app.business.models import BusinessResource as BusinessResource
-from app.business.models import BusinessService as BusinessService
-from app.business.models import BusinessStaff as BusinessStaff
-from app.business.models import DirectoryMutation as DirectoryMutation
-from app.business.models import ServiceResource as ServiceResource
-from app.business.models import ServiceStaff as ServiceStaff
-from app.business.models import StaffHoliday as StaffHoliday
-from app.business.models import StaffWindow as StaffWindow
 from app.calls.models import Call as Call
 from app.calls.models import PhoneNumber as PhoneNumber
-from app.configuration.hours import BusinessHoliday as BusinessHoliday
-from app.configuration.hours import BusinessOpeningWindow as BusinessOpeningWindow
-from app.configuration.hours import HoursPolicy as HoursPolicy
-from app.configuration.models import ConfigurationDraft as ConfigurationDraft
-from app.configuration.models import ConfigurationEvent as ConfigurationEvent
-from app.configuration.models import ConfigurationResource as ConfigurationResource
-from app.configuration.models import PublishedConfiguration as PublishedConfiguration
+from app.clinic.models import ProviderSchedule as ProviderSchedule
+from app.clinic.models import ProviderTimeOff as ProviderTimeOff
+from app.clinic.models import Service as Service
 from app.events.models import IdempotencyRecord as IdempotencyRecord
 from app.events.models import OutboxEvent as OutboxEvent
 from app.identity.models import Account as Account
@@ -43,6 +30,8 @@ from app.postcall.models import PostCallReport as PostCallReport
 from app.providers.models import Provider as Provider
 from app.rbac.models import RolePermission as RolePermission
 from app.rbac.models import TenantRole as TenantRole
+from app.settings.models import SettingsChange as SettingsChange
+from app.settings.models import TenantSettings as TenantSettings
 from app.tenants.models import Tenant as Tenant
 from app.users.models import User as User
 from app.workflows.models import WorkflowIntent as WorkflowIntent

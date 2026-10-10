@@ -4,12 +4,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.configuration.models import ConfigurationDraft
+from app.core.database.rls import set_tenant_scope
 from app.core.database.search import contains
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import NotFoundError
 from app.identity.sessions import platform_scope
 from app.platform.models import PlatformAuditEvent
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
+from app.settings.models import TenantSettings
 from app.tenants.models import Tenant
 from app.tenants.schemas import TenantView
 
@@ -85,14 +86,17 @@ class PlatformTenantService:
             if tenant is None:
                 raise NotFoundError()
             if command.name is not None and tenant.name != command.name:
-                published = await session.scalar(
-                    select(ConfigurationDraft.published_version).where(
-                        ConfigurationDraft.tenant_id == tenant_id
-                    )
-                )
-                if published is not None:
-                    raise ConflictError()
                 tenant.name = command.name
+                # The clinic name in settings is the same name; keep the two together.
+                await set_tenant_scope(session, tenant_id)
+                settings = await session.scalar(
+                    select(TenantSettings)
+                    .where(TenantSettings.tenant_id == tenant_id)
+                    .with_for_update()
+                )
+                if settings is not None:
+                    clinic = {**settings.document["clinic"], "name": command.name}
+                    settings.document = {**settings.document, "clinic": clinic}
                 session.add(
                     PlatformAuditEvent(
                         user_id=context.user_id,
