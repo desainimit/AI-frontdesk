@@ -18,13 +18,12 @@ The API and the worker (`python -m app.worker`) both need the keyring.
 
 ## Creating a workspace
 
-1. `POST /api/v1/platform/tenant-onboardings` with an `Idempotency-Key` creates the workspace, its first location and an invited (not yet active) administrator in one transaction. Retrying with the same key returns the same workspace; reusing the key with a different body returns 409. The new workspace starts with `service_state: "setup"`.
-2. `GET` / `PATCH /api/v1/platform/tenants/{tenant_id}/onboarding` resume and edit the draft under a `revision` guard. Editing is refused once the administrator has accepted. Changing the administrator's email cancels any invitation already sent.
-3. `POST /api/v1/platform/tenants/{tenant_id}/admin-invitations` queues a single-use, 24-hour invitation. A new idempotency key resends and invalidates the previous link. The response and the onboarding view report delivery state (`not_sent`, `queued`, `sent`, `delivery_failed`, `expired`, `accepted`), never the token.
+A platform administrator creates a clinic in one request; see [creating clinics, patient
+messages and calendar sync](clinics-notifications-calendars.md). How the invited owner
+accepts and signs in is described in [sign-in and accounts](sign-in.md).
 
-How the invited person accepts and signs in is described in [sign-in and accounts](sign-in.md).
-
-A workspace goes live once an administrator has accepted and every required provider is available: its own connection, or the platform account.
+A workspace goes live once every required provider is available: its own connection, or
+the platform account.
 
 ## Provider connections
 

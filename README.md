@@ -12,7 +12,7 @@ it is updated as each phase lands.
 | --- | --- | --- |
 | Setup job | `python -m app.setup` | Applies migrations, provisions the restricted database logins and creates the first super admin. Safe to run again. |
 | API | `uvicorn app.main:create_app --factory` | HTTP API, Twilio webhooks and the call media stream. |
-| Worker | `python -m app.worker` | Every background queue: notifications, post-call reports, email and knowledge ingestion. |
+| Worker | `python -m app.worker` | Every background queue: messages to patients, calendar sync, account email, post-call reports, knowledge ingestion and transcript retention. |
 
 The AI model and knowledge search use Gemini models (directly from Google, or through
 OpenRouter). Speech uses Deepgram and ElevenLabs (Azure is an alternative for both).
@@ -58,7 +58,9 @@ running on the host), port `1025`, "No encryption", and read the messages at
 http://localhost:8025.
 
 See [clinic settings and default data](docs/settings.md) for what a new clinic starts
-with and how settings are saved.
+with and how settings are saved, and [creating clinics, patient messages and calendar
+sync](docs/clinics-notifications-calendars.md) for the rest of what happens around a
+booking.
 
 ## Run with Docker Compose
 

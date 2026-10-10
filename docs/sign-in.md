@@ -79,8 +79,9 @@ their email address (created without a password if the address is new).
 - An existing account accepts without a password and keeps its own; an invitation can
   never replace a password.
 
-The first administrator of a new workspace is invited by a platform administrator with
-`POST /platform/tenants/{id}/admin-invitations`; team members are invited from the
+The owner of a new workspace is invited when a platform administrator creates it, and
+again on request with `POST /platform/workspaces/{id}/invitation` (see [creating
+clinics](clinics-notifications-calendars.md)); team members are invited from the
 workspace.
 
 ## Platform administrators

@@ -12,7 +12,7 @@ saved on its own and takes effect at once; there is no draft and nothing to publ
 | `receptionist` | Greeting, tone, instructions, what to say when it does not know, whether it may book and answer from knowledge, languages. |
 | `calls` | Whether calls are answered, the longest call, and the number callers are transferred to. |
 | `scheduling` | Booking rules for patients: notice, how far ahead, change and cancellation notice, usual appointment length. |
-| `notifications` | Recipients and the wording of confirmations and reminders (used from Phase 4). |
+| `notifications` | Whether bookings are confirmed and reminded, when the reminder goes out, and the wording of confirmation, reminder and cancellation. |
 | `privacy` | How long call transcripts are kept (the worker deletes older ones every hour) and how callers are verified before patient details are discussed. Calls are not recorded. |
 | `tickets` | Ticket categories (used from Phase 5). |
 
