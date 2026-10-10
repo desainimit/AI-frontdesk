@@ -64,9 +64,14 @@ class AvailabilityService:
             if ends_at <= starts_at:
                 return []
             occupied = await tx.appointments.between(provider_id, starts_at, ends_at)
+            # Booked here, or taken in the provider's own calendar.
+            busy = sorted(
+                [(row.starts_at, row.ends_at) for row in occupied]
+                + await tx.schedule.calendar_busy(provider_id, starts_at, ends_at)
+            )
             return available_slots(
                 calendar,
-                [(row.starts_at, row.ends_at) for row in occupied],
+                busy,
                 starts_at=starts_at,
                 ends_at=ends_at,
                 minutes=minutes,

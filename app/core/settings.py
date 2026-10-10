@@ -48,6 +48,10 @@ PLATFORM_MANAGED = frozenset(
         "llm_model",
         "product_name",
         "support_email",
+        "google_calendar_client_id",
+        "google_calendar_client_secret",
+        "microsoft_calendar_client_id",
+        "microsoft_calendar_client_secret",
     }
 )
 
@@ -156,6 +160,11 @@ class Settings(BaseSettings):
     safety_semantic_enabled: bool = True
     product_name: str = "AI Frontdesk"
     support_email: str = ""
+    # The apps providers connect their own calendars through.
+    google_calendar_client_id: str = ""
+    google_calendar_client_secret: SecretStr = SecretStr("")
+    microsoft_calendar_client_id: str = ""
+    microsoft_calendar_client_secret: SecretStr = SecretStr("")
 
     @model_validator(mode="after")
     def validate_knowledge(self) -> Self:

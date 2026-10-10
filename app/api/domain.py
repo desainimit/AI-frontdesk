@@ -1,7 +1,7 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Query, Response
+from fastapi import APIRouter, Header, Query, Request, Response
 
 from app.api.tenancy import (
     Context,
@@ -21,6 +21,7 @@ from app.appointments.commands import (
 )
 from app.appointments.schemas import AppointmentView, Slot
 from app.appointments.service import AppointmentService
+from app.calendar_sync.service import CalendarService
 from app.clinic.schemas import (
     ProviderScheduleView,
     ServiceCommand,
@@ -49,6 +50,18 @@ IdempotencyKey = Annotated[
     str | None,
     Header(alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"),
 ]
+
+
+def _appointments(request: Request, database: DatabaseDependency) -> AppointmentService:
+    """Bookings that ask the provider's own calendar once more before saving."""
+    return AppointmentService(
+        UnitOfWork(database.session_factory),
+        CalendarService(
+            database.session_factory,
+            request.app.state.settings,
+            getattr(request.app.state, "provider_transport", None),
+        ),
+    )
 
 
 @router.post("/locations", status_code=201)
@@ -248,13 +261,12 @@ async def update_service(
 @router.post("/appointments", status_code=201)
 async def book_appointment(
     command: BookAppointment,
+    request: Request,
     context: Context,
     database: DatabaseDependency,
     idempotency_key: IdempotencyKey = None,
 ) -> AppointmentView:
-    return await AppointmentService(UnitOfWork(database.session_factory)).book(
-        context, command, idempotency_key
-    )
+    return await _appointments(request, database).book(context, command, idempotency_key)
 
 
 @router.get("/appointments")
@@ -311,10 +323,11 @@ async def cancel_appointment(
 async def reschedule_appointment(
     appointment_id: UUID,
     command: RescheduleAppointment,
+    request: Request,
     context: Context,
     database: DatabaseDependency,
     idempotency_key: IdempotencyKey = None,
 ) -> AppointmentView:
-    return await AppointmentService(UnitOfWork(database.session_factory)).reschedule(
+    return await _appointments(request, database).reschedule(
         context, appointment_id, command, idempotency_key
     )

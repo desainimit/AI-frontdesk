@@ -79,7 +79,15 @@ async def test_administrator_saves_verifies_and_removes_a_provider_account(
     ):
         app.state.integration_verifier = verifier
         listed = (await client.get("connections")).json()
-        assert [item["purpose"] for item in listed] == ["email", "telephony", "stt", "tts", "llm"]
+        assert [item["purpose"] for item in listed] == [
+            "email",
+            "telephony",
+            "stt",
+            "tts",
+            "llm",
+            "google_calendar",
+            "microsoft_calendar",
+        ]
         assert all(item["status"] == "not_configured" for item in listed)
         assert not platform.platform_twilio
 

@@ -19,15 +19,37 @@ from app.audit.events import AuditAction
 from app.audit.service import AuditService
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, has_permission, require_permission
+from app.calendar_sync.service import CalendarService
 from app.core.database.unit_of_work import Transaction, UnitOfWork
-from app.core.errors import AuthorizationError, NotFoundError
+from app.core.errors import ApplicationError, AuthorizationError, NotFoundError
 from app.events.outbox import EventType
 from app.notifications.appointments import queue_appointment_messages
 
 
 class AppointmentService:
-    def __init__(self, uow: UnitOfWork) -> None:
+    def __init__(self, uow: UnitOfWork, calendar: CalendarService | None = None) -> None:
         self._uow = uow
+        # When given, the provider's own calendar is asked once more just before booking.
+        self._calendar = calendar
+
+    async def _check_calendar_now(
+        self,
+        context: RequestContext,
+        provider_id: UUID,
+        service_id: UUID | None,
+        starts_at: datetime,
+    ) -> None:
+        """Refuse a time the provider's calendar has taken since the last sync."""
+        if self._calendar is None:
+            return
+        try:
+            async with self._uow.transaction(context) as tx:
+                end = await self._end(context, tx, provider_id, service_id, starts_at)
+        except ApplicationError:
+            # Not bookable for another reason; the booking itself says which.
+            return
+        if await self._calendar.busy_now(context.tenant_id, provider_id, starts_at, end):
+            raise SlotUnavailableError()
 
     async def book(
         self, context: RequestContext, command: BookAppointment, idempotency_key: str | None = None
@@ -35,6 +57,10 @@ class AppointmentService:
         require_permission(context, Permission.APPOINTMENT_WRITE)
         if context.actor_type == ActorType.CALLER and command.patient_id != context.patient_id:
             raise AuthorizationError()
+        if command.starts_at > datetime.now(UTC):
+            await self._check_calendar_now(
+                context, command.provider_id, command.service_id, command.starts_at
+            )
         try:
             async with self._uow.transaction(context) as tx:
                 replay = await tx.idempotency.replay(
@@ -68,7 +94,9 @@ class AppointmentService:
                     context, AuditAction.APPOINTMENT_CREATED, "appointment", entity.id
                 )
                 result = AppointmentView.model_validate(entity)
-                tx.outbox.appointment(EventType.APPOINTMENT_CREATED, result)
+                tx.outbox.appointment(
+                    EventType.APPOINTMENT_CREATED, await self._for_calendar(tx, entity)
+                )
                 await queue_appointment_messages(tx, entity, "booked")
                 return tx.idempotency.save(result)
         except IntegrityError as exc:
@@ -160,7 +188,9 @@ class AppointmentService:
                 context, AuditAction.APPOINTMENT_CANCELLED, "appointment", entity.id
             )
             result = AppointmentView.model_validate(entity)
-            tx.outbox.appointment(EventType.APPOINTMENT_CANCELLED, result)
+            tx.outbox.appointment(
+                EventType.APPOINTMENT_CANCELLED, await self._for_calendar(tx, entity)
+            )
             await queue_appointment_messages(tx, entity, "cancelled")
             return tx.idempotency.save(result)
 
@@ -172,6 +202,13 @@ class AppointmentService:
         idempotency_key: str | None = None,
     ) -> AppointmentView:
         require_permission(context, Permission.APPOINTMENT_WRITE)
+        if command.starts_at > datetime.now(UTC) and self._calendar is not None:
+            # The calendar is asked before the change is made, outside its transaction.
+            async with self._uow.transaction(context) as tx:
+                current = await self._get(tx, appointment_id)
+            await self._check_calendar_now(
+                context, current.provider_id, current.service_id, command.starts_at
+            )
         try:
             async with self._uow.transaction(context) as tx:
                 replay = await tx.idempotency.replay(
@@ -200,7 +237,9 @@ class AppointmentService:
                     context, AuditAction.APPOINTMENT_RESCHEDULED, "appointment", entity.id
                 )
                 result = AppointmentView.model_validate(entity)
-                tx.outbox.appointment(EventType.APPOINTMENT_RESCHEDULED, result)
+                tx.outbox.appointment(
+                    EventType.APPOINTMENT_RESCHEDULED, await self._for_calendar(tx, entity)
+                )
                 await queue_appointment_messages(tx, entity, "rescheduled")
                 return tx.idempotency.save(result)
         except IntegrityError as exc:
@@ -224,9 +263,30 @@ class AppointmentService:
         earliest, latest = booking_window(context, settings, datetime.now(UTC))
         if starts_at < earliest or (latest is not None and starts_at > latest):
             raise SlotUnavailableError()
-        return calendar.require_bookable(
+        ends_at = calendar.require_bookable(
             starts_at, await appointment_minutes(tx, settings, service_id)
         )
+        if await tx.schedule.calendar_busy(provider_id, starts_at, ends_at):
+            raise SlotUnavailableError()
+        return ends_at
+
+    @staticmethod
+    async def _for_calendar(tx: Transaction, entity: Appointment) -> AppointmentView:
+        """The appointment as the worker writes it to a calendar.
+
+        The patient's name is included only when the clinic chose to show it there.
+        """
+        view = AppointmentView.model_validate(entity)
+        names: dict[str, str | None] = {}
+        if entity.service_id is not None:
+            names["service_name"] = (await tx.schedule.service_names({entity.service_id})).get(
+                entity.service_id
+            )
+        if (await tx.schedule.settings()).privacy.calendar_shows_patient_name:
+            names["patient_name"] = (await tx.patients.display_names({entity.patient_id})).get(
+                entity.patient_id
+            )
+        return view.model_copy(update=names)
 
     @staticmethod
     async def _require_notice(

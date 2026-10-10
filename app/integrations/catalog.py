@@ -19,6 +19,8 @@ class Purpose(StrEnum):
     LLM = "llm"
     EMBEDDINGS = "embeddings"
     EMAIL = "email"
+    GOOGLE_CALENDAR = "google_calendar"
+    MICROSOFT_CALENDAR = "microsoft_calendar"
 
 
 class ConnectionSlot(StrEnum):
@@ -133,6 +135,16 @@ class SmtpSecrets(_Secrets):
     password: SecretStr = SecretStr("")
 
 
+class OAuthSecrets(_Secrets):
+    client_secret: SecretStr = Field(min_length=8, max_length=256)
+
+    @model_validator(mode="after")
+    def printable(self) -> Self:
+        if not _printable(self.client_secret):
+            raise ValueError("Invalid client secret")
+        return self
+
+
 class TwilioSecrets(_Secrets):
     auth_token: SecretStr = Field(min_length=32, max_length=32)
     api_key_sid: str | None = Field(default=None, pattern=r"^SK[0-9a-fA-F]{32}$")
@@ -237,6 +249,26 @@ PLATFORM_CATALOG: dict[tuple[Purpose, str], ProviderSpec] = {
         (spec.purpose, spec.provider): spec for spec in _SPECS if spec.purpose != Purpose.EMBEDDINGS
     },
     (SMTP.purpose, SMTP.provider): SMTP,
+    # The apps registered with Google and Microsoft, through which providers connect
+    # their own calendars. The account identifier is the app's client ID.
+    (Purpose.GOOGLE_CALENDAR, "google"): ProviderSpec(
+        "google",
+        Purpose.GOOGLE_CALENDAR,
+        "Google Calendar",
+        EmptyConfig,
+        OAuthSecrets,
+        account_pattern=r"^[0-9A-Za-z._\-]{10,170}\.apps\.googleusercontent\.com$",
+        suffix_field="client_secret",
+    ),
+    (Purpose.MICROSOFT_CALENDAR, "microsoft"): ProviderSpec(
+        "microsoft",
+        Purpose.MICROSOFT_CALENDAR,
+        "Outlook calendar",
+        EmptyConfig,
+        OAuthSecrets,
+        account_pattern=r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$",
+        suffix_field="client_secret",
+    ),
 }
 CATALOG: dict[tuple[Purpose, str], ProviderSpec] = {
     (spec.purpose, spec.provider): spec for spec in _SPECS

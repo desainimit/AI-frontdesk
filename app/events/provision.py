@@ -116,6 +116,28 @@ async def provision_worker(settings: Settings) -> None:
                 f"CREATE POLICY worker_settings_read ON tenant_settings FOR SELECT TO {quoted} "
                 "USING (true)"
             )
+            # Calendar sync runs here: read the connection, write busy time and event links.
+            synced = "calendar_connections, calendar_busy_blocks, appointment_calendar_links"
+            await connection.exec_driver_sql(f"REVOKE ALL ON {synced} FROM {quoted}")
+            await connection.exec_driver_sql(f"GRANT SELECT ON calendar_connections TO {quoted}")
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (status, last_synced_at, last_error, updated_at) "
+                f"ON calendar_connections TO {quoted}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON calendar_busy_blocks, "
+                f"appointment_calendar_links TO {quoted}"
+            )
+            for table in (
+                "calendar_connections",
+                "calendar_busy_blocks",
+                "appointment_calendar_links",
+            ):
+                await connection.exec_driver_sql(f"DROP POLICY IF EXISTS calendar_sync ON {table}")
+                await connection.exec_driver_sql(
+                    f"CREATE POLICY calendar_sync ON {table} TO {quoted} "
+                    "USING (true) WITH CHECK (true)"
+                )
             await connection.exec_driver_sql(f"REVOKE ALL ON outbound_messages FROM {quoted}")
             await connection.exec_driver_sql(f"GRANT SELECT ON outbound_messages TO {quoted}")
             await connection.exec_driver_sql(

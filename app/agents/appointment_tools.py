@@ -13,6 +13,7 @@ from app.agents.appointment_flow import (
 from app.agents.context import AgentContext
 from app.agents.tools import ReadTool, StatefulTool, ToolRegistry, directory_tools
 from app.auth.context import ActorType, RequestContext
+from app.calendar_sync.service import CalendarService
 from app.calls.access import CallPatientAccess, IdentifyPatient
 from app.calls.directory import CallDirectoryService, DirectoryQuery
 from app.conversation.state import ConversationState
@@ -32,7 +33,12 @@ def appointment_tools(
     resolver: TenantIntegrationResolver | None = None,
 ) -> tuple[ToolRegistry, AppointmentFlow]:
     directory = CallDirectoryService(sessions)
-    flow = AppointmentFlow(UnitOfWork(sessions), CallPatientAccess(sessions))
+    flow = AppointmentFlow(
+        UnitOfWork(sessions),
+        CallPatientAccess(sessions),
+        # A booking made on a call asks the provider's own calendar once more first.
+        CalendarService(sessions, knowledge_settings) if knowledge_settings else None,
+    )
 
     async def providers(context: AgentContext, payload: BaseModel) -> BaseModel:
         return await directory.read(

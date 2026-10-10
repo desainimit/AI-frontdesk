@@ -20,6 +20,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 # Every table must be registered in this process: queue rows reference tables whose
 # models no queue imports by itself.
 import app.core.database.models  # noqa: F401  # pyright: ignore[reportUnusedImport]
+from app.calendar_sync.sync import CalendarSync
 from app.core.database.session import Database
 from app.core.logging import configure_logging
 from app.core.redis import RedisClient
@@ -27,7 +28,7 @@ from app.core.security.encryption import SecretCipher
 from app.core.settings import Settings
 from app.core.telemetry import Telemetry
 from app.events.processor import EventProcessor
-from app.events.providers import ConsoleNotificationProvider, RetryPolicy
+from app.events.providers import RetryPolicy
 from app.events.store import OutboxStore, verify_worker_role
 from app.identity.mail import deliver_one
 from app.integrations.resolver import TenantIntegrationResolver
@@ -88,9 +89,11 @@ async def build_queues(settings: Settings, stack: AsyncExitStack) -> list[Queue]
 
     outbox = OutboxStore(sessions, 90)
     await outbox.check()
+    # Appointment changes go to the provider's own calendar, when one is connected.
+    calendars = CalendarSync(sessions, settings)
     events = EventProcessor(
         outbox,
-        ConsoleNotificationProvider(),
+        calendars,
         retry=RetryPolicy(max_attempts=5),
         timeout_seconds=10,
         telemetry=telemetry,
@@ -131,6 +134,8 @@ async def build_queues(settings: Settings, stack: AsyncExitStack) -> list[Queue]
     # Patient messages: confirmations at once, reminders when they fall due.
     messages = MessageDelivery(sessions, settings, resolver)
     queues.append(Queue("messages", messages.deliver_one, 2))
+    # What providers put in their own calendars, read back every few minutes.
+    queues.append(Queue("calendars", calendars.pull_one, 20))
     return queues
 
 

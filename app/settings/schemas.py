@@ -145,6 +145,8 @@ class PrivacySettings(Section):
     # Call transcripts older than this are deleted by the worker. Calls are not recorded.
     transcript_retention_days: int = Field(default=90, ge=1, le=365)
     caller_verification: VerificationPolicy = Field(default_factory=VerificationPolicy)
+    # Off: an event in a provider's own calendar says only what kind of visit it is.
+    calendar_shows_patient_name: bool = False
 
 
 class TicketSettings(Section):

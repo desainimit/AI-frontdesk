@@ -34,6 +34,10 @@ TENANT_TABLES = (
     "provider_schedules",
     "provider_time_off",
     "outbound_messages",
+    "calendar_connections",
+    "calendar_oauth_states",
+    "calendar_busy_blocks",
+    "appointment_calendar_links",
 )
 
 

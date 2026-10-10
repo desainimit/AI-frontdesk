@@ -92,6 +92,22 @@ async def provision_runtime_role(settings: Settings) -> None:
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON provider_schedules, provider_time_off "
                 f"TO {quoted_role}"
             )
+            # Calendars: the API connects and disconnects them; the worker syncs.
+            calendar_tables = (
+                "calendar_connections, calendar_oauth_states, calendar_busy_blocks, "
+                "appointment_calendar_links"
+            )
+            await connection.exec_driver_sql(f"REVOKE ALL ON {calendar_tables} FROM {quoted_role}")
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT, UPDATE, DELETE ON calendar_connections TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT, DELETE ON calendar_oauth_states TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                "GRANT SELECT, DELETE ON calendar_busy_blocks, appointment_calendar_links "
+                f"TO {quoted_role}"
+            )
             # The API queues messages and may stop ones not yet sent; the worker sends.
             await connection.exec_driver_sql(f"REVOKE ALL ON outbound_messages FROM {quoted_role}")
             await connection.exec_driver_sql(

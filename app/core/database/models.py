@@ -2,6 +2,10 @@
 
 from app.appointments.models import Appointment as Appointment
 from app.audit.models import AuditEvent as AuditEvent
+from app.calendar_sync.models import AppointmentCalendarLink as AppointmentCalendarLink
+from app.calendar_sync.models import CalendarBusyBlock as CalendarBusyBlock
+from app.calendar_sync.models import CalendarConnection as CalendarConnection
+from app.calendar_sync.models import CalendarOAuthState as CalendarOAuthState
 from app.calls.models import Call as Call
 from app.calls.models import PhoneNumber as PhoneNumber
 from app.clinic.models import ProviderSchedule as ProviderSchedule

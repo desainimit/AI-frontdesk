@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -6,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appointments.slots import ProviderCalendar
 from app.auth.context import RequestContext
+from app.calendar_sync.models import CalendarBusyBlock
 from app.clinic.models import ProviderSchedule, ProviderTimeOff, Service
 from app.locations.models import Location
 from app.providers.models import Provider
@@ -99,6 +101,22 @@ class ScheduleRepository:
             return False
         await self._session.delete(row)
         return True
+
+    async def calendar_busy(
+        self, provider_id: UUID, start: datetime, end: datetime
+    ) -> list[tuple[datetime, datetime]]:
+        """Time the provider's own calendar says is taken, from the last sync."""
+        rows = await self._session.execute(
+            select(CalendarBusyBlock.starts_at, CalendarBusyBlock.ends_at)
+            .where(
+                CalendarBusyBlock.tenant_id == self._tenant_id,
+                CalendarBusyBlock.provider_id == provider_id,
+                CalendarBusyBlock.starts_at < end,
+                CalendarBusyBlock.ends_at > start,
+            )
+            .order_by(CalendarBusyBlock.starts_at)
+        )
+        return [(row[0], row[1]) for row in rows]
 
     async def timezone(self, provider_id: UUID) -> str | None:
         return await self._session.scalar(

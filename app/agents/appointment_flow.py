@@ -19,6 +19,7 @@ from app.appointments.commands import (
 )
 from app.appointments.service import AppointmentService
 from app.auth.context import ActorType, RequestContext
+from app.calendar_sync.service import CalendarService
 from app.calls.access import CallPatientAccess, IdentifyPatient
 from app.calls.directory import CallDirectoryService, DirectoryQuery
 from app.conversation.confirmation import confirmation_answer
@@ -88,8 +89,10 @@ def affirmative(text: str, language: str = "en") -> bool:
 
 
 class AppointmentFlow:
-    def __init__(self, uow: UnitOfWork, access: CallPatientAccess) -> None:
-        self.appointments = AppointmentService(uow)
+    def __init__(
+        self, uow: UnitOfWork, access: CallPatientAccess, calendar: CalendarService | None = None
+    ) -> None:
+        self.appointments = AppointmentService(uow, calendar)
         self.availability = AvailabilityService(uow)
         self.access = access
 

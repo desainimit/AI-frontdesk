@@ -8,6 +8,7 @@ from opentelemetry.metrics import Observation
 from sqlalchemy.pool import QueuePool
 
 from app.api.auth import router as auth_router
+from app.api.calendar import router as calendar_router
 from app.api.domain import router as domain_router
 from app.api.errors import register_error_handlers
 from app.api.health import router as health_router
@@ -118,4 +119,5 @@ def create_app(
     app.include_router(postcall_router)
     app.include_router(telephony_router)
     app.include_router(settings_router)
+    app.include_router(calendar_router)
     return app

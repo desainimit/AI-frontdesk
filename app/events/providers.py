@@ -1,4 +1,3 @@
-import logging
 import random
 from dataclasses import dataclass
 from typing import Protocol
@@ -6,8 +5,6 @@ from uuid import UUID
 
 from app.appointments.schemas import AppointmentView
 from app.events.outbox import EventType
-
-logger = logging.getLogger(__name__)
 
 
 class ProviderError(Exception):
@@ -50,19 +47,6 @@ class NotificationProvider(Protocol):
     async def send(self, notification: Notification, *, idempotency_key: str) -> None:
         """Adapters must honor the stable event key at the downstream side-effect boundary."""
         ...
-
-
-class ConsoleNotificationProvider:
-    """Local adapter only. Writes a receipt log; never sends SMS, email, or calendar updates."""
-
-    async def send(self, notification: Notification, *, idempotency_key: str) -> None:
-        logger.info(
-            "notification_simulated",
-            extra={
-                "event_id": str(notification.event_id),
-                "tenant_id": str(notification.tenant_id),
-            },
-        )
 
 
 @dataclass(frozen=True)

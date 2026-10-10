@@ -48,7 +48,9 @@ class PlatformConnection(IdentityMixin, TimestampMixin, Base):
     __tablename__ = "platform_connections"
     __table_args__ = (
         CheckConstraint(
-            "purpose IN ('telephony', 'stt', 'tts', 'llm', 'email')", name="purpose_allowed"
+            "purpose IN ('telephony', 'stt', 'tts', 'llm', 'email', "
+            "'google_calendar', 'microsoft_calendar')",
+            name="purpose_allowed",
         ),
         CheckConstraint(
             "status IN ('saved_unverified', 'verified', 'invalid')", name="status_allowed"
@@ -56,7 +58,8 @@ class PlatformConnection(IdentityMixin, TimestampMixin, Base):
     )
     purpose: Mapped[str] = mapped_column(String(20), unique=True)
     provider: Mapped[str] = mapped_column(String(30))
-    account_identifier: Mapped[str | None] = mapped_column(String(64))
+    # A Google client ID is longer than most account IDs.
+    account_identifier: Mapped[str | None] = mapped_column(String(200))
     config: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
     )

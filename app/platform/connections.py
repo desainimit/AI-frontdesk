@@ -40,7 +40,18 @@ from app.platform.policies import PlatformContext, PlatformPermission, require_p
 
 logger = logging.getLogger(__name__)
 
-PLATFORM_PURPOSES = (Purpose.EMAIL, Purpose.TELEPHONY, Purpose.STT, Purpose.TTS, Purpose.LLM)
+PLATFORM_PURPOSES = (
+    Purpose.EMAIL,
+    Purpose.TELEPHONY,
+    Purpose.STT,
+    Purpose.TTS,
+    Purpose.LLM,
+    Purpose.GOOGLE_CALENDAR,
+    Purpose.MICROSOFT_CALENDAR,
+)
+# A calendar app is proven the first time a provider connects through it; there is
+# nothing to ask Google or Microsoft with the app's details alone.
+CALENDAR_APPS = {Purpose.GOOGLE_CALENDAR: "google", Purpose.MICROSOFT_CALENDAR: "microsoft"}
 # How long another process may run on a provider account that was just changed.
 REFRESH_SECONDS = 15
 # What a failed check means, in words an administrator can act on.
@@ -78,7 +89,7 @@ class TestMailFailedError(ApplicationError):
 class SaveConnection(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     provider: str = Field(pattern=r"^[a-z_]{2,30}$")
-    account_identifier: str | None = Field(default=None, max_length=64)
+    account_identifier: str | None = Field(default=None, max_length=200)
     config: dict[str, Any] = Field(default_factory=dict)
     # Leave out to keep the saved secret and change only the other details.
     secrets: dict[str, Any] | None = None
@@ -181,7 +192,11 @@ def platform_values(
     }
     for row, secrets in connections:
         config = row.config
-        if row.provider == "twilio":
+        if row.purpose in {Purpose.GOOGLE_CALENDAR, Purpose.MICROSOFT_CALENDAR}:
+            prefix = CALENDAR_APPS[Purpose(row.purpose)]
+            values[f"{prefix}_calendar_client_id"] = row.account_identifier or ""
+            values[f"{prefix}_calendar_client_secret"] = SecretStr(secrets["client_secret"])
+        elif row.provider == "twilio":
             values["twilio_account_sid"] = row.account_identifier or ""
             values["twilio_auth_token"] = SecretStr(secrets["auth_token"])
         elif row.provider == "deepgram":
@@ -388,7 +403,9 @@ class PlatformConnectionService:
                 cipher.decrypt(row.key_id, row.ciphertext, _context(purpose.value, provider))
             )
         # The provider is asked outside any transaction.
-        if purpose == Purpose.EMAIL:
+        if purpose in CALENDAR_APPS:
+            result = Verification("verified", "ok")
+        elif purpose == Purpose.EMAIL:
             result = await asyncio.to_thread(_check_smtp, config, secrets.get("password", ""))
         else:
             result = await self._verifier.verify(purpose.value, provider, account, config, secrets)
