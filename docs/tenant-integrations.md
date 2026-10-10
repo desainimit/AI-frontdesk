@@ -1,6 +1,6 @@
 # Workspaces and provider connections
 
-These features are always on. Each clinic may connect its own Twilio, speech, AI-model and embeddings accounts; anything it has not connected is served by the platform account configured in the environment.
+These features are always on. Each clinic may connect its own Twilio, speech, AI-model and embeddings accounts; anything it has not connected is served by the platform account a platform administrator saved in platform settings (see [clinic settings and default data](settings.md)).
 
 Run `python -m app.setup` before starting the API and the worker. It applies every migration, provisions the restricted API and worker logins, and runs the optional Super Admin bootstrap. See [fresh installation](fresh-install.md).
 
@@ -12,7 +12,6 @@ All of these are platform infrastructure. Inject them from the deployment secret
 | --- | --- | --- |
 | `SECRET_ENCRYPTION_KEYS`, `SECRET_ENCRYPTION_ACTIVE_KEY` | Two-step verification, queued email, provider connections | JSON keyring `{"key-id": "<base64 of 32 random bytes>"}`. New data is encrypted with the active key. Keep older key IDs in the keyring until nothing references them. A lost key makes its ciphertext unrecoverable, so back the keyring up separately from the database. |
 | `STREAM_TOKEN_KEY` | Integrations with telephony | Independent random value, at least 43 characters. Signs media-stream tokens so a provider secret is never used as an application key. |
-| `SMTP_*` | Invitations and password reset | TLS is required outside local/development. Mail is delivered by the worker (`python -m app.worker`). |
 | `TENANT_AUTH_PUBLIC_ORIGIN` | Invitation links | The frontend origin. HTTPS outside local/development. |
 
 The API and the worker (`python -m app.worker`) both need the keyring.
@@ -25,7 +24,7 @@ The API and the worker (`python -m app.worker`) both need the keyring.
 
 How the invited person accepts and signs in is described in [sign-in and accounts](sign-in.md).
 
-A workspace goes live once an administrator has accepted, its configuration is published and every required provider is available.
+A workspace goes live once an administrator has accepted and every required provider is available: its own connection, or the platform account.
 
 ## Provider connections
 
@@ -49,7 +48,7 @@ Supported connections:
 | `telephony` | `twilio` | `auth_token`; optional `api_key_sid` + `api_key_secret` for REST | `account_identifier` (Account SID) |
 | `stt` | `deepgram`, `azure_speech` | `api_key` / `speech_key` | model and language / region and language |
 | `tts` | `elevenlabs`, `azure_speech` | `api_key` / `speech_key` | model and voice / region and voices |
-| `llm` | `gemini`, `openrouter` | `api_key` | `model`, limited to `TENANT_LLM_MODELS`; optional `thinking_level` |
+| `llm` | `gemini`, `openrouter` | `api_key` | `model`, limited to the allowed AI models in platform settings; optional `thinking_level` |
 | `embeddings` | `gemini`, `openrouter` | `api_key` | `gemini-embedding-2` or `openai/text-embedding-3-small`, both at 1536 dimensions to match the index |
 
 There is one connection per purpose; speech has no separate fallback slot.

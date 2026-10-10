@@ -17,21 +17,15 @@ Required infrastructure configuration:
   bootstrap identity. There is no shared default password. Existing identities
   are never promoted, re-enabled or assigned a replacement password by rerunning setup.
 
-Encryption keys, SMTP, public origins and provider connections are configured
-through the documented deployment and integration paths. Initialization does not
-invent secrets or mark connections verified.
+Encryption keys and public origins come from the deployment environment. Provider
+accounts (phone, speech, AI model, email) are saved afterwards by a platform
+administrator in the product; setup does not invent secrets or mark anything verified.
+The migrations create the single `platform_settings` row with the product starting
+values.
 
-## Persisted workspace defaults
+## What a new clinic starts with
 
-New workspace creation atomically saves the tenant, pending owner membership, first
-location, editable roles with explicit true/false permission records and the
-configuration draft. No settings page has to be opened to initialize these records.
-The tenant starts in `setup` and its owner accepts a single-use invitation.
-
-Owner, Admin, Operator and Analyst are editable initial roles. Member is also seeded
-for compatibility with existing membership operations. Permission names come from the
-backend catalog; role names do not determine authorization.
-
-The starting configuration is still minimal: English only, no opening hours, read-only
-assistant tools and every channel disabled. Complete, ready-to-use defaults for a new
-clinic are part of the rebuild plan and replace this section when they land.
+Creating a clinic saves, in one transaction: the workspace, the pending owner, the first
+location, four roles, its settings and two appointment types. Nothing has to be opened
+or published before it works. The details are in [clinic settings and default
+data](settings.md).

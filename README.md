@@ -12,10 +12,11 @@ it is updated as each phase lands.
 | --- | --- | --- |
 | Setup job | `python -m app.setup` | Applies migrations, provisions the restricted database logins and creates the first super admin. Safe to run again. |
 | API | `uvicorn app.main:create_app --factory` | HTTP API, Twilio webhooks and the call media stream. |
-| Worker | `python -m app.worker` | Every background queue: notifications, post-call reports, email, knowledge ingestion and configuration events. |
+| Worker | `python -m app.worker` | Every background queue: notifications, post-call reports, email and knowledge ingestion. |
 
-The AI model and knowledge-search embeddings use Google Gemini. Speech uses Deepgram
-and ElevenLabs (Azure is an alternative for both). Telephony is Twilio.
+The AI model and knowledge search use Gemini models (directly from Google, or through
+OpenRouter). Speech uses Deepgram and ElevenLabs (Azure is an alternative for both).
+Telephony is Twilio.
 
 ## Requirements
 
@@ -39,13 +40,25 @@ Three database logins point at the same database:
 The setup job creates the two restricted logins if they do not exist. URL-encode
 passwords.
 
-For the AI, set `LLM_PROVIDER=gemini` and `GEMINI_API_KEY`, or
-`LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY`. A Gemini key must come from a
-billing-enabled Google project: on the free tier Google uses prompts and replies to
-improve its products, which is not acceptable for patient calls.
+### Provider accounts are set in the product, not here
 
-For development email, point `SMTP_HOST` at Mailpit (see below) and read the
-messages at http://localhost:8025.
+The phone service, speech, the AI model and the email server have no environment
+variables. A platform administrator signs in and saves them under **Platform,
+Settings**; each account is checked with its provider as it is saved, stored encrypted
+in the database, and used by the API and the worker within a few seconds. The
+Workspaces page lists what is still missing. A clinic may connect its own account;
+without one it is served by the platform account.
+
+A Gemini key must come from a billing-enabled Google project: on the free tier Google
+uses prompts and replies to improve its products, which is not acceptable for patient
+calls.
+
+For development email, save the email server as host `mailpit` (or `127.0.0.1` when
+running on the host), port `1025`, "No encryption", and read the messages at
+http://localhost:8025.
+
+See [clinic settings and default data](docs/settings.md) for what a new clinic starts
+with and how settings are saved.
 
 ## Run with Docker Compose
 
@@ -57,8 +70,8 @@ curl --fail http://localhost:8000/health/ready
 ```
 
 Compose starts the setup job, the API, the worker, Redis and Mailpit (a local
-mailbox: with `SMTP_HOST=mailpit`, `SMTP_PORT=1025` and `SMTP_TLS_MODE=plain` every
-email is caught at http://localhost:8025 and nothing is delivered). It uses your own
+mailbox: every email sent to it is caught at http://localhost:8025 and nothing is
+delivered). It uses your own
 PostgreSQL server; containers reach a database on the host through
 `host.docker.internal`.
 
