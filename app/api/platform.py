@@ -2,6 +2,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request
+from pydantic import BaseModel
 
 from app.api.dependencies import SessionToken, get_resources
 from app.api.tenancy import Cursor, DatabaseDependency, Limit, Search
@@ -11,6 +12,14 @@ from app.identity.invitations import InvitationService
 from app.identity.schemas import InvitationView, OpenWorkspace, SupportVisit
 from app.identity.service import IdentityService
 from app.identity.sessions import authenticate_platform
+from app.integrations.catalog import ProviderCatalogEntry, Purpose, catalog_entries
+from app.platform.connections import (
+    ConnectionView,
+    PlatformConnectionService,
+    ProductSettings,
+    SaveConnection,
+    TestMail,
+)
 from app.platform.onboarding import (
     OnboardingDefaults,
     OnboardingDraft,
@@ -19,6 +28,7 @@ from app.platform.onboarding import (
     UpdateOnboardingDraft,
     onboarding_defaults,
 )
+from app.platform.phones import AssignNumber, PlatformNumber, PlatformPhoneService
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.platform.tenants import PlatformTenantService, TenantStatusCommand
 from app.tenants.schemas import TenantView
@@ -26,6 +36,13 @@ from app.tenants.schemas import TenantView
 router = APIRouter(prefix="/api/v1/platform", tags=["platform"])
 
 PLATFORM_REQUESTS_PER_MINUTE = 120
+
+
+class ChecklistItem(BaseModel):
+    # email, telephony, stt, tts, llm, app_address or call_address
+    key: str
+    done: bool
+    needed_for: Literal["invitations", "calls"]
 
 
 async def get_platform_context(
@@ -141,3 +158,141 @@ async def update_onboarding(
     return await TenantOnboardingService(database.session_factory).update(
         context, tenant_id, command
     )
+
+
+def _connections(request: Request, database: DatabaseDependency) -> PlatformConnectionService:
+    return PlatformConnectionService(
+        database.session_factory,
+        request.app.state.settings,
+        getattr(request.app.state, "integration_verifier", None),
+    )
+
+
+@router.get("/settings")
+async def product_settings(
+    request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> ProductSettings:
+    return await _connections(request, database).product(context)
+
+
+@router.put("/settings")
+async def save_product_settings(
+    command: ProductSettings,
+    request: Request,
+    context: PlatformIdentity,
+    database: DatabaseDependency,
+) -> ProductSettings:
+    return await _connections(request, database).save_product(context, command)
+
+
+@router.get("/connections")
+async def platform_connections(
+    request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> list[ConnectionView]:
+    """The platform's provider accounts: email, phone, speech and AI, with their status."""
+    return await _connections(request, database).list(context)
+
+
+@router.get("/connections/providers")
+async def platform_providers(
+    request: Request, context: PlatformIdentity
+) -> list[ProviderCatalogEntry]:
+    require_platform_permission(context, PlatformPermission.TENANT_READ)
+    return catalog_entries(request.app.state.settings.llm_models, platform=True)
+
+
+@router.put("/connections/{purpose}")
+async def save_platform_connection(
+    purpose: Purpose,
+    command: SaveConnection,
+    request: Request,
+    context: PlatformIdentity,
+    database: DatabaseDependency,
+) -> ConnectionView:
+    """Save the details and check them with the provider in one step."""
+    return await _connections(request, database).save(context, purpose, command)
+
+
+@router.post("/connections/{purpose}/verify")
+async def verify_platform_connection(
+    purpose: Purpose, request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> ConnectionView:
+    return await _connections(request, database).verify(context, purpose)
+
+
+@router.delete("/connections/{purpose}", status_code=204)
+async def remove_platform_connection(
+    purpose: Purpose, request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> None:
+    await _connections(request, database).remove(context, purpose)
+
+
+@router.post("/connections/email/test", status_code=204)
+async def send_test_mail(
+    command: TestMail, request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> None:
+    await _connections(request, database).send_test_mail(context, command)
+
+
+def _phones(request: Request, database: DatabaseDependency) -> PlatformPhoneService:
+    return PlatformPhoneService(
+        database.session_factory,
+        request.app.state.settings,
+        getattr(request.app.state, "provider_transport", None),
+    )
+
+
+@router.get("/phone-numbers")
+async def platform_numbers(
+    request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> list[PlatformNumber]:
+    """Numbers on the platform's phone account and the clinic each one serves."""
+    return await _phones(request, database).numbers(context)
+
+
+@router.post("/phone-numbers", status_code=201)
+async def assign_number(
+    command: AssignNumber, request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> PlatformNumber:
+    """Give a number to a clinic and point its call webhooks at this application."""
+    return await _phones(request, database).assign(context, command)
+
+
+@router.delete("/phone-numbers/{number}", status_code=204)
+async def release_number(
+    number: str, request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> None:
+    await _phones(request, database).release(context, number)
+
+
+@router.get("/checklist")
+async def platform_checklist(
+    request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> list[ChecklistItem]:
+    """What still has to be set up before clinics can be created and take calls."""
+    connections = {
+        view.purpose: view for view in await _connections(request, database).list(context)
+    }
+    settings = request.app.state.settings
+    calls: tuple[Purpose, ...] = (Purpose.TELEPHONY, Purpose.STT, Purpose.TTS, Purpose.LLM)
+    return [
+        ChecklistItem(
+            key="email",
+            done=connections[Purpose.EMAIL].status == "verified",
+            needed_for="invitations",
+        ),
+        ChecklistItem(
+            key="app_address",
+            done=bool(settings.tenant_auth_public_origin),
+            needed_for="invitations",
+        ),
+        *(
+            ChecklistItem(
+                key=purpose.value,
+                done=connections[purpose].status == "verified",
+                needed_for="calls",
+            )
+            for purpose in calls
+        ),
+        ChecklistItem(key="call_address", done=settings.telephony_ready, needed_for="calls"),
+    ]

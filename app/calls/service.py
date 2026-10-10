@@ -2,10 +2,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.audit.events import AuditAction
@@ -15,9 +14,6 @@ from app.auth.policies import Permission, require_permission
 from app.calls.models import Call, PhoneNumber
 from app.core.database.rls import set_tenant_scope, verify_runtime_role
 from app.core.errors import AuthorizationError, ConflictError, NotFoundError
-from app.identity.sessions import platform_scope
-from app.platform.models import PlatformAuditEvent
-from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.postcall.models import CallTranscript
 from app.postcall.schemas import PostCallInput
 from app.settings.schemas import ClinicConfiguration
@@ -25,18 +21,6 @@ from app.settings.store import load_settings
 from app.tenants.models import Tenant
 from app.users.models import User
 from app.workflows.intent import add_intent
-
-
-class PhoneCommand(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    tenant_id: UUID
-    number: str = Field(pattern=r"^\+[1-9][0-9]{7,14}$")
-
-
-class PhoneView(PhoneCommand):
-    model_config = ConfigDict(from_attributes=True)
-    id: UUID
-    is_active: bool
 
 
 class CallView(BaseModel):
@@ -89,40 +73,6 @@ def audit(session: AsyncSession, context: CallContext, action: str) -> None:
 class CallService:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self.sessions = sessions
-
-    async def assign(self, context: PlatformContext, command: PhoneCommand) -> PhoneView:
-        require_platform_permission(context, PlatformPermission.TENANT_UPDATE)
-        try:
-            async with self.sessions.begin() as session:
-                await platform_scope(session, context)
-                tenant = await session.scalar(
-                    select(Tenant).where(Tenant.id == command.tenant_id, Tenant.is_active.is_(True))
-                )
-                if tenant is None:
-                    raise NotFoundError()
-                phone = PhoneNumber(tenant_id=command.tenant_id, number=command.number)
-                session.add(phone)
-                await session.flush()
-                session.add(
-                    PlatformAuditEvent(
-                        user_id=context.user_id,
-                        action="phone_number_assigned",
-                        request_id=context.request_id,
-                        resource_id=phone.id,
-                    )
-                )
-                return PhoneView.model_validate(phone)
-        except IntegrityError:
-            raise ConflictError("Phone number is already assigned") from None
-
-    async def phones(self, context: PlatformContext, limit: int, offset: int) -> list[PhoneView]:
-        require_platform_permission(context, PlatformPermission.TENANT_READ)
-        async with self.sessions.begin() as session:
-            await platform_scope(session, context)
-            rows = await session.scalars(
-                select(PhoneNumber).order_by(PhoneNumber.id).limit(limit).offset(offset)
-            )
-            return [PhoneView.model_validate(row) for row in rows]
 
     async def tenant_for_number(self, number: str) -> UUID | None:
         """Candidate tenant for an unauthenticated webhook. Untrusted until its signature

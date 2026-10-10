@@ -34,6 +34,7 @@ from app.integrations.resolver import TenantIntegrationResolver
 from app.knowledge.embeddings import open_embedder
 from app.knowledge.storage import build_storage
 from app.knowledge.worker import KnowledgeWorker
+from app.platform.connections import REFRESH_SECONDS, refresh_platform
 from app.workflows.activities import WorkflowActivities
 from app.workflows.runner import JobRunner
 from app.workflows.store import WorkflowIntentStore
@@ -98,10 +99,21 @@ async def build_queues(settings: Settings, stack: AsyncExitStack) -> list[Queue]
         Queue("outbox", events.process_one, 1),
         Queue("jobs", jobs.process_one, 1),
     ]
-    if settings.mail_enabled:
+    # Provider accounts are saved by a platform administrator; keep this process current.
+    await refresh_platform(settings, sessions)
+
+    async def refresh() -> bool:
+        await refresh_platform(settings, sessions)
+        return False
+
+    async def mail() -> bool:
+        # Mail waits in its queue until an email server is configured.
+        return await deliver_one(sessions, settings) if settings.mail_enabled else False
+
+    if settings.secret_encryption_keys.get_secret_value():
         # Fail at start, not on the first message, when the keyring is unusable.
         SecretCipher(settings.secret_encryption_keys, settings.secret_encryption_active_key)
-        queues.append(Queue("mail", lambda: deliver_one(sessions, settings), 2))
+    queues += [Queue("platform", refresh, REFRESH_SECONDS), Queue("mail", mail, 2)]
     # Each job opens the embedder for its own tenant, so the worker starts even when no
     # model key is configured yet; such a job fails visibly instead.
     resolver = TenantIntegrationResolver(sessions, settings, role_check=verify_worker_role)

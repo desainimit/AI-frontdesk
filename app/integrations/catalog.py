@@ -18,6 +18,7 @@ class Purpose(StrEnum):
     TTS = "tts"
     LLM = "llm"
     EMBEDDINGS = "embeddings"
+    EMAIL = "email"
 
 
 class ConnectionSlot(StrEnum):
@@ -118,6 +119,20 @@ class OpenRouterEmbeddingsConfig(_Config):
     model: Literal["openai/text-embedding-3-small"] = "openai/text-embedding-3-small"
 
 
+class SmtpConfig(_Config):
+    host: str = Field(min_length=1, max_length=253, pattern=r"^[A-Za-z0-9.\-]+$")
+    port: int = Field(default=587, ge=1, le=65535)
+    tls_mode: Literal["starttls", "tls", "plain"] = "starttls"
+    username: str = Field(default="", max_length=254, pattern=r"^[\x21-\x7e]*$")
+    # The address mail is sent from.
+    sender: str = Field(max_length=254, pattern=r"^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$")
+
+
+class SmtpSecrets(_Secrets):
+    # Empty for a server that takes mail without signing in.
+    password: SecretStr = SecretStr("")
+
+
 class TwilioSecrets(_Secrets):
     auth_token: SecretStr = Field(min_length=32, max_length=32)
     api_key_sid: str | None = Field(default=None, pattern=r"^SK[0-9a-fA-F]{32}$")
@@ -212,6 +227,17 @@ _SPECS = (
         "openrouter", Purpose.EMBEDDINGS, "OpenRouter", OpenRouterEmbeddingsConfig, ApiKeySecrets
     ),
 )
+SMTP = ProviderSpec(
+    "smtp", Purpose.EMAIL, "Email server (SMTP)", SmtpConfig, SmtpSecrets, suffix_field="password"
+)
+# What the platform itself connects. Knowledge search uses the AI model account, so
+# embeddings have no connection of their own here.
+PLATFORM_CATALOG: dict[tuple[Purpose, str], ProviderSpec] = {
+    **{
+        (spec.purpose, spec.provider): spec for spec in _SPECS if spec.purpose != Purpose.EMBEDDINGS
+    },
+    (SMTP.purpose, SMTP.provider): SMTP,
+}
 CATALOG: dict[tuple[Purpose, str], ProviderSpec] = {
     (spec.purpose, spec.provider): spec for spec in _SPECS
 }
@@ -224,6 +250,13 @@ class InvalidIntegrationError(ValueError):
 def spec_for(purpose: str, provider: str) -> ProviderSpec:
     try:
         return CATALOG[(Purpose(purpose), provider)]
+    except (KeyError, ValueError):
+        raise InvalidIntegrationError("Unsupported provider for this purpose") from None
+
+
+def platform_spec(purpose: str, provider: str) -> ProviderSpec:
+    try:
+        return PLATFORM_CATALOG[(Purpose(purpose), provider)]
     except (KeyError, ValueError):
         raise InvalidIntegrationError("Unsupported provider for this purpose") from None
 
@@ -260,9 +293,11 @@ class ProviderCatalogEntry(BaseModel):
     required_secret_fields: list[str]
 
 
-def catalog_entries(llm_models: tuple[str, ...]) -> list[ProviderCatalogEntry]:
+def catalog_entries(
+    llm_models: tuple[str, ...], *, platform: bool = False
+) -> list[ProviderCatalogEntry]:
     entries: list[ProviderCatalogEntry] = []
-    for spec in _SPECS:
+    for spec in PLATFORM_CATALOG.values() if platform else _SPECS:
         schema = spec.config.model_json_schema()
         if spec.purpose == Purpose.LLM:
             # Each provider is offered only the allowed models written in its own form.

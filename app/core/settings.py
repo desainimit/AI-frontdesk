@@ -3,7 +3,7 @@ from typing import Any, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
@@ -15,10 +15,76 @@ class Environment(StrEnum):
     PRODUCTION = "production"
 
 
+# Set by a platform administrator in the product and loaded from the database (see
+# app.platform.connections). The environment is not read for these.
+PLATFORM_MANAGED = frozenset(
+    {
+        "tenant_llm_models",
+        "smtp_host",
+        "smtp_port",
+        "smtp_tls_mode",
+        "smtp_username",
+        "smtp_password",
+        "smtp_sender",
+        "platform_session_minutes",
+        "twilio_account_sid",
+        "twilio_auth_token",
+        "stt_provider",
+        "tts_provider",
+        "deepgram_api_key",
+        "deepgram_model",
+        "deepgram_language",
+        "elevenlabs_api_key",
+        "elevenlabs_model_id",
+        "elevenlabs_voice_id",
+        "azure_speech_key",
+        "azure_speech_region",
+        "azure_speech_language",
+        "azure_speech_voice",
+        "azure_hindi_voice",
+        "llm_provider",
+        "gemini_api_key",
+        "openrouter_api_key",
+        "llm_model",
+        "product_name",
+        "support_email",
+    }
+)
+
+
+class _Unmanaged(PydanticBaseSettingsSource):
+    """An environment source with the platform-managed values taken out."""
+
+    def __init__(self, settings_cls: type[BaseSettings], source: PydanticBaseSettingsSource):
+        super().__init__(settings_cls)
+        self._source = source
+
+    def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:
+        return None, field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        return {key: value for key, value in self._source().items() if key not in PLATFORM_MANAGED}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            _Unmanaged(settings_cls, env_settings),
+            _Unmanaged(settings_cls, dotenv_settings),
+        )
 
     environment: Environment = Environment.LOCAL
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -88,6 +154,8 @@ class Settings(BaseSettings):
     # Empty uses the selected provider's default model.
     llm_model: str = ""
     safety_semantic_enabled: bool = True
+    product_name: str = "AI Frontdesk"
+    support_email: str = ""
 
     @model_validator(mode="after")
     def validate_knowledge(self) -> Self:

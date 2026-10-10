@@ -64,6 +64,9 @@ async def provision_worker(settings: Settings) -> None:
             await connection.exec_driver_sql(f"REVOKE ALL ON {integration_tables} FROM {quoted}")
             await connection.exec_driver_sql(f"GRANT SELECT ON {integration_tables} TO {quoted}")
             await connection.exec_driver_sql(f"REVOKE ALL ON outbox_events FROM {quoted}")
+            await connection.exec_driver_sql(
+                f"GRANT SELECT ON platform_connections, platform_settings TO {quoted}"
+            )
             await connection.exec_driver_sql(f"GRANT SELECT ON outbox_events TO {quoted}")
             await connection.exec_driver_sql(
                 "GRANT UPDATE (status, attempts, available_at, lease_token, lease_until, "

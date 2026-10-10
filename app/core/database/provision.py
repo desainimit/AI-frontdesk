@@ -92,6 +92,13 @@ async def provision_runtime_role(settings: Settings) -> None:
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON provider_schedules, provider_time_off "
                 f"TO {quoted_role}"
             )
+            # Platform provider accounts hold ciphertext only; the keyring is not here.
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT, UPDATE, DELETE ON platform_connections TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, UPDATE ON platform_settings TO {quoted_role}"
+            )
             await connection.exec_driver_sql(
                 f"REVOKE ALL ON tenants, users, audit_events FROM {quoted_role}"
             )

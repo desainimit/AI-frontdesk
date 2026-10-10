@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -6,7 +7,6 @@ from fastapi import FastAPI
 from opentelemetry.metrics import Observation
 from sqlalchemy.pool import QueuePool
 
-from app.agents.factory import build_llm_provider
 from app.api.auth import router as auth_router
 from app.api.domain import router as domain_router
 from app.api.errors import register_error_handlers
@@ -27,6 +27,7 @@ from app.core.resources import Dependency, Resources
 from app.core.settings import Environment, Settings
 from app.core.telemetry import Telemetry
 from app.integrations.resolver import TenantIntegrationResolver
+from app.platform.connections import keep_platform_fresh, refresh_platform
 from app.voice.circuit import CircuitRegistry
 
 logger = logging.getLogger(__name__)
@@ -75,12 +76,17 @@ def create_app(
             # substitute its own provider.
             app.state.stt_provider = None
             app.state.tts_provider = None
-            # The platform model account, when its key is configured.
+            # Empty in production: the platform model account is opened per call. A test
+            # sets it to substitute its own model.
             app.state.llm_provider = None
-            if config.platform_llm_key.get_secret_value():
-                provider = build_llm_provider(config)
-                app.state.llm_provider = provider
-                stack.push_async_callback(provider.close)
+            if isinstance(database, Database):
+                # Provider accounts and product settings come from the database. Other
+                # API processes pick up a change within the refresh interval.
+                await refresh_platform(config, database.session_factory)
+                refresher = asyncio.create_task(
+                    keep_platform_fresh(config, database.session_factory)
+                )
+                stack.callback(refresher.cancel)
             logger.info("application_started")
             try:
                 yield

@@ -9,18 +9,10 @@ x-app-environment: &app-environment
   DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
   DEPENDENCY_TIMEOUT_SECONDS: ${DEPENDENCY_TIMEOUT_SECONDS:-2}
   TENANT_AUTH_PUBLIC_ORIGIN: ${TENANT_AUTH_PUBLIC_ORIGIN:-}
-  TENANT_LLM_MODELS: ${TENANT_LLM_MODELS:-gemini-3.8-flash,gemini-3.5-flash-lite,google/gemini-3.8-flash,google/gemini-3.5-flash-lite}
   # Injected by the deployment secret manager; never stored in PostgreSQL or its backups.
   SECRET_ENCRYPTION_KEYS: ${SECRET_ENCRYPTION_KEYS:-}
   SECRET_ENCRYPTION_ACTIVE_KEY: ${SECRET_ENCRYPTION_ACTIVE_KEY:-}
   STREAM_TOKEN_KEY: ${STREAM_TOKEN_KEY:-}
-  SMTP_HOST: ${SMTP_HOST:-}
-  SMTP_PORT: ${SMTP_PORT:-587}
-  SMTP_TLS_MODE: ${SMTP_TLS_MODE:-starttls}
-  SMTP_USERNAME: ${SMTP_USERNAME:-}
-  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-  SMTP_SENDER: ${SMTP_SENDER:-}
-  PLATFORM_SESSION_MINUTES: ${PLATFORM_SESSION_MINUTES:-30}
   OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
   OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
   KNOWLEDGE_STORAGE_BACKEND: ${KNOWLEDGE_STORAGE_BACKEND:-local}
@@ -41,26 +33,7 @@ services:
     pull_policy: build
     environment:
       <<: *app-environment
-      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
-      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
       TELEPHONY_PUBLIC_BASE_URL: ${TELEPHONY_PUBLIC_BASE_URL:-}
-      STT_PROVIDER: ${STT_PROVIDER:-deepgram}
-      TTS_PROVIDER: ${TTS_PROVIDER:-elevenlabs}
-      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
-      DEEPGRAM_MODEL: ${DEEPGRAM_MODEL:-nova-3}
-      DEEPGRAM_LANGUAGE: ${DEEPGRAM_LANGUAGE:-multi}
-      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
-      ELEVENLABS_MODEL_ID: ${ELEVENLABS_MODEL_ID:-eleven_turbo_v2_5}
-      ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
-      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY:-}
-      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION:-eastus}
-      AZURE_SPEECH_LANGUAGE: ${AZURE_SPEECH_LANGUAGE:-en-US}
-      AZURE_SPEECH_VOICE: ${AZURE_SPEECH_VOICE:-en-US-JennyNeural}
-      AZURE_HINDI_VOICE: ${AZURE_HINDI_VOICE:-hi-IN-SwaraNeural}
-      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      LLM_MODEL: ${LLM_MODEL:-}
       SAFETY_SEMANTIC_ENABLED: ${SAFETY_SEMANTIC_ENABLED:-true}
     volumes:
       - knowledge-objects:/srv/app/data/knowledge
@@ -109,9 +82,6 @@ services:
       <<: *app-environment
       DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
       WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL to a separate restricted worker login}
-      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       HF_HOME: /srv/app/data/models
     depends_on:
       setup:
@@ -135,8 +105,9 @@ services:
       start_period: 30s
       retries: 3
 
-  # Development mail: set SMTP_HOST=mailpit, SMTP_PORT=1025 and SMTP_TLS_MODE=plain,
-  # then read every message at http://localhost:8025. Nothing leaves this machine.
+  # Development mail: in Platform settings, Email, use host mailpit, port 1025 and
+  # "No encryption", then read every message at http://localhost:8025. Nothing leaves
+  # this machine.
   mailpit:
     image: axllent/mailpit:v1.27.10@sha256:b1f1be18af530d939a11ee8820b379e0c88eeec204d904bfad68862adced3a5a
     ports:

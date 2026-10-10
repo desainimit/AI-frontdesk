@@ -24,7 +24,6 @@ from app.agents.appointment_tools import appointment_tools
 from app.agents.context import AgentContext
 from app.agents.providers.base import LLMProvider
 from app.agents.runtime import AgentRuntime
-from app.api.platform import PlatformIdentity
 from app.api.tenancy import Context, Cursor, DatabaseDependency, Limit, Since, Until
 from app.audit.events import AuditAction
 from app.calls.access import CallPatientAccess, IssuePatientAccess, PatientAccessCode
@@ -33,8 +32,6 @@ from app.calls.service import (
     CallContext,
     CallService,
     CallView,
-    PhoneCommand,
-    PhoneView,
 )
 from app.conversation import ConversationStateManager, build_conversation_store
 from app.conversation.locales import LOCALES, base_language
@@ -89,25 +86,6 @@ TOOL_TIMEOUT_SECONDS = 3
 # Model requests and tool calls allowed while answering one thing the caller said.
 AGENT_MAX_STEPS = 3
 AGENT_MAX_TOOL_CALLS = 4
-
-
-@router.post("/api/v1/platform/phone-numbers", status_code=201)
-async def assign_phone(
-    command: PhoneCommand, context: PlatformIdentity, database: DatabaseDependency
-) -> PhoneView:
-    return await CallService(database.session_factory).assign(context, command)
-
-
-@router.get("/api/v1/platform/phone-numbers")
-async def list_phones(
-    context: PlatformIdentity,
-    database: DatabaseDependency,
-    limit: Limit = 50,
-    cursor: Cursor = None,
-) -> Page[PhoneView]:
-    offset = decode_cursor(cursor)
-    rows = await CallService(database.session_factory).phones(context, limit + 1, offset)
-    return page(rows, limit, offset)
 
 
 @router.get("/api/v1/calls")
@@ -422,6 +400,10 @@ async def resolve_call_providers(
             llm_connection.secret("api_key"),
             dict(llm_connection.config),
         )
+    if llm is None and settings.platform_llm_key.get_secret_value():
+        from app.agents.factory import build_llm_provider
+
+        owned_llm = llm = build_llm_provider(settings)
     if llm is None:
         raise IntegrationUnavailableError()
     return CallProviders(

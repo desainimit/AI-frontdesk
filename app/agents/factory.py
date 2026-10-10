@@ -37,7 +37,7 @@ def _provider(
 
 
 def build_llm_provider(settings: Settings) -> LLMProvider:
-    """The platform's own model account, from the environment."""
+    """The platform's own model account, as a platform administrator configured it."""
     return _provider(settings, settings.llm_provider, settings.platform_llm_key, settings.llm_model)
 
 
