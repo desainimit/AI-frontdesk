@@ -117,6 +117,12 @@ class NotificationSettings(Section):
     reminder_hours_before: int = Field(default=24, ge=1, le=168)
     confirmation_text: str = Field(min_length=1, max_length=1000)
     reminder_text: str = Field(min_length=1, max_length=1000)
+    cancellation_text: str = Field(
+        default="Hi {{patient_name}}, your appointment at {{clinic_name}} on {{starts_at}} "
+        "has been cancelled.",
+        min_length=1,
+        max_length=1000,
+    )
 
     @field_validator("recipients")
     @classmethod
@@ -127,7 +133,7 @@ class NotificationSettings(Section):
             raise ValueError("Each address can be listed once")
         return values
 
-    @field_validator("confirmation_text", "reminder_text")
+    @field_validator("confirmation_text", "reminder_text", "cancellation_text")
     @classmethod
     def valid_variables(cls, value: str) -> str:
         if not set(re.findall(r"\{\{\s*([^}]+?)\s*\}\}", value)) <= TEMPLATE_VARIABLES:

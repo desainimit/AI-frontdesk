@@ -16,6 +16,7 @@ from app.events.idempotency import IdempotencyRepository
 from app.events.outbox import OutboxRepository
 from app.knowledge.repository import KnowledgeRepository
 from app.locations.repository import LocationRepository
+from app.notifications.repository import MessageRepository
 from app.patients.repository import PatientRepository
 from app.providers.repository import ProviderRepository
 from app.tenants.models import Tenant
@@ -37,6 +38,7 @@ class Transaction:
     appointments: AppointmentRepository
     idempotency: IdempotencyRepository
     outbox: OutboxRepository
+    messages: MessageRepository
 
 
 async def enter_tenant_scope(session: AsyncSession, context: RequestContext) -> None:
@@ -126,4 +128,5 @@ class UnitOfWork:
                 appointments=AppointmentRepository(session, context),
                 idempotency=IdempotencyRepository(session, context),
                 outbox=OutboxRepository(session, context),
+                messages=MessageRepository(session, context),
             )

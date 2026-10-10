@@ -92,6 +92,14 @@ async def provision_runtime_role(settings: Settings) -> None:
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON provider_schedules, provider_time_off "
                 f"TO {quoted_role}"
             )
+            # The API queues messages and may stop ones not yet sent; the worker sends.
+            await connection.exec_driver_sql(f"REVOKE ALL ON outbound_messages FROM {quoted_role}")
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON outbound_messages TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"GRANT UPDATE (status, updated_at) ON outbound_messages TO {quoted_role}"
+            )
             # Platform provider accounts hold ciphertext only; the keyring is not here.
             await connection.exec_driver_sql(
                 f"GRANT SELECT, INSERT, UPDATE, DELETE ON platform_connections TO {quoted_role}"
@@ -203,8 +211,8 @@ async def provision_runtime_role(settings: Settings) -> None:
                 f"GRANT UPDATE (status, ciphertext) ON auth_mail TO {quoted_role}"
             )
             await connection.exec_driver_sql(
-                f"GRANT UPDATE (date_of_birth, account_identifier, updated_at) "
-                f"ON patients TO {quoted_role}"
+                "GRANT UPDATE (display_name, phone, email, language, sms_opt_out, "
+                f"date_of_birth, account_identifier, updated_at) ON patients TO {quoted_role}"
             )
             await connection.exec_driver_sql(
                 f"REVOKE ALL ON idempotency_records, outbox_events FROM {quoted_role}"

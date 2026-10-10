@@ -12,6 +12,7 @@ from app.identity.schemas import OpenWorkspace, SupportVisit
 from app.identity.service import IdentityService
 from app.identity.sessions import authenticate_platform
 from app.integrations.catalog import ProviderCatalogEntry, Purpose, catalog_entries
+from app.notifications.service import MessageView, PlatformMessageLog, Status
 from app.platform.connections import (
     ConnectionView,
     PlatformConnectionService,
@@ -325,3 +326,19 @@ async def platform_checklist(
         ),
         ChecklistItem(key="call_address", done=settings.telephony_ready, needed_for="calls"),
     ]
+
+
+@router.get("/messages")
+async def platform_message_log(
+    context: PlatformIdentity,
+    database: DatabaseDependency,
+    limit: Limit = 50,
+    cursor: Cursor = None,
+    status: Status | None = None,
+) -> Page[MessageView]:
+    """Messages of every clinic, newest first: what was sent, to whom (masked), and how it went."""
+    offset = decode_cursor(cursor)
+    rows = await PlatformMessageLog(database.session_factory).log(
+        context, limit + 1, offset, status=status
+    )
+    return page(rows, limit, offset)

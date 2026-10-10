@@ -116,6 +116,19 @@ async def provision_worker(settings: Settings) -> None:
                 f"CREATE POLICY worker_settings_read ON tenant_settings FOR SELECT TO {quoted} "
                 "USING (true)"
             )
+            await connection.exec_driver_sql(f"REVOKE ALL ON outbound_messages FROM {quoted}")
+            await connection.exec_driver_sql(f"GRANT SELECT ON outbound_messages TO {quoted}")
+            await connection.exec_driver_sql(
+                "GRANT UPDATE (status, attempts, available_at, lease_token, lease_until, "
+                f"sent_at, last_error, updated_at) ON outbound_messages TO {quoted}"
+            )
+            await connection.exec_driver_sql(
+                "DROP POLICY IF EXISTS message_delivery ON outbound_messages"
+            )
+            await connection.exec_driver_sql(
+                f"CREATE POLICY message_delivery ON outbound_messages TO {quoted} "
+                "USING (true) WITH CHECK (true)"
+            )
             await connection.exec_driver_sql(
                 "DROP POLICY IF EXISTS knowledge_job_claim ON knowledge_jobs"
             )

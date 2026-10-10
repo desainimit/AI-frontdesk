@@ -22,6 +22,7 @@ from app.auth.policies import Permission, has_permission, require_permission
 from app.core.database.unit_of_work import Transaction, UnitOfWork
 from app.core.errors import AuthorizationError, NotFoundError
 from app.events.outbox import EventType
+from app.notifications.appointments import queue_appointment_messages
 
 
 class AppointmentService:
@@ -68,6 +69,7 @@ class AppointmentService:
                 )
                 result = AppointmentView.model_validate(entity)
                 tx.outbox.appointment(EventType.APPOINTMENT_CREATED, result)
+                await queue_appointment_messages(tx, entity, "booked")
                 return tx.idempotency.save(result)
         except IntegrityError as exc:
             if getattr(exc.orig, "sqlstate", None) == "23P01":
@@ -159,6 +161,7 @@ class AppointmentService:
             )
             result = AppointmentView.model_validate(entity)
             tx.outbox.appointment(EventType.APPOINTMENT_CANCELLED, result)
+            await queue_appointment_messages(tx, entity, "cancelled")
             return tx.idempotency.save(result)
 
     async def reschedule(
@@ -198,6 +201,7 @@ class AppointmentService:
                 )
                 result = AppointmentView.model_validate(entity)
                 tx.outbox.appointment(EventType.APPOINTMENT_RESCHEDULED, result)
+                await queue_appointment_messages(tx, entity, "rescheduled")
                 return tx.idempotency.save(result)
         except IntegrityError as exc:
             if getattr(exc.orig, "sqlstate", None) == "23P01":

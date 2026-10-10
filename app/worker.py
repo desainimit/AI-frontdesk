@@ -35,6 +35,7 @@ from app.knowledge.embeddings import open_embedder
 from app.knowledge.storage import build_storage
 from app.knowledge.worker import KnowledgeWorker
 from app.maintenance.retention import sweep_transcripts
+from app.notifications.delivery import MessageDelivery
 from app.platform.connections import REFRESH_SECONDS, refresh_platform
 from app.workflows.activities import WorkflowActivities
 from app.workflows.runner import JobRunner
@@ -127,6 +128,9 @@ async def build_queues(settings: Settings, stack: AsyncExitStack) -> list[Queue]
         tenant_embedder=lambda tenant_id: open_embedder(settings, resolver, tenant_id),
     )
     queues.append(Queue("knowledge", knowledge.process_one, 2))
+    # Patient messages: confirmations at once, reminders when they fall due.
+    messages = MessageDelivery(sessions, settings, resolver)
+    queues.append(Queue("messages", messages.deliver_one, 2))
     return queues
 
 

@@ -55,9 +55,13 @@ class PatientService:
             entity = await tx.patients.get(patient_id, lock=True)
             if entity is None:
                 raise NotFoundError()
+            previous_phone = entity.phone
             for field, value in command.model_dump().items():
                 setattr(entity, field, value)
             await tx.patients.flush()
+            if command.sms_opt_out:
+                # Texts already waiting, such as a reminder, must not go out either.
+                await tx.messages.cancel_texts_to(previous_phone)
             AuditService(tx.audit).record(
                 context, AuditAction.PATIENT_UPDATED, "patient", entity.id
             )

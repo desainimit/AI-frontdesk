@@ -1,14 +1,17 @@
 """Clinic settings, roles and what the signed-in person may do."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Query, Response
+from fastapi import APIRouter, Body, Query, Request, Response
 from pydantic import JsonValue
 
 from app.api.tenancy import Context, Cursor, DatabaseDependency, Limit
 from app.auth.context import ActorType
 from app.auth.policies import Permission, require_permission
+from app.core.database.pages import Page, decode_cursor, page
+from app.core.database.unit_of_work import UnitOfWork
+from app.notifications.service import MessageView, NotificationService, Status, TestMessage
 from app.rbac.catalog import permission_catalog
 from app.rbac.schemas import (
     AssignRole,
@@ -47,6 +50,34 @@ async def settings_history(
     context: Context, database: DatabaseDependency, limit: Limit = 50, cursor: Cursor = None
 ) -> SettingsChangePage:
     return await SettingsService(database.session_factory).history(context, limit, cursor)
+
+
+@router.get("/notifications/messages")
+async def message_log(
+    request: Request,
+    context: Context,
+    database: DatabaseDependency,
+    limit: Limit = 50,
+    cursor: Cursor = None,
+    status: Status | None = None,
+    channel: Literal["sms", "email"] | None = None,
+) -> Page[MessageView]:
+    """Messages sent to patients, newest first, with what became of each."""
+    offset = decode_cursor(cursor)
+    rows = await NotificationService(
+        UnitOfWork(database.session_factory), request.app.state.settings
+    ).log(context, limit + 1, offset, status=status, channel=channel)
+    return page(rows, limit, offset)
+
+
+@router.post("/notifications/test", status_code=201)
+async def send_test_message(
+    command: TestMessage, request: Request, context: Context, database: DatabaseDependency
+) -> MessageView:
+    """Send the clinic's confirmation wording, with sample details, to one address."""
+    return await NotificationService(
+        UnitOfWork(database.session_factory), request.app.state.settings
+    ).send_test(context, command)
 
 
 @router.get("/getting-started")

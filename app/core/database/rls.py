@@ -33,6 +33,7 @@ TENANT_TABLES = (
     "services",
     "provider_schedules",
     "provider_time_off",
+    "outbound_messages",
 )
 
 

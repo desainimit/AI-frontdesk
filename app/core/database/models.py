@@ -21,6 +21,7 @@ from app.knowledge.models import DocumentChunk as DocumentChunk
 from app.knowledge.models import DocumentVersion as DocumentVersion
 from app.knowledge.models import KnowledgeJob as KnowledgeJob
 from app.locations.models import Location as Location
+from app.notifications.models import OutboundMessage as OutboundMessage
 from app.patients.models import Patient as Patient
 from app.platform.models import PlatformAuditEvent as PlatformAuditEvent
 from app.platform.models import PlatformConnection as PlatformConnection
