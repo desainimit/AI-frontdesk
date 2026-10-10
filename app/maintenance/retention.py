@@ -6,13 +6,17 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database.rls import set_tenant_scope
 from app.core.database.session import Database
 from app.core.settings import Settings
 from app.events.store import verify_worker_role
 from app.postcall.models import CallTranscript, FollowUpEvent, PostCallReport
+from app.settings.models import TenantSettings
+
+# Transcripts removed per clinic in one pass; the next pass takes the rest.
+SWEEP_BATCH = 500
 
 
 def _pending_followup(tenant_id: UUID):
@@ -35,7 +39,6 @@ async def _delete_transcripts(
             select(CallTranscript.id)
             .where(CallTranscript.tenant_id == tenant_id, CallTranscript.created_at < cutoff)
             .order_by(CallTranscript.created_at, CallTranscript.id)
-            .with_for_update(skip_locked=True)
             .limit(limit)
         )
     ).all()
@@ -60,7 +63,6 @@ async def _delete_reports(
                 ~_pending_followup(tenant_id),
             )
             .order_by(PostCallReport.call_ended_at, PostCallReport.id)
-            .with_for_update(skip_locked=True)
             .limit(limit)
         )
     ).all()
@@ -71,6 +73,36 @@ async def _delete_reports(
             )
         )
     return len(ids)
+
+
+async def sweep_transcripts(sessions: async_sessionmaker[AsyncSession]) -> bool:
+    """Delete call transcripts older than each clinic chose to keep them.
+
+    Runs in the worker. Returns True when a clinic still has more to remove, so the
+    worker comes straight back instead of waiting for the next hour.
+    """
+    async with sessions.begin() as session:
+        await verify_worker_role(session)
+        clinics = (
+            await session.execute(
+                select(
+                    TenantSettings.tenant_id,
+                    TenantSettings.document["privacy"]["transcript_retention_days"].as_integer(),
+                )
+            )
+        ).all()
+    now = datetime.now(UTC)
+    more = False
+    for tenant_id, days in clinics:
+        if not days or days < 1:
+            continue
+        async with sessions.begin() as session:
+            await set_tenant_scope(session, tenant_id)
+            removed = await _delete_transcripts(
+                session, tenant_id, now - timedelta(days=days), SWEEP_BATCH
+            )
+        more = more or removed == SWEEP_BATCH
+    return more
 
 
 async def run(

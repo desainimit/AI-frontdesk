@@ -105,6 +105,17 @@ async def provision_worker(settings: Settings) -> None:
                 f"GRANT SELECT (id, tenant_id, version, status, starts_at) "
                 f"ON appointments TO {quoted}"
             )
+            # The worker reads each clinic's settings to apply them (how long transcripts
+            # are kept, and later the wording of messages). It cannot change them.
+            await connection.exec_driver_sql(f"REVOKE ALL ON tenant_settings FROM {quoted}")
+            await connection.exec_driver_sql(f"GRANT SELECT ON tenant_settings TO {quoted}")
+            await connection.exec_driver_sql(
+                "DROP POLICY IF EXISTS worker_settings_read ON tenant_settings"
+            )
+            await connection.exec_driver_sql(
+                f"CREATE POLICY worker_settings_read ON tenant_settings FOR SELECT TO {quoted} "
+                "USING (true)"
+            )
             await connection.exec_driver_sql(
                 "DROP POLICY IF EXISTS knowledge_job_claim ON knowledge_jobs"
             )

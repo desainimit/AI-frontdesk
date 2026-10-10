@@ -136,17 +136,9 @@ class NotificationSettings(Section):
 
 
 class PrivacySettings(Section):
-    recording_enabled: bool = False
-    recording_disclosure: str = Field(default="", max_length=1000)
+    # Call transcripts older than this are deleted by the worker. Calls are not recorded.
     transcript_retention_days: int = Field(default=90, ge=1, le=365)
-    recording_retention_days: int = Field(default=30, ge=1, le=90)
     caller_verification: VerificationPolicy = Field(default_factory=VerificationPolicy)
-
-    @model_validator(mode="after")
-    def require_disclosure(self) -> "PrivacySettings":
-        if self.recording_enabled and not self.recording_disclosure:
-            raise ValueError("Say what callers are told before a call is recorded")
-        return self
 
 
 class TicketSettings(Section):

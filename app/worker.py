@@ -34,6 +34,7 @@ from app.integrations.resolver import TenantIntegrationResolver
 from app.knowledge.embeddings import open_embedder
 from app.knowledge.storage import build_storage
 from app.knowledge.worker import KnowledgeWorker
+from app.maintenance.retention import sweep_transcripts
 from app.platform.connections import REFRESH_SECONDS, refresh_platform
 from app.workflows.activities import WorkflowActivities
 from app.workflows.runner import JobRunner
@@ -114,6 +115,8 @@ async def build_queues(settings: Settings, stack: AsyncExitStack) -> list[Queue]
         # Fail at start, not on the first message, when the keyring is unusable.
         SecretCipher(settings.secret_encryption_keys, settings.secret_encryption_active_key)
     queues += [Queue("platform", refresh, REFRESH_SECONDS), Queue("mail", mail, 2)]
+    # Old call transcripts go once an hour, by each clinic's own retention setting.
+    queues.append(Queue("retention", lambda: sweep_transcripts(sessions), 3600))
     # Each job opens the embedder for its own tenant, so the worker starts even when no
     # model key is configured yet; such a job fails visibly instead.
     resolver = TenantIntegrationResolver(sessions, settings, role_check=verify_worker_role)
