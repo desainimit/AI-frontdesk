@@ -79,7 +79,7 @@ class ConversationView(BaseModel):
     waiting: bool
 
 
-class MessageView(BaseModel):
+class ThreadMessage(BaseModel):
     id: UUID
     author: str
     author_name: str | None
@@ -90,7 +90,7 @@ class MessageView(BaseModel):
 
 
 class ConversationDetail(ConversationView):
-    messages: list[MessageView]
+    messages: list[ThreadMessage]
     can_text: bool
 
 
@@ -578,7 +578,7 @@ class ConversationService:
         return ConversationDetail(
             **_view(conversation, names[0], names[1]).model_dump(),
             messages=[
-                MessageView(
+                ThreadMessage(
                     id=message.id,
                     author=message.author,
                     author_name=name,

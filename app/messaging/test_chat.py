@@ -40,7 +40,7 @@ TOOL_LABELS = {
 }
 
 
-class TestMessage(BaseModel):
+class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
     __test__ = False
     message: str = Field(min_length=1, max_length=1000)
@@ -64,6 +64,7 @@ class TestChat:
     async def prepare(self, context: RequestContext, conversation_id: UUID | None) -> Prepared:
         """Find or start the chat. Fails here, before anything is streamed."""
         require_permission(context, Permission.SETTINGS_READ)
+        await self._runtime.ensure_model(context.tenant_id)
         async with self._sessions.begin() as database:
             await enter_tenant_scope(database, context)
             configuration = await load_settings(database, context.tenant_id)

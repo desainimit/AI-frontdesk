@@ -102,6 +102,10 @@ class AssistantRuntime:
             identity,
         )
 
+    async def ensure_model(self, tenant_id: UUID) -> None:
+        """Fail now, with a reason that can be shown, when no model account is set up."""
+        await (await models_for(self.settings, self.resolver, tenant_id, self.substitute)).close()
+
     @asynccontextmanager
     async def open(
         self, tenant_id: UUID, *, transfer_available: bool = False

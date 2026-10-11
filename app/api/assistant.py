@@ -26,7 +26,7 @@ from app.messaging.service import (
     ConversationView,
     StaffText,
 )
-from app.messaging.test_chat import TOOL_LABELS, TestChat, TestMessage
+from app.messaging.test_chat import TOOL_LABELS, ChatMessage, TestChat
 from app.tickets.service import (
     NewTicket,
     TicketCounts,
@@ -181,7 +181,7 @@ async def hand_back_conversation(
 
 
 @router.post("/assistant/test")
-async def test_chat(command: TestMessage, request: Request, context: Context) -> StreamingResponse:
+async def test_chat(command: ChatMessage, request: Request, context: Context) -> StreamingResponse:
     """One message to the receptionist, answered as a stream of events:
 
     `start`, then `say` for each sentence, `working` and `worked` around each lookup,
