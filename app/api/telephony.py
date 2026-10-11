@@ -40,6 +40,7 @@ from app.conversation.locales import LOCALES, base_language
 from app.conversation.state import CallStatus, ConversationState
 from app.conversation.store import ConversationStateStore
 from app.core.database.pages import Page, decode_cursor, page
+from app.core.database.rls import set_tenant_scope
 from app.core.database.session import Database
 from app.core.errors import ApplicationError, NotFoundError
 from app.core.security.rate_limit import enforce_rate_limit
@@ -54,6 +55,7 @@ from app.messaging.service import InboundTexts
 from app.postcall.schemas import PostCallInput
 from app.safety.classifier import LLMSafetyClassifier
 from app.safety.engine import SafetyEngine
+from app.tickets.service import open_ticket
 from app.voice.circuit import CircuitRegistry
 from app.voice.factory import (
     follows_caller_language,
@@ -483,6 +485,7 @@ async def run_media(
     # The account that authenticated this stream: the tenant's own, or the platform's.
     account = credentials or TwilioCredentials.from_settings(settings)
     owned: tuple[LLMProvider, ...] = ()
+    caller_number: str | None = None
     context: CallContext | None = None
     receptionist: CallReceptionist | None = None
     conversation_state: ConversationState | None = None
@@ -692,6 +695,23 @@ async def run_media(
                     )
             except (SQLAlchemyError, TimeoutError, ApplicationError):
                 logger.error("call_cleanup_failed", extra={"call_id": str(call_id)})
+            if status == "failed":
+                # Someone rang and was not helped: the team should know and call back.
+                with suppress(SQLAlchemyError, TimeoutError):
+                    async with asyncio.timeout(5), service.sessions.begin() as session:
+                        await set_tenant_scope(session, tenant_id)
+                        await open_ticket(
+                            session,
+                            tenant_id,
+                            source="call",
+                            subject="A call could not be answered",
+                            description="The receptionist could not take this call. "
+                            "Call the person back if their number is shown.",
+                            priority="high",
+                            contact=caller_number,
+                            call_id=call_id,
+                            dedupe_key=f"call:{call_id}:failed",
+                        )
         with suppress(RuntimeError, WebSocketDisconnect):
             await socket.close(code=1000 if status == "completed" else 1008)
 

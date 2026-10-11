@@ -30,6 +30,7 @@ from app.core.settings import Settings
 from app.events.outbox import EventType
 from app.events.providers import Notification, ProviderError
 from app.events.store import verify_worker_role
+from app.tickets.service import open_ticket
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,18 @@ class CalendarSync:
                     link.ends_at,
                 )
                 # Flagged for a person; the appointment itself is left as it is.
+                if moved and link.status != "conflict":
+                    await open_ticket(
+                        session,
+                        tenant_id,
+                        source="calendar",
+                        subject="An appointment was changed in a provider's own calendar",
+                        description="Its calendar entry was moved or removed there. The "
+                        "appointment here was left as it is: check with the provider and the "
+                        "patient which one is right.",
+                        appointment_id=link.appointment_id,
+                        dedupe_key=f"calendar:{link.appointment_id}:{link.starts_at:%Y%m%d%H%M}",
+                    )
                 link.status = "conflict" if moved else "synced"
             await session.execute(
                 delete(CalendarBusyBlock).where(
