@@ -14,12 +14,14 @@ from sqlalchemy import Date, cast, func, select
 
 from app.ai.models import AiTurn
 from app.ai.runtime import AssistantRuntime
+from app.api.dependencies import get_resources
 from app.api.tenancy import Context, Cursor, DatabaseDependency, Limit, Search
 from app.auth.policies import Permission, require_permission
 from app.calls.models import Call
 from app.core.database.pages import Page, decode_cursor, page
 from app.core.database.unit_of_work import enter_tenant_scope
 from app.core.errors import NotFoundError
+from app.core.security.rate_limit import enforce_rate_limit
 from app.messaging.service import (
     ConversationDetail,
     ConversationService,
@@ -41,6 +43,8 @@ router = APIRouter(prefix="/api/v1", tags=["assistant"])
 
 STREAM_HEADERS = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
 LIVE_POLL_SECONDS = 1.0
+# Each test message is a real, billed request to the model.
+TEST_MESSAGES_PER_MINUTE = 12
 LIVE_MAX_SECONDS = 30 * 60
 
 
@@ -187,6 +191,13 @@ async def test_chat(command: ChatMessage, request: Request, context: Context) ->
     `start`, then `say` for each sentence, `working` and `worked` around each lookup,
     `handoff` when it would pass the conversation to a person, and `done`.
     """
+    await enforce_rate_limit(
+        get_resources(request).redis,
+        enabled=request.app.state.rate_limits,
+        scope="assistant_test",
+        identity=f"{context.tenant_id}:{context.support_session_id or context.actor_id}",
+        limit=TEST_MESSAGES_PER_MINUTE,
+    )
     chat = TestChat(runtime(request))
     prepared = await chat.prepare(context, command.conversation_id)
 

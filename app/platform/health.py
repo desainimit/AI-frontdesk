@@ -58,7 +58,8 @@ SELECT
 RECEPTIONIST = text("""
 SELECT count(*) AS replies,
        count(*) FILTER (WHERE outcome IN ('unavailable', 'blocked', 'interrupted')) AS failed,
-       percentile_cont(0.5) WITHIN GROUP (ORDER BY first_text_ms) AS first_words_ms
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY first_text_ms) AS first_words_ms,
+       mode() WITHIN GROUP (ORDER BY error) AS usual_error
 FROM ai_turns
 WHERE created_at > now() - interval '1 hour' AND channel <> 'test'
 """)
@@ -67,6 +68,15 @@ UNANSWERED = text("""
 SELECT count(*) FROM conversations
 WHERE pending_since < now() - interval '2 minutes' AND handler = 'assistant'
 """)
+
+
+# The most common reason for failed replies, as the start of a sentence.
+REASONS = {
+    "llm_credentials_rejected": "The AI account's key is being refused: save a working key ",
+    "llm_credits_exhausted": "The AI account has run out of credit: top it up, then check it ",
+    "llm_rate_limited": "The AI account is hitting its rate limit: raise it, or check the account ",
+    "llm_request_rejected": "The AI service refuses the requests; check the chosen model ",
+}
 
 
 class HealthItem(BaseModel):
@@ -234,8 +244,9 @@ class SystemHealthService:
                 key="receptionist",
                 title="The receptionist",
                 status="problem",
-                detail=f"{failed} of {total} replies failed in the last hour. Check the AI "
-                "model account under Providers and email.",
+                detail=f"{failed} of {total} replies failed in the last hour. "
+                + REASONS.get(str(replies["usual_error"]), "Check the AI model account ")
+                + "under Providers and email.",
             )
         elif first is not None and total >= 5 and float(first) > 2500:
             receptionist = HealthItem(

@@ -8,10 +8,14 @@ from sqlalchemy import select
 from app.calls.models import PhoneNumber
 from app.calls.service import CallService
 from app.conversation.manager import ConversationStateManager
+from app.core.database.rls import set_tenant_scope
 from app.core.database.session import Database
 from app.core.errors import NotFoundError
+from app.notifications.models import OutboundMessage
 from app.postcall.schemas import PostCallInput
 from app.postcall.service import PostCallQueryService
+from app.settings.schemas import SettingsSection
+from app.settings.service import SettingsService
 from app.tickets.service import TicketService, UpdateTicket
 from app.workflows.activities import WorkflowActivities
 from app.workflows.intent import WorkflowRequest
@@ -53,6 +57,12 @@ async def test_post_call_callback_race_opens_a_ticket_and_feeds_tenant_analytics
             "stream_stopped",
             post_call_input=PostCallInput.capture(state),
         )
+        # The clinic asked for an email whenever something is passed to its team.
+        settings = SettingsService(tenancy.database.session_factory)
+        owner = tenancy.context(tenancy.a)
+        notifications = (await settings.get(owner)).settings.notifications.model_dump(mode="json")
+        notifications["recipients"] = ["frontdesk@clinic.test"]
+        await settings.save(owner, SettingsSection.NOTIFICATIONS, notifications)
         assert await activities.record_post_call(request) == "recorded"
         assert await activities.record_post_call(request) == "recorded"
         query = PostCallQueryService(tenancy.database.session_factory)
@@ -69,6 +79,21 @@ async def test_post_call_callback_race_opens_a_ticket_and_feeds_tenant_analytics
             (1, "call", context.call_id)
         ]
         assert await tickets.list(tenancy.context(tenancy.b), 10, 0) == []
+        # The worker also queued the email about it: once, and without the caller's words.
+        async with tenancy.admin.begin() as session:
+            await set_tenant_scope(session, tenancy.a.tenant_id)
+            alerts = (
+                await session.scalars(
+                    select(OutboundMessage).where(
+                        OutboundMessage.tenant_id == tenancy.a.tenant_id,
+                        OutboundMessage.kind == "ticket_alert",
+                    )
+                )
+            ).all()
+        assert [(row.channel, row.recipient) for row in alerts] == [
+            ("email", "frontdesk@clinic.test")
+        ]
+        assert "ticket #1" in (alerts[0].subject or "") and "alice" not in alerts[0].body
         today = datetime.now(UTC).date()
         analytics = await query.analytics(tenancy.context(tenancy.a), today, today)
         assert len(analytics) == 1

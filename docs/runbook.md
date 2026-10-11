@@ -77,26 +77,33 @@ cd deploy
 docker compose up -d --wait
 ```
 
-The setup job applies the database changes before the API and the worker start. Calls
-in progress end when the API restarts, so upgrade at a quiet time. If the new version
-does not come up, set the old tags again and repeat the command; database changes are
-additive within a release line, so the previous version keeps working.
+Take a database backup first. The setup job applies the database changes before the
+API and the worker start. Calls in progress end when the API restarts, so upgrade at a
+quiet time.
+
+If the new version does not come up, read `docker compose logs setup api` before
+anything else. Going back to the old images is safe only when the release changed
+nothing in the database that the old version still needs; when in doubt, restore the
+backup you took and start the old images.
 
 ## Backups
 
 Two things have to be backed up, and kept apart from each other:
 
-- **The database.** Use your provider's backups, or:
+- **The database.** Use your provider's scheduled backups and point-in-time recovery.
+  For a copy of your own, on a machine that has the PostgreSQL 17 client tools and a
+  checkout of the backend (the server images do not carry `pg_dump`):
 
   ```sh
-  docker compose run --rm setup python -m app.maintenance.backup backup --directory /tmp/backup
-  docker compose run --rm setup python -m app.maintenance.backup verify-restore \
-      --backup /tmp/backup/<file>.dump --target-database frontdesk_restore_check
+  # MIGRATION_DATABASE_URL in the environment, pointing at the database
+  uv run python -m app.maintenance.backup backup --directory ./backups
+  uv run python -m app.maintenance.backup verify-restore \
+      --backup ./backups/<file>.dump --target-database frontdesk_restore_check
   ```
 
-  The second command restores into a separate database and checks that it is complete
-  and that row-level security came back with it. Do it at least once a quarter: a
-  backup nobody has restored is not a backup.
+  The second command restores into a separate, empty database and checks that it is
+  complete and that row-level security came back with it. Do it at least once a
+  quarter: a backup nobody has restored is not a backup.
 - **The keys** in `.env`, above all `SECRET_ENCRYPTION_KEYS`.
 
 Uploaded documents live in the bucket; turn on its versioning.
@@ -118,10 +125,11 @@ Uploaded documents live in the bucket; turn on its versioning.
   | The receptionist | More than one reply in ten failed in the last hour; or the first words take more than 2.5 seconds (warning). |
   | Text messages from patients | Any has waited more than 2 minutes for a reply. |
 
-- **Logs** are one JSON object per line. Alert on `"level": "ERROR"`. Two events are
-  written for exactly that purpose: `queues_running_late` (worker) and
-  `assistant_turn_unavailable` (API). Logs never contain what was said, a prompt, a key
-  or a provider's response.
+- **Logs** are one JSON object per line. Alert on `"level": "ERROR"`; the worker writes
+  `queues_running_late` at that level whenever something has waited too long. Also
+  worth counting: `assistant_turn_unavailable`, a warning from the API each time a
+  reply could not be given. Logs never contain what was said, a prompt, a key or a
+  provider's response.
 - With `OTEL_EXPORTER_OTLP_ENDPOINT` set, traces and metrics go to your collector.
 
 ## When something is wrong

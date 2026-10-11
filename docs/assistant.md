@@ -55,8 +55,12 @@ Decided by the server, never by what the model was told:
   person has given their name.
 - On a call, reception can also issue a one-time code.
 
-`privacy.known_number_can_manage` decides whether a matching number is enough to see,
-move and cancel existing appointments, or only to book.
+By text message a matching number is enough for everything the patient may do with
+their own appointments: the reply only ever reaches that phone. On a call the number
+shown can be faked, so there it is enough to book, and `privacy.known_number_can_manage`
+(off unless the clinic turns it on) decides whether it is also enough to see, move and
+cancel existing appointments. Otherwise the caller needs a code from reception, or the
+receptionist takes a message.
 
 ## On the phone
 
@@ -102,6 +106,10 @@ A ticket is a patient's request that a staff member has to deal with. They are o
   appointment that was changed in a provider's own calendar.
 
 The same cause opens one ticket, however often it is reported. Numbers count up per clinic.
+
+When a ticket is opened by anyone but staff, an email goes to each address in
+`notifications.recipients`. It says that a ticket is waiting, how urgent it is and
+where it came from, never what the patient said.
 
 | Route | Purpose |
 | --- | --- |

@@ -145,9 +145,11 @@ class PrivacySettings(Section):
     # Call transcripts older than this are deleted by the worker. Calls are not recorded.
     transcript_retention_days: int = Field(default=90, ge=1, le=365)
     caller_verification: VerificationPolicy = Field(default_factory=VerificationPolicy)
-    # A patient calling or writing from the number on their record may see, move and
-    # cancel their own appointments. Off: they can still book; changes go to staff.
-    known_number_can_manage: bool = True
+    # On a call, the number shown can be faked. Off: a matching number is enough to
+    # book, but seeing, moving or cancelling an appointment needs a code from reception
+    # or goes to staff. By text message a matching number is always enough: the reply
+    # only ever reaches that phone.
+    known_number_can_manage: bool = False
     # Off: an event in a provider's own calendar says only what kind of visit it is.
     calendar_shows_patient_name: bool = False
 

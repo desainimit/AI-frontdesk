@@ -153,7 +153,10 @@ async def provision_worker(settings: Settings) -> None:
                     "USING (true) WITH CHECK (true)"
                 )
             await connection.exec_driver_sql(f"REVOKE ALL ON outbound_messages FROM {quoted}")
-            await connection.exec_driver_sql(f"GRANT SELECT ON outbound_messages TO {quoted}")
+            # It sends what is queued, and queues the email about a ticket it opened.
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON outbound_messages TO {quoted}"
+            )
             await connection.exec_driver_sql(
                 "GRANT UPDATE (status, attempts, available_at, lease_token, lease_until, "
                 f"sent_at, last_error, updated_at) ON outbound_messages TO {quoted}"

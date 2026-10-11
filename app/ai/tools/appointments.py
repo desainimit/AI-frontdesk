@@ -200,12 +200,14 @@ class AppointmentFlow:
             return Outcome(status="identity_required", next="offer_to_take_a_message")
         if (
             managing
+            and session.channel == "voice"
             and identity.identifier_type == IdentifierType.PHONE
             and not session.configuration.privacy.known_number_can_manage
         ):
-            # The clinic wants more than a matching number before showing or changing
-            # existing appointments.
-            return Outcome(status="staff_only", next="offer_to_take_a_message")
+            # A caller's number can be faked, so on a call the clinic may want more than
+            # a matching number before existing appointments are shown or changed. A
+            # text message is different: the answer only reaches the patient's own phone.
+            return Outcome(status="staff_only", next="offer_to_take_a_message_or_ask_for_code")
         return None
 
     async def propose(

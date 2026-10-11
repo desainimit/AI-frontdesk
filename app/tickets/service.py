@@ -14,13 +14,14 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from sqlalchemy import String, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.auth.context import RequestContext
+from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
 from app.core.database.unit_of_work import enter_tenant_scope
 from app.core.errors import ApplicationError, NotFoundError
 from app.notifications.models import OutboundMessage
 from app.notifications.repository import MessageRepository
 from app.patients.models import Patient
+from app.settings.store import load_settings
 from app.tickets.models import Ticket, TicketEvent
 from app.users.models import User
 
@@ -31,6 +32,14 @@ STATUS_LABELS = {
     "in_progress": "In progress",
     "waiting": "Waiting on patient",
     "resolved": "Resolved",
+}
+
+
+SOURCES_IN_WORDS = {
+    "call": "It came from a phone call.",
+    "sms": "It came from a text message.",
+    "calendar": "It came from a change in a provider's calendar.",
+    "assistant": "The receptionist opened it.",
 }
 
 
@@ -185,7 +194,42 @@ async def open_ticket(
             author_user_id=author_user_id,
         )
     )
+    if author != "staff":
+        await _tell_the_team(session, ticket)
     return ticket
+
+
+async def _tell_the_team(session: AsyncSession, ticket: Ticket) -> None:
+    """Email the people the clinic chose, so a ticket nobody opened by hand is noticed.
+
+    The email says that something is waiting and how urgent it is, never what the
+    patient said: that stays in the product.
+    """
+    settings = await load_settings(session, ticket.tenant_id)
+    if not settings.notifications.recipients:
+        return
+    messages = MessageRepository(
+        session, RequestContext(uuid4(), ticket.tenant_id, None, ActorType.SYSTEM)
+    )
+    urgent = "Urgent: " if ticket.priority == "urgent" else ""
+    for address in settings.notifications.recipients:
+        await messages.enqueue(
+            channel="email",
+            kind="ticket_alert",
+            recipient=address,
+            subject=f"{urgent}{settings.clinic.name}: ticket #{ticket.number} needs your team"[
+                :200
+            ],
+            body=" ".join(
+                (
+                    f"Ticket #{ticket.number} is waiting for your team.",
+                    f"Priority: {ticket.priority}.",
+                    SOURCES_IN_WORDS.get(ticket.source, ""),
+                    f"Sign in to {settings.clinic.name} and open Tickets to see what is needed.",
+                )
+            ),
+            dedupe_key=f"ticket-alert:{ticket.id}:{address}",
+        )
 
 
 class TicketService:
@@ -260,6 +304,26 @@ class TicketService:
         require_permission(context, Permission.FOLLOW_UP_MANAGE)
         async with self._sessions.begin() as session:
             await enter_tenant_scope(session, context)
+            if command.patient_id is not None and (
+                await session.scalar(
+                    select(Patient.id).where(
+                        Patient.tenant_id == context.tenant_id, Patient.id == command.patient_id
+                    )
+                )
+                is None
+            ):
+                raise NotFoundError()
+            if command.assignee_id is not None and (
+                await session.scalar(
+                    select(User.id).where(
+                        User.tenant_id == context.tenant_id,
+                        User.id == command.assignee_id,
+                        User.is_active.is_(True),
+                    )
+                )
+                is None
+            ):
+                raise NotFoundError()
             ticket = await open_ticket(
                 session,
                 context.tenant_id,
