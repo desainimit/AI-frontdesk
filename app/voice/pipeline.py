@@ -1,5 +1,4 @@
 import asyncio
-import audioop
 import base64
 import logging
 from collections.abc import Callable, Coroutine
@@ -11,6 +10,7 @@ from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConversationState
 from app.conversation.store import ConversationStateStore
 from app.voice.audio import pcm_frames
+from app.voice.codec import pcm_to_ulaw, ulaw_to_pcm
 from app.voice.metrics import VoiceMetrics
 from app.voice.processors.interruption import InterruptionConfig, InterruptionHandler
 from app.voice.stt.base import SpeechToTextProvider, STTStream, TranscriptionResult
@@ -112,7 +112,7 @@ class VoicePipeline:
             self._playback_mark = None
             self.interruption.set_synthesizing(False)
         self.received_frames += 1
-        pcm16 = audioop.ulaw2lin(ulaw_audio, 2)
+        pcm16 = ulaw_to_pcm(ulaw_audio)
 
         # Check for caller barge-in if TTS is currently synthesizing/playing
         if self.barge_in_enabled:
@@ -243,7 +243,7 @@ class VoicePipeline:
                     first_chunk = False
 
                 # Twilio expects 8000Hz 8-bit µ-law frames
-                ulaw_chunk = audioop.lin2ulaw(pcm_chunk, 2)
+                ulaw_chunk = pcm_to_ulaw(pcm_chunk)
                 payload = base64.b64encode(ulaw_chunk).decode("ascii")
                 message = {
                     "event": "media",

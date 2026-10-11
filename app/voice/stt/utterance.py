@@ -1,8 +1,8 @@
 import asyncio
-import audioop
 from collections.abc import AsyncIterator
 from contextlib import suppress
 
+from app.voice.codec import loudness
 from app.voice.stt.base import (
     SpeechToTextProvider,
     STTError,
@@ -48,7 +48,7 @@ class UtteranceSTTStream:
         while len(self._pending) >= self._frame_bytes:
             frame = bytes(self._pending[: self._frame_bytes])
             del self._pending[: self._frame_bytes]
-            voiced = audioop.rms(frame, 2) >= 200
+            voiced = loudness(frame) >= 200
             if not self._buffer and not voiced:
                 self._preroll.extend(frame)
                 del self._preroll[: -self._frame_bytes * 5]

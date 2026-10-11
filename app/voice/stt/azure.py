@@ -1,4 +1,3 @@
-import audioop
 import io
 import wave
 from collections.abc import Callable
@@ -8,6 +7,7 @@ from typing import Any, cast
 import httpx
 from pydantic import SecretStr
 
+from app.voice.codec import double_rate
 from app.voice.http import retry_after_seconds
 from app.voice.stt.base import (
     STTPermanentError,
@@ -61,7 +61,7 @@ class AzureSTTProvider:
 
         if sample_rate not in {8000, 16000} or len(audio) % 2:
             raise STTPermanentError("Unsupported PCM input")
-        pcm = audioop.ratecv(audio, 2, 1, sample_rate, 16000, None)[0]
+        pcm = double_rate(audio) if sample_rate == 8000 else audio
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as wav:
             wav.setnchannels(1)

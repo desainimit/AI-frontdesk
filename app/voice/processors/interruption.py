@@ -1,9 +1,9 @@
 import asyncio
-import audioop
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from app.voice.codec import loudness
 from app.voice.metrics import VoiceMetrics
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ class InterruptionHandler:
             return False
 
         try:
-            rms = float(audioop.rms(pcm16, 2))
+            rms = loudness(pcm16)
         except Exception:
             return False
 

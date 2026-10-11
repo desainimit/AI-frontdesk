@@ -1,5 +1,4 @@
 import asyncio
-import audioop
 import base64
 import json
 import time
@@ -18,6 +17,7 @@ from app.calls.service import CallContext
 from app.core.settings import Settings
 from app.settings.defaults import default_settings
 from app.voice.circuit import CircuitBreaker, CircuitState
+from app.voice.codec import pcm_to_ulaw
 from app.voice.factory import follows_caller_language, platform_stt, platform_tts
 from app.voice.pipeline import VoicePipeline
 from app.voice.processors.interruption import InterruptionConfig, InterruptionHandler
@@ -337,7 +337,7 @@ async def test_voice_pipeline_flow_and_barge_in() -> None:
 
     # 1. Process inbound audio frames
     # 160 bytes of mu-law audio
-    ulaw_chunk = audioop.lin2ulaw(bytes(320), 2)
+    ulaw_chunk = pcm_to_ulaw(bytes(320))
     await pipeline.process_inbound_audio(ulaw_chunk)
     assert pipeline.received_frames == 1
 
@@ -353,7 +353,7 @@ async def test_voice_pipeline_flow_and_barge_in() -> None:
     # 3. Test barge-in clear message sending
     sent_messages.clear()
     loud_pcm = bytes([120, 80] * 160)
-    loud_ulaw = audioop.lin2ulaw(loud_pcm, 2)
+    loud_ulaw = pcm_to_ulaw(loud_pcm)
 
     # Start speech in background
     speech_task = asyncio.create_task(pipeline.speak("I am speaking something long"))

@@ -1,5 +1,4 @@
 import asyncio
-import audioop
 import io
 import json
 import wave
@@ -14,6 +13,7 @@ from websockets.asyncio.server import ServerConnection, serve
 
 from app.core.settings import Settings
 from app.voice.audio import pcm_frames
+from app.voice.codec import pcm_to_ulaw
 from app.voice.http import retry_after_seconds
 from app.voice.pipeline import VoicePipeline
 from app.voice.stt.azure import AzureSTTProvider
@@ -143,7 +143,7 @@ async def test_barge_in_after_synthesis_until_playback_ack() -> None:
         assert sent[-1]["event"] == "mark"
         pipeline.acknowledge_playback("unrelated")
         assert pipeline.interruption.is_synthesizing
-        voiced = audioop.lin2ulaw(b"\x10\x27" * 160, 2)
+        voiced = pcm_to_ulaw(b"\x10\x27" * 160)
         await pipeline.process_inbound_audio(voiced)
         await pipeline.process_inbound_audio(voiced)
         await asyncio.sleep(0)
@@ -171,7 +171,7 @@ async def test_disabled_barge_in_does_not_clear_audio() -> None:
     await pipeline.start()
     try:
         await pipeline.speak("Hello")
-        voiced = audioop.lin2ulaw(b"\x10\x27" * 160, 2)
+        voiced = pcm_to_ulaw(b"\x10\x27" * 160)
         for _ in range(5):
             await pipeline.process_inbound_audio(voiced)
         assert not any(frame["event"] == "clear" for frame in sent)
