@@ -113,3 +113,16 @@ class WorkspaceCreation(IdentityMixin, TimestampMixin, Base):
     creator_id: Mapped[UUID] = mapped_column(ForeignKey("accounts.id"))
     key_digest: Mapped[str] = mapped_column(String(64))
     request_digest: Mapped[str] = mapped_column(String(64))
+
+
+class PlatformStatus(Base):
+    """What the worker last saw of its own queues. At most one row.
+
+    Counts only. The time it was written is also the proof that the worker is running.
+    """
+
+    __tablename__ = "platform_status"
+    __table_args__ = (CheckConstraint("id = 1", name="single_row"),)
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
+    worker_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    queues: Mapped[dict[str, Any]] = mapped_column(JSONB)

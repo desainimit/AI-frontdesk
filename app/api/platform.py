@@ -21,6 +21,7 @@ from app.platform.connections import (
     TestMail,
 )
 from app.platform.defaults import DefaultsView, WorkspaceDefaults, WorkspaceDefaultsService
+from app.platform.health import SystemHealth, SystemHealthService
 from app.platform.phones import AssignNumber, PlatformNumber, PlatformPhoneService
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.platform.tenants import PlatformTenantService, TenantStatusCommand
@@ -288,11 +289,25 @@ async def assign_number(
     return await _phones(request, database).assign(context, command)
 
 
+@router.post("/phone-numbers/{number}/address")
+async def repoint_number(
+    number: str, request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> PlatformNumber:
+    """Send an assigned number's calls and texts to this application again."""
+    return await _phones(request, database).repoint(context, number)
+
+
 @router.delete("/phone-numbers/{number}", status_code=204)
 async def release_number(
     number: str, request: Request, context: PlatformIdentity, database: DatabaseDependency
 ) -> None:
     await _phones(request, database).release(context, number)
+
+
+@router.get("/health")
+async def system_health(context: PlatformIdentity, database: DatabaseDependency) -> SystemHealth:
+    """Whether the product is working: the worker, its queues, the receptionist."""
+    return await SystemHealthService(database.session_factory).read(context)
 
 
 @router.get("/checklist")

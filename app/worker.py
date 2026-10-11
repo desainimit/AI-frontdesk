@@ -38,6 +38,7 @@ from app.knowledge.worker import KnowledgeWorker
 from app.maintenance.retention import sweep_transcripts
 from app.notifications.delivery import MessageDelivery
 from app.platform.connections import REFRESH_SECONDS, refresh_platform
+from app.platform.health import WORKER_EVERY_SECONDS, record_worker_status
 from app.workflows.activities import WorkflowActivities
 from app.workflows.runner import JobRunner
 from app.workflows.store import WorkflowIntentStore
@@ -136,6 +137,8 @@ async def build_queues(settings: Settings, stack: AsyncExitStack) -> list[Queue]
     queues.append(Queue("messages", messages.deliver_one, 2))
     # What providers put in their own calendars, read back every few minutes.
     queues.append(Queue("calendars", calendars.pull_one, 20))
+    # What these queues look like, written down for the platform's health page.
+    queues.append(Queue("health", lambda: record_worker_status(sessions), WORKER_EVERY_SECONDS))
     return queues
 
 

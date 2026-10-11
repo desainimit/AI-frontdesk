@@ -197,6 +197,11 @@ async def test_assigning_a_number_points_its_webhooks_here(
         assert assigned.json()["webhooks_configured"] is True
         assert updates[0]["VoiceUrl"] == [f"{CALLS_ADDRESS}/webhooks/v1/twilio/incoming"]
         assert updates[0]["StatusCallback"] == [f"{CALLS_ADDRESS}/webhooks/v1/twilio/status"]
+        assert updates[0]["SmsUrl"] == [f"{CALLS_ADDRESS}/webhooks/v1/twilio/sms"]
+        # After the public address changes, the same number is pointed here again.
+        again = await client.post(f"phone-numbers/{number}/address")
+        assert again.status_code == 200 and again.json()["webhooks_configured"] is True
+        assert len(updates) == 2 and updates[1]["VoiceUrl"] == updates[0]["VoiceUrl"]
         listed = (await client.get("phone-numbers")).json()
         assert listed[0]["tenant_name"] == "Tenant A" and listed[0]["is_active"]
         # A number serves one clinic; one the account does not own is refused.

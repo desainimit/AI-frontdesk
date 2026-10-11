@@ -204,8 +204,44 @@ class PlatformPhoneService:
                 )
             )
 
+    async def repoint(self, context: PlatformContext, number: str) -> PlatformNumber:
+        """Send an assigned number's calls and texts here again.
+
+        For when the application's public address changed after the number was assigned.
+        """
+        require_platform_permission(context, PlatformPermission.TENANT_UPDATE)
+        match = await self.prove(number)
+        async with self._sessions.begin() as session:
+            await platform_scope(session, context)
+            row = (
+                await session.execute(
+                    select(PhoneNumber, Tenant.name)
+                    .join(Tenant, Tenant.id == PhoneNumber.tenant_id)
+                    .where(PhoneNumber.number == number, PhoneNumber.is_active.is_(True))
+                )
+            ).first()
+            if row is None:
+                raise NotFoundError()
+            session.add(
+                PlatformAuditEvent(
+                    user_id=context.user_id,
+                    action="phone_number_repointed",
+                    request_id=context.request_id,
+                    resource_id=row[0].id,
+                    tenant_id=row[0].tenant_id,
+                )
+            )
+        return PlatformNumber(
+            number=number,
+            tenant_id=row[0].tenant_id,
+            tenant_name=row[1],
+            is_active=True,
+            webhooks_configured=await self.point_webhooks(match.sid),
+        )
+
     async def point_webhooks(self, sid: str) -> bool:
-        """Tell the provider to send this number's calls here. False when it could not."""
+        """Tell the provider to send this number's calls and texts here. False when it
+        could not."""
         account, secrets = self._account()
         base = self._settings.telephony_public_base_url
         if not base:

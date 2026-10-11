@@ -123,6 +123,8 @@ async def provision_runtime_role(settings: Settings) -> None:
             await connection.exec_driver_sql(
                 f"GRANT SELECT, UPDATE ON platform_settings TO {quoted_role}"
             )
+            # What the worker last reported about its queues, for the health page.
+            await connection.exec_driver_sql(f"GRANT SELECT ON platform_status TO {quoted_role}")
             await connection.exec_driver_sql(
                 f"REVOKE ALL ON tenants, users, audit_events FROM {quoted_role}"
             )

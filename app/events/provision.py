@@ -67,6 +67,9 @@ async def provision_worker(settings: Settings) -> None:
             await connection.exec_driver_sql(
                 f"GRANT SELECT ON platform_connections, platform_settings TO {quoted}"
             )
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT, UPDATE ON platform_status TO {quoted}"
+            )
             await connection.exec_driver_sql(f"GRANT SELECT ON outbox_events TO {quoted}")
             await connection.exec_driver_sql(
                 "GRANT UPDATE (status, attempts, available_at, lease_token, lease_until, "
