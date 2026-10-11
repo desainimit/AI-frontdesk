@@ -222,6 +222,8 @@ class PlatformPhoneService:
                         "VoiceMethod": "POST",
                         "StatusCallback": f"{base}/webhooks/v1/twilio/status",
                         "StatusCallbackMethod": "POST",
+                        "SmsUrl": f"{base}/webhooks/v1/twilio/sms",
+                        "SmsMethod": "POST",
                     },
                     auth=httpx.BasicAuth(account, secrets["auth_token"]),
                 )

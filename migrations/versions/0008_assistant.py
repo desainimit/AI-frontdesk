@@ -18,6 +18,19 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 TENANT = "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
+# Exactly one kind of requester per stored request: a staff member, a caller, a patient
+# writing in, or a visiting platform administrator.
+OTHERS = {
+    "actor_id": "call_id IS NULL AND conversation_id IS NULL AND support_session_id IS NULL "
+    "AND platform_user_id IS NULL",
+    "call_id": "actor_id IS NULL AND conversation_id IS NULL AND support_session_id IS NULL "
+    "AND platform_user_id IS NULL",
+    "conversation_id": "actor_id IS NULL AND call_id IS NULL AND support_session_id IS NULL "
+    "AND platform_user_id IS NULL",
+    "support_session_id": "platform_user_id IS NOT NULL AND actor_id IS NULL "
+    "AND call_id IS NULL AND conversation_id IS NULL",
+}
+PRINCIPAL = " OR ".join(f"({name} IS NOT NULL AND {rest})" for name, rest in OTHERS.items())
 TABLES = ("ai_turns", "conversations", "conversation_messages", "tickets", "ticket_events")
 
 
@@ -285,9 +298,42 @@ def upgrade() -> None:
             f"CREATE POLICY tenant_isolation ON {table} "
             f"USING (tenant_id = {TENANT}) WITH CHECK (tenant_id = {TENANT})"
         )
+    # A request repeated by a patient who is writing, not calling, is recognised by thread.
+    op.add_column("idempotency_records", sa.Column("conversation_id", sa.Uuid(), nullable=True))
+    op.create_foreign_key(
+        op.f("fk_idempotency_conversation"),
+        "idempotency_records",
+        "conversations",
+        ["tenant_id", "conversation_id"],
+        ["tenant_id", "id"],
+        ondelete="CASCADE",
+    )
+    op.create_unique_constraint(
+        op.f("uq_idempotency_conversation_key"),
+        "idempotency_records",
+        ["tenant_id", "conversation_id", "key_digest"],
+    )
+    op.drop_constraint(
+        op.f("ck_idempotency_records_idempotency_principal_exactly_one"),
+        "idempotency_records",
+        type_="check",
+    )
+    op.create_check_constraint(
+        op.f("ck_idempotency_records_idempotency_principal_exactly_one"),
+        "idempotency_records",
+        PRINCIPAL,
+    )
+    # A reply that was lost (the server restarted mid-turn) is found again across
+    # clinics, by the one query that sets this transaction-local switch and no other.
+    op.execute(
+        "CREATE POLICY assistant_backlog ON conversations FOR SELECT USING ("
+        "pending_since IS NOT NULL "
+        "AND current_setting('app.assistant_backlog', true) = 'on')"
+    )
 
 
 def downgrade() -> None:
     op.drop_column("calls", "caller_number")
+    op.drop_column("idempotency_records", "conversation_id")
     for table in ("ticket_events", "conversation_messages", "tickets", "conversations", "ai_turns"):
         op.drop_table(table)

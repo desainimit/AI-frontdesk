@@ -211,11 +211,11 @@ class AppointmentFlow:
     async def propose(
         self, session: Session, state: ConversationState, action: Action, payload: BaseModel
     ) -> BaseModel:
+        if not session.writes:
+            return Outcome(status="test_mode", say=spoken(state.language, "test_mode"))
         refused = self._must_be_known(session, state, managing=action != "book_appointment")
         if refused is not None:
             return refused
-        if not session.writes:
-            return Outcome(status="test_mode", say=spoken(state.language, "test_mode"))
         request = session.request(state)
         params = payload.model_dump(mode="json")
         provider_id: UUID

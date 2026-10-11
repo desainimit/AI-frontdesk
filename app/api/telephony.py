@@ -24,6 +24,7 @@ from app.ai.engine import Engine
 from app.ai.llm.base import LLMProvider
 from app.ai.llm.factory import build_llm_provider, llm_from_connection
 from app.ai.llm.gateway import ModelGateway, TurnLimits, breaker_for
+from app.ai.runtime import AssistantRuntime
 from app.ai.session import Session
 from app.ai.tools.toolbox import build_tools
 from app.api.tenancy import Context, Cursor, DatabaseDependency, Limit, Since, Until
@@ -48,6 +49,8 @@ from app.integrations.resolver import (
     ResolvedIntegration,
     TenantIntegrationResolver,
 )
+from app.messaging.recovery import answer_soon
+from app.messaging.service import InboundTexts
 from app.postcall.schemas import PostCallInput
 from app.safety.classifier import LLMSafetyClassifier
 from app.safety.engine import SafetyEngine
@@ -78,6 +81,8 @@ router = APIRouter(tags=["telephony"])
 logger = logging.getLogger(__name__)
 
 WEBHOOK_REQUESTS_PER_CALL_PER_MINUTE = 60
+TEXTS_PER_SENDER_PER_MINUTE = 20
+E164 = r"\+[1-9][0-9]{7,14}"
 # A stream with no audio for this long is closed; a call never runs longer than the cap.
 IDLE_SECONDS = 30
 MAX_CALL_SECONDS = 600
@@ -229,7 +234,11 @@ async def read_form(request: Request) -> dict[str, str]:
 
 
 async def authenticate_form(
-    request: Request, params: dict[str, str], candidates: list[TwilioCredentials]
+    request: Request,
+    params: dict[str, str],
+    candidates: list[TwilioCredentials],
+    *,
+    text: bool = False,
 ) -> TwilioCredentials:
     """Verify the signature and account against the candidates. The tenant selected to
     find those candidates is established only when this succeeds."""
@@ -245,20 +254,27 @@ async def authenticate_form(
         raise HTTPException(403, "Invalid provider signature")
     if params.get("AccountSid") != credentials.account_sid:
         raise HTTPException(403, "Invalid provider account")
-    if not re.fullmatch(r"CA[0-9a-fA-F]{32}", params.get("CallSid", "")):
-        raise HTTPException(400, "Invalid call identifier")
+    if text:
+        if not re.fullmatch(r"[SM]M[0-9a-fA-F]{32}", params.get("MessageSid", "")):
+            raise HTTPException(400, "Invalid message identifier")
+        # One sender cannot flood a clinic's thread, however many messages they send.
+        subject, limit = params.get("From", ""), TEXTS_PER_SENDER_PER_MINUTE
+    else:
+        if not re.fullmatch(r"CA[0-9a-fA-F]{32}", params.get("CallSid", "")):
+            raise HTTPException(400, "Invalid call identifier")
+        subject, limit = params["CallSid"], WEBHOOK_REQUESTS_PER_CALL_PER_MINUTE
     await enforce_rate_limit(
         request.app.state.resources.redis,
         enabled=request.app.state.rate_limits,
-        scope="twilio_webhook",
-        identity=f"{params['AccountSid']}:{params['CallSid']}",
-        limit=WEBHOOK_REQUESTS_PER_CALL_PER_MINUTE,
+        scope="twilio_text" if text else "twilio_webhook",
+        identity=f"{params['AccountSid']}:{subject}",
+        limit=limit,
     )
     return credentials
 
 
 async def authenticate_for_number(
-    request: Request, service: CallService, params: dict[str, str]
+    request: Request, service: CallService, params: dict[str, str], *, text: bool = False
 ) -> TwilioCredentials:
     """Authenticate a webhook routed by destination number."""
     app: FastAPI = request.app
@@ -268,13 +284,15 @@ async def authenticate_for_number(
     ):
         tenant_id = await service.tenant_for_number(params["To"])
     try:
-        return await authenticate_form(request, params, await tenant_candidates(app, tenant_id))
+        return await authenticate_form(
+            request, params, await tenant_candidates(app, tenant_id), text=text
+        )
     except HTTPException as error:
         if error.status_code != 403 or tenant_id is None:
             raise
     # A credential rotated on another replica may not be in this process's cache yet.
     return await authenticate_form(
-        request, params, await tenant_candidates(app, tenant_id, fresh=True)
+        request, params, await tenant_candidates(app, tenant_id, fresh=True), text=text
     )
 
 
@@ -296,6 +314,36 @@ async def incoming(request: Request, database: DatabaseDependency) -> Response:
     )
     return Response(
         twiml(request.app.state.settings, context, credentials),
+        media_type="application/xml",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/webhooks/v1/twilio/sms", response_class=Response)
+async def incoming_text(request: Request, database: DatabaseDependency) -> Response:
+    """A text message to one of a clinic's numbers. It is kept at once; the reply is
+    written afterwards and sent like any other message."""
+    params = await read_form(request)
+    service = CallService(database.session_factory)
+    await authenticate_for_number(request, service, params, text=True)
+    to, sender = params.get("To", ""), params.get("From", "")
+    if not re.fullmatch(E164, to) or not re.fullmatch(E164, sender):
+        raise HTTPException(400, "Invalid number")
+    tenant_id = await service.tenant_for_number(to)
+    if tenant_id is None:
+        raise HTTPException(404, "Unknown number")
+    received = await InboundTexts(database.session_factory).receive(
+        tenant_id, to, sender, params.get("Body", ""), params["MessageSid"]
+    )
+    assistant = getattr(request.app.state, "assistant", None)
+    if received.answer and isinstance(assistant, AssistantRuntime):
+        pending: set[asyncio.Task[None]] = request.app.state.text_turns
+        task = asyncio.create_task(answer_soon(assistant, tenant_id, received.conversation_id))
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+    # Nothing is said in the response itself.
+    return Response(
+        '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
         media_type="application/xml",
         headers={"Cache-Control": "no-store"},
     )

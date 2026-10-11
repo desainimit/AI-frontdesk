@@ -48,7 +48,7 @@ class IdempotencyRepository:
         principal = (
             self._context.support_session_id
             if is_support
-            else self._context.call_id
+            else (self._context.call_id or self._context.conversation_id)
             if is_caller
             else self._context.actor_id
         )
@@ -70,7 +70,11 @@ class IdempotencyRepository:
         record = await self._session.scalar(
             select(IdempotencyRecord).where(
                 IdempotencyRecord.tenant_id == self._context.tenant_id,
-                (IdempotencyRecord.call_id == self._context.call_id)
+                (
+                    (IdempotencyRecord.call_id == self._context.call_id)
+                    if self._context.call_id is not None
+                    else (IdempotencyRecord.conversation_id == self._context.conversation_id)
+                )
                 if is_caller
                 else (IdempotencyRecord.support_session_id == self._context.support_session_id)
                 if is_support
@@ -93,6 +97,9 @@ class IdempotencyRepository:
                     platform_user_id=self._context.platform_user_id,
                     support_session_id=self._context.support_session_id,
                     call_id=self._context.call_id
+                    if self._context.actor_type == ActorType.CALLER
+                    else None,
+                    conversation_id=self._context.conversation_id
                     if self._context.actor_type == ActorType.CALLER
                     else None,
                     key_digest=self._key,

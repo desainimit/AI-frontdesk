@@ -7,6 +7,9 @@ from fastapi import FastAPI
 from opentelemetry.metrics import Observation
 from sqlalchemy.pool import QueuePool
 
+from app.ai.llm.gateway import TurnLimits
+from app.ai.runtime import AssistantRuntime
+from app.api.assistant import router as assistant_router
 from app.api.auth import router as auth_router
 from app.api.calendar import router as calendar_router
 from app.api.domain import router as domain_router
@@ -28,6 +31,7 @@ from app.core.resources import Dependency, Resources
 from app.core.settings import Environment, Settings
 from app.core.telemetry import Telemetry
 from app.integrations.resolver import TenantIntegrationResolver
+from app.messaging.recovery import answer_lost_texts
 from app.platform.connections import keep_platform_fresh, refresh_platform
 from app.voice.circuit import CircuitRegistry
 
@@ -80,6 +84,9 @@ def create_app(
             # Empty in production: the platform model account is opened per call. A test
             # sets it to substitute its own model.
             app.state.llm_provider = None
+            app.state.turn_limits = TurnLimits()
+            # Replies to text messages being written right now.
+            app.state.text_turns = set()
             if isinstance(database, Database):
                 # Provider accounts and product settings come from the database. Other
                 # API processes pick up a change within the refresh interval.
@@ -88,6 +95,15 @@ def create_app(
                     keep_platform_fresh(config, database.session_factory)
                 )
                 stack.callback(refresher.cancel)
+                app.state.assistant = AssistantRuntime(
+                    database.session_factory,
+                    config,
+                    app.state.integration_resolver,
+                    app.state.voice_circuits,
+                    app.state.turn_limits,
+                )
+                recovery = asyncio.create_task(answer_lost_texts(app.state.assistant))
+                stack.callback(recovery.cancel)
             logger.info("application_started")
             try:
                 yield
@@ -120,4 +136,5 @@ def create_app(
     app.include_router(telephony_router)
     app.include_router(settings_router)
     app.include_router(calendar_router)
+    app.include_router(assistant_router)
     return app

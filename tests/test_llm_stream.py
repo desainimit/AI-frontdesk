@@ -1,5 +1,5 @@
 import json
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -135,7 +135,10 @@ async def test_openrouter_assembles_a_tool_call_and_sends_its_result_back() -> N
 async def test_openrouter_stream_failures_are_typed(
     reply: httpx.Response, expected: type[LLMProviderError]
 ) -> None:
-    provider = openrouter(lambda _: reply)
+    def handler(_: httpx.Request) -> httpx.Response:
+        return reply
+
+    provider = openrouter(handler)
     with pytest.raises(LLMProviderError) as error:
         await collect(provider.stream(REQUEST))
     await provider.close()
@@ -249,7 +252,7 @@ async def test_gateway_does_not_retry_a_refused_key_and_remembers_why() -> None:
 async def test_gateway_stops_asking_once_the_circuit_is_open() -> None:
     breaker = CircuitBreaker(name="test", failure_threshold=1, reset_seconds=60)
     model = Flaky(9, LLMUnavailableError("down"))
-    door = ModelGateway(model, breaker=breaker, pause_seconds=0)
+    door = ModelGateway(cast(Any, model), breaker=breaker, pause_seconds=0)
     with pytest.raises(LLMUnavailableError):
         await events(door.stream(REQUEST))
     with pytest.raises(LLMUnavailableError):

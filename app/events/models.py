@@ -31,19 +31,32 @@ class IdempotencyRecord(IdentityMixin, Base):
         UniqueConstraint(
             "tenant_id", "support_session_id", "key_digest", name="uq_idempotency_support_key"
         ),
+        # A patient writing to the receptionist rather than calling.
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["conversations.tenant_id", "conversations.id"],
+            name="fk_idempotency_conversation",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "tenant_id", "conversation_id", "key_digest", name="uq_idempotency_conversation_key"
+        ),
         CheckConstraint(
-            "(actor_id IS NOT NULL AND call_id IS NULL AND support_session_id IS NULL "
-            "AND platform_user_id IS NULL) OR "
-            "(call_id IS NOT NULL AND actor_id IS NULL AND support_session_id IS NULL "
-            "AND platform_user_id IS NULL) OR "
+            "(actor_id IS NOT NULL AND call_id IS NULL AND conversation_id IS NULL "
+            "AND support_session_id IS NULL AND platform_user_id IS NULL) OR "
+            "(call_id IS NOT NULL AND actor_id IS NULL AND conversation_id IS NULL "
+            "AND support_session_id IS NULL AND platform_user_id IS NULL) OR "
+            "(conversation_id IS NOT NULL AND actor_id IS NULL AND call_id IS NULL "
+            "AND support_session_id IS NULL AND platform_user_id IS NULL) OR "
             "(support_session_id IS NOT NULL AND platform_user_id IS NOT NULL "
-            "AND actor_id IS NULL AND call_id IS NULL)",
+            "AND actor_id IS NULL AND call_id IS NULL AND conversation_id IS NULL)",
             name="idempotency_principal_exactly_one",
         ),
     )
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id"), index=True)
     actor_id: Mapped[UUID | None]
     call_id: Mapped[UUID | None]
+    conversation_id: Mapped[UUID | None]
     platform_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("accounts.id"))
     # One visit by a platform administrator; the same key in another visit is a new request.
     support_session_id: Mapped[UUID | None]
