@@ -1,6 +1,4 @@
-import re
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID
 
 from app.conversation.confirmation import confirmation_answer
@@ -9,12 +7,10 @@ from app.conversation.locales import LanguagePolicy
 from app.conversation.redaction import redact_verification_secrets
 from app.conversation.state import (
     ActiveFlowState,
-    AppointmentDraft,
     CallState,
     ConfirmationState,
     ConversationState,
     FlowStep,
-    FlowType,
     IdentityState,
     LanguageState,
     SafetyState,
@@ -22,11 +18,10 @@ from app.conversation.state import (
 
 
 class ConversationStateManager:
-    """Orchestrates deterministic context maintenance across multiple speech turns.
+    """What the server itself keeps track of between turns: the language, the
+    transcript, and whether a plain yes or no answers a question it asked.
 
-    Maintains workflow, slot, language, and confirmation state so that short
-    caller utterances like 'Tomorrow', 'Dr Shah', 'Afternoon', or 'Yes' resolve
-    accurately without requiring the LLM to reconstruct context from raw transcripts.
+    What the person wants is the model's job; nothing here guesses it from keywords.
     """
 
     @classmethod
@@ -73,10 +68,7 @@ class ConversationStateManager:
         confidence: float | None = None,
         language_threshold: float = 0.6,
     ) -> None:
-        """Processes an incoming caller utterance, updating language, slots,
-
-        confirmation, and intent.
-        """
+        """Take in what the person just said: language, transcript, and a pending yes/no."""
         clean_text = utterance.strip()
         if not clean_text:
             return
@@ -101,14 +93,6 @@ class ConversationStateManager:
             # must never approve stale parameters.
             state.confirmation_state.reset()
             state.active_flow_state.transition(FlowStep.COLLECTING_DETAILS)
-
-        # 3. Intent & Flow Recognition (if in IDLE state)
-        if state.active_flow_state.flow_type == FlowType.IDLE:
-            cls._detect_and_start_flow(state, clean_text)
-
-        # 4. Contextual Slot Filling for Active Flow
-        if state.active_flow_state.flow_type != FlowType.IDLE:
-            cls._fill_slots_for_active_flow(state, clean_text)
 
     @classmethod
     def _update_language(
@@ -153,103 +137,6 @@ class ConversationStateManager:
         if state.active_flow_state.step == FlowStep.AWAITING_CONFIRMATION:
             state.active_flow_state.transition(next_step)
         return True
-
-    @classmethod
-    def _detect_and_start_flow(cls, state: ConversationState, text: str) -> None:
-        lower = text.lower()
-        booking_keywords = [
-            "book",
-            "appointment",
-            "schedule",
-            "mulaqat",
-            "doctor se milna",
-            "अपॉइंटमेंट",
-            "डॉक्टर",
-            "बुक",
-            "see a doctor",
-        ]
-        if any(kw in lower for kw in booking_keywords):
-            if "cancel" in lower or "radd" in lower:
-                state.active_flow_state.flow_type = FlowType.APPOINTMENT_CANCEL
-                state.active_flow_state.step = FlowStep.COLLECTING_DETAILS
-                state.active_intent = "cancel_appointment"
-            elif "reschedule" in lower or "badal" in lower or "postpone" in lower:
-                state.active_flow_state.flow_type = FlowType.APPOINTMENT_RESCHEDULE
-                state.active_flow_state.step = FlowStep.COLLECTING_DETAILS
-                state.active_intent = "reschedule_appointment"
-            else:
-                state.active_flow_state.flow_type = FlowType.APPOINTMENT_BOOKING
-                state.active_flow_state.step = FlowStep.COLLECTING_DETAILS
-                state.active_intent = "book_appointment"
-                if state.appointment_draft is None:
-                    state.appointment_draft = AppointmentDraft()
-
-    @classmethod
-    def _fill_slots_for_active_flow(cls, state: ConversationState, text: str) -> None:
-        lower = text.lower()
-        flow = state.active_flow_state
-
-        if flow.flow_type == FlowType.APPOINTMENT_BOOKING:
-            if state.appointment_draft is None:
-                state.appointment_draft = AppointmentDraft()
-
-            # Provider extraction (e.g., "Dr. Shah", "Dr Mehta", "Doctor Sharma")
-            provider_match = re.search(r"\b(?:dr\.?|doctor)\s+([a-zA-Z]+)", lower)
-            if provider_match:
-                name = f"Dr {provider_match.group(1).title()}"
-                flow.set_slot("provider_name", name)
-                state.appointment_draft.provider_name = name
-
-            # Date extraction
-            date_terms = [
-                "today",
-                "tomorrow",
-                "kal",
-                "aaj",
-                "monday",
-                "tuesday",
-                "wednesday",
-                "thursday",
-                "friday",
-                "saturday",
-            ]
-            for date_term in date_terms:
-                if date_term in lower:
-                    flow.set_slot("date", date_term)
-                    break
-
-            # Time preference extraction
-            time_terms = ["morning", "afternoon", "evening", "subah", "dopahar", "shaam"]
-            for time_term in time_terms:
-                if time_term in lower:
-                    flow.set_slot("time_preference", time_term)
-                    break
-
-            # Specific time pattern (e.g., "4 pm", "10:30 am", "2:00")
-            time_match = re.search(r"\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b", lower)
-            if time_match and any(suffix in lower for suffix in ["am", "pm", "baje", "o'clock"]):
-                flow.set_slot("exact_time", time_match.group(1).strip())
-
-    @classmethod
-    def propose_appointment_slot(
-        cls,
-        state: ConversationState,
-        action_params: dict[str, Any],
-        prompt: str,
-        timeout_seconds: float | None = None,
-    ) -> None:
-        """Puts the active flow into AWAITING_CONFIRMATION and sets the confirmation prompt."""
-        state.active_flow_state.transition(FlowStep.AWAITING_CONFIRMATION)
-        state.confirmation_state.request(
-            action="book_appointment",
-            params=action_params,
-            prompt=prompt,
-            timeout_seconds=(
-                timeout_seconds
-                if timeout_seconds is not None
-                else state.confirmation_timeout_seconds
-            ),
-        )
 
     @classmethod
     def record_agent_response(cls, state: ConversationState, response_text: str) -> None:

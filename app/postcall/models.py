@@ -1,4 +1,4 @@
-"""Restricted transcript snapshots, reports, and follow-up queue records."""
+"""Restricted transcript snapshots and reports of finished calls."""
 
 from datetime import datetime
 from typing import Any
@@ -46,18 +46,3 @@ class PostCallReport(IdentityMixin, Base):
     outcome: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     transcript_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     turn_count: Mapped[int]
-
-
-class FollowUpEvent(IdentityMixin, Base):
-    __tablename__ = "follow_up_events"
-    __table_args__ = (
-        ForeignKeyConstraint(["tenant_id", "call_id"], ["calls.tenant_id", "calls.id"]),
-        UniqueConstraint("tenant_id", "call_id", "kind", name="uq_follow_up_call_kind"),
-        CheckConstraint("kind IN ('human_review','appointment_followup')", name="kind_allowed"),
-        CheckConstraint("status IN ('pending','acknowledged')", name="status_allowed"),
-    )
-    tenant_id: Mapped[UUID]
-    call_id: Mapped[UUID]
-    kind: Mapped[str] = mapped_column(String(40), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
-    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

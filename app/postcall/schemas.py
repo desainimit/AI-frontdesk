@@ -68,17 +68,6 @@ class PostCallReportView(PostCallAnalysis):
     created_at: datetime
 
 
-class FollowUpView(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    call_id: UUID
-    kind: FollowUpKind
-    status: Literal["pending", "acknowledged"]
-    created_at: datetime
-    acknowledged_at: datetime | None
-
-
 class DailyCallAnalytics(BaseModel):
     day: date
     total: int

@@ -4,7 +4,7 @@ SAFE_READ_TOOLS = frozenset({"list_locations", "list_providers", "list_services"
 APPOINTMENT_TOOLS = frozenset(
     {
         "identify_patient",
-        "get_providers",
+        "register_patient",
         "check_availability",
         "list_my_appointments",
         "book_appointment",
@@ -12,5 +12,7 @@ APPOINTMENT_TOOLS = frozenset(
         "reschedule_appointment",
     }
 )
-ALL_TOOLS = SAFE_READ_TOOLS | APPOINTMENT_TOOLS
+# Always available: leave a request for the team, or ask for a person.
+SUPPORT_TOOLS = frozenset({"create_ticket", "transfer_to_staff"})
+ALL_TOOLS = SAFE_READ_TOOLS | APPOINTMENT_TOOLS | SUPPORT_TOOLS
 MUTATION_TOOLS = frozenset({"book_appointment", "cancel_appointment", "reschedule_appointment"})

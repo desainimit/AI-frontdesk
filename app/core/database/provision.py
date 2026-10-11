@@ -245,11 +245,16 @@ async def provision_runtime_role(settings: Settings) -> None:
             await connection.exec_driver_sql(
                 f"GRANT UPDATE (snapshot) ON call_transcripts TO {quoted_role}"
             )
+            await connection.exec_driver_sql(f"GRANT SELECT ON post_call_reports TO {quoted_role}")
+            # Conversations and tickets are worked on here; nothing in them is deleted
+            # except a test chat. What a reply cost is only ever added.
             await connection.exec_driver_sql(
-                f"GRANT SELECT ON post_call_reports, follow_up_events TO {quoted_role}"
+                f"GRANT SELECT, INSERT, UPDATE ON conversations, tickets TO {quoted_role}"
             )
+            await connection.exec_driver_sql(f"GRANT DELETE ON conversations TO {quoted_role}")
             await connection.exec_driver_sql(
-                f"GRANT UPDATE (status, acknowledged_at) ON follow_up_events TO {quoted_role}"
+                "GRANT SELECT, INSERT ON conversation_messages, ticket_events, ai_turns "
+                f"TO {quoted_role}"
             )
             # Activity log: the API login adds rows and can read nothing back but the
             # timestamp the database assigns (which an ORM insert returns).

@@ -84,6 +84,8 @@ class Call(TenantRecord):
     verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     access_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
     phone_number_id: Mapped[UUID]
+    # The number the call came from, as the phone service reported it.
+    caller_number: Mapped[str | None] = mapped_column(String(16))
     provider_call_id: Mapped[str] = mapped_column(String(34), unique=True)
     stream_sid: Mapped[str | None] = mapped_column(String(34))
     status: Mapped[str] = mapped_column(String(20), default="received")

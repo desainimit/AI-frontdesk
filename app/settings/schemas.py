@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from app.agents.catalog import APPOINTMENT_TOOLS, SAFE_READ_TOOLS
+from app.ai.catalog import APPOINTMENT_TOOLS, SAFE_READ_TOOLS, SUPPORT_TOOLS
 from app.calls.verification import VerificationPolicy
 from app.conversation.locales import LanguagePolicy
 
@@ -86,7 +86,7 @@ class ReceptionistSettings(Section):
 
     @property
     def allowed_tools(self) -> frozenset[str]:
-        tools = set(SAFE_READ_TOOLS)
+        tools = set(SAFE_READ_TOOLS | SUPPORT_TOOLS)
         if not self.can_answer_from_knowledge:
             tools.discard("get_knowledge")
         if self.can_book:
@@ -145,6 +145,9 @@ class PrivacySettings(Section):
     # Call transcripts older than this are deleted by the worker. Calls are not recorded.
     transcript_retention_days: int = Field(default=90, ge=1, le=365)
     caller_verification: VerificationPolicy = Field(default_factory=VerificationPolicy)
+    # A patient calling or writing from the number on their record may see, move and
+    # cancel their own appointments. Off: they can still book; changes go to staff.
+    known_number_can_manage: bool = True
     # Off: an event in a provider's own calendar says only what kind of visit it is.
     calendar_shows_patient_name: bool = False
 

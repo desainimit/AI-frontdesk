@@ -88,8 +88,19 @@ async def provision_worker(settings: Settings) -> None:
             await connection.exec_driver_sql(f"GRANT SELECT ON call_transcripts TO {quoted}")
             await connection.exec_driver_sql(f"GRANT DELETE ON call_transcripts TO {quoted}")
             await connection.exec_driver_sql(
-                f"GRANT SELECT, INSERT ON post_call_reports, follow_up_events TO {quoted}"
+                f"GRANT SELECT, INSERT ON post_call_reports TO {quoted}"
             )
+            # The worker opens tickets for what it finds: a call that needs a person,
+            # an appointment changed in a provider's own calendar.
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT ON tickets, ticket_events TO {quoted}"
+            )
+            for table in ("tickets", "ticket_events"):
+                await connection.exec_driver_sql(f"DROP POLICY IF EXISTS ticket_opening ON {table}")
+                await connection.exec_driver_sql(
+                    f"CREATE POLICY ticket_opening ON {table} TO {quoted} "
+                    "USING (true) WITH CHECK (true)"
+                )
             await connection.exec_driver_sql(f"GRANT DELETE ON post_call_reports TO {quoted}")
             await connection.exec_driver_sql(
                 f"REVOKE ALL ON tenants, calls, appointments FROM {quoted}"

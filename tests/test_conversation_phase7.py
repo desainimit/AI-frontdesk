@@ -18,6 +18,7 @@ from app.conversation.state import (
 from app.conversation.store import MemoryConversationStateStore, RedisConversationStateStore
 from app.voice.pipeline import VoicePipeline
 from app.voice.stt.base import TranscriptionResult
+from tests.confirmations import ask_to_confirm
 from tests.fake_stt import MockSTTProvider
 from tests.fake_tts import MockTTSProvider
 
@@ -106,57 +107,6 @@ def test_identity_state_lifecycle() -> None:
     assert identity.verified_at is not None
 
 
-def test_context_maintenance_across_multiple_utterances() -> None:
-    call_id = uuid4()
-    tenant_id = uuid4()
-    state = ConversationStateManager.create_initial_state(
-        call_id=call_id,
-        tenant_id=tenant_id,
-        telephony_call_id="CAtest",
-    )
-
-    # Turn 1: "I need to book an appointment"
-    ConversationStateManager.process_caller_utterance(
-        state, "I want to schedule an appointment with a doctor"
-    )
-    assert state.active_flow_state.flow_type == FlowType.APPOINTMENT_BOOKING
-    assert state.active_flow_state.step == FlowStep.COLLECTING_DETAILS
-    assert state.appointment_draft is not None
-
-    # Turn 2: "Dr Shah" (Short context-dependent answer)
-    ConversationStateManager.process_caller_utterance(state, "Dr Shah")
-    assert state.active_flow_state.get_slot("provider_name") == "Dr Shah"
-    assert state.appointment_draft.provider_name == "Dr Shah"
-
-    # Turn 3: "Tomorrow" (Short context-dependent answer)
-    ConversationStateManager.process_caller_utterance(state, "Tomorrow")
-    assert state.active_flow_state.get_slot("date") == "tomorrow"
-
-    # Turn 4: "Afternoon" (Short context-dependent answer)
-    ConversationStateManager.process_caller_utterance(state, "In the afternoon")
-    assert state.active_flow_state.get_slot("time_preference") == "afternoon"
-
-    # Turn 5: Propose slot -> awaiting confirmation
-    action_params: dict[str, Any] = {
-        "provider_name": "Dr Shah",
-        "date": "tomorrow",
-        "slot_time": "2:00 PM",
-    }
-    ConversationStateManager.propose_appointment_slot(
-        state,
-        action_params=action_params,
-        prompt="I found a slot with Dr Shah tomorrow at 2:00 PM. Would you like me to book it?",
-    )
-    assert state.awaiting_confirmation
-    assert state.active_flow_state.step == FlowStep.AWAITING_CONFIRMATION
-
-    # Turn 6: "Yes, book that"
-    ConversationStateManager.process_caller_utterance(state, "Yes, book that please")
-    assert state.confirmation_state.status == ConfirmationStatus.CONFIRMED
-    assert not state.awaiting_confirmation
-    assert state.active_flow_state.step == FlowStep.EXECUTING
-
-
 def test_confirmation_rejection_and_expiration() -> None:
     call_id = uuid4()
     tenant_id = uuid4()
@@ -167,7 +117,7 @@ def test_confirmation_rejection_and_expiration() -> None:
     )
 
     ConversationStateManager.process_caller_utterance(state, "Book an appointment")
-    ConversationStateManager.propose_appointment_slot(
+    ask_to_confirm(
         state,
         action_params={"slot": "10am"},
         prompt="Book at 10am?",
@@ -291,8 +241,6 @@ async def test_voice_pipeline_conversation_state_integration() -> None:
     # Verify conversation state was updated and saved
     assert state.utterance_count == 1
     assert state.last_caller_utterance == "I want to book an appointment with Dr Shah"
-    assert state.active_flow_state.flow_type == FlowType.APPOINTMENT_BOOKING
-    assert state.active_flow_state.get_slot("provider_name") == "Dr Shah"
 
     # Verify persisted in store
     persisted = await store.get(tenant_id, call_id)

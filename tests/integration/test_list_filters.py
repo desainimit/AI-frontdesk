@@ -168,7 +168,6 @@ async def test_filter_parameters_are_validated_and_scoped_over_http(
             ("users", {"role_id": "owner"}),
             ("patients", {"q": "x" * 101}),
             ("knowledge/documents", {"status": "published"}),
-            ("follow-ups", {"status": "open"}),
         ):
             rejected = await client.get(path, params=params, headers=a)
             assert rejected.status_code == 422, (path, params)
@@ -181,7 +180,6 @@ async def test_filter_parameters_are_validated_and_scoped_over_http(
             ("audit-events", {"actor_type": "user", "resource_type": "patient"}),
             ("users", {"q": "admin", "is_active": "true"}),
             ("knowledge/documents", {"status": "approved", "q": "policy"}),
-            ("follow-ups", {"status": "all", "kind": "human_review"}),
             ("providers", {"q": "prov"}),
             ("locations", {"q": "clinic"}),
         ):

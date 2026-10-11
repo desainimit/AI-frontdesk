@@ -425,7 +425,7 @@ async def test_run_media_pipeline_mode(settings: Settings) -> None:
     context = CallContext(tenant_id, call_id, provider_call_id, uuid4())
 
     service = MagicMock()
-    service.start = AsyncMock()
+    service.start = AsyncMock(return_value=None)
     service.finish = AsyncMock()
     service.settings = AsyncMock(return_value=default_settings("Test Clinic"))
     # The default speech-to-text follows the caller's language, so the call reads the
@@ -522,5 +522,4 @@ async def test_run_media_pipeline_mode(settings: Settings) -> None:
     assert persisted is not None and persisted.call_state.status.value == "completed"
     assert persisted.call_state.ended_at is not None
     assert persisted.utterance_count == 1
-    assert persisted.active_intent == "book_appointment"
     assert persisted.last_agent_response != "Test appointment booking"

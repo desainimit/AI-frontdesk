@@ -1,0 +1,320 @@
+"""One turn of the receptionist, the same on the phone, by text and in the test chat.
+
+The engine yields what happens as it happens: sentences as soon as they are complete,
+lookups as they start and finish, a hand-over when a person is needed, and at the end
+what the turn cost. The channel decides what to do with each: speak it, send it, show it.
+"""
+
+import asyncio
+import logging
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from time import perf_counter
+from typing import Any, Literal, Protocol
+
+from pydantic import ValidationError
+
+from app.ai.catalog import MUTATION_TOOLS
+from app.ai.identity import ContactIdentity
+from app.ai.llm.base import (
+    ChatRequest,
+    Completed,
+    LLMBlockedError,
+    LLMInterruptedError,
+    LLMInvalidResponseError,
+    LLMProviderError,
+    ModelEvent,
+    TextDelta,
+    ToolResult,
+    Turn,
+    Usage,
+)
+from app.ai.prompts import history, system_prompt
+from app.ai.sentences import SentenceSplitter
+from app.ai.session import AssistantAuthorizationError, Session
+from app.ai.tools.appointments import AppointmentFlow
+from app.ai.tools.registry import ToolRegistry, ToolValidationError
+from app.ai.wording import spoken
+from app.conversation.manager import ConversationStateManager
+from app.conversation.redaction import redact_verification_secrets
+from app.conversation.state import ConversationState, SafetyDecision
+from app.core.errors import ApplicationError
+from app.safety.engine import SafetyEngine
+
+logger = logging.getLogger(__name__)
+
+MAX_STEPS = 4
+MAX_TOOL_CALLS = 6
+TURN_SECONDS = 25.0
+# How long the first words wait for the model's safety reading of what was said.
+SAFETY_WAIT_SECONDS = 1.0
+
+Outcome = Literal[
+    "answered", "confirmation", "safety", "handoff", "unavailable", "blocked", "interrupted"
+]
+
+
+@dataclass(frozen=True)
+class Say:
+    """The next piece of the reply, complete enough to speak or send."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class Working:
+    tool: str
+
+
+@dataclass(frozen=True)
+class Worked:
+    tool: str
+    ok: bool
+
+
+@dataclass(frozen=True)
+class Handoff:
+    """A person has to take it from here."""
+
+    reason: Literal["requested", "emergency", "unavailable"]
+
+
+@dataclass(frozen=True)
+class Done:
+    outcome: Outcome
+    reply: str
+    tools: tuple[str, ...] = ()
+    usage: Usage = field(default_factory=Usage)
+    model: str = ""
+    first_text_ms: int | None = None
+    total_ms: int = 0
+    steps: int = 0
+    error: str | None = None
+
+
+Event = Say | Working | Worked | Handoff | Done
+
+
+class Model(Protocol):
+    def stream(self, request: ChatRequest) -> AsyncIterator[ModelEvent]: ...
+
+
+class Engine:
+    def __init__(
+        self,
+        model: Model,
+        registry: ToolRegistry,
+        flow: AppointmentFlow,
+        safety: SafetyEngine,
+        identity: ContactIdentity,
+    ) -> None:
+        self.model = model
+        self.registry = registry
+        self.flow = flow
+        self.safety = safety
+        self.identity = identity
+
+    async def run(
+        self, session: Session, state: ConversationState, utterance: str
+    ) -> AsyncIterator[Event]:
+        """Reply to what the person just said. The channel has already put their words
+        into the state's transcript."""
+        started = perf_counter()
+        said: list[str] = []
+        tools: list[str] = []
+        usage, model, steps = Usage(), "", 0
+        first_text_ms: int | None = None
+        semantic: asyncio.Task[str | None] | None = None
+
+        def say(text: str) -> Say:
+            nonlocal first_text_ms
+            if first_text_ms is None:
+                first_text_ms = int((perf_counter() - started) * 1000)
+            said.append(text)
+            return Say(text)
+
+        def done(outcome: Outcome, error: str | None = None) -> Done:
+            return Done(
+                outcome,
+                " ".join(said),
+                tuple(tools),
+                usage,
+                model,
+                first_text_ms,
+                int((perf_counter() - started) * 1000),
+                steps,
+                error,
+            )
+
+        def handoff() -> Handoff | None:
+            decision = state.safety_state.decision
+            if decision == SafetyDecision.EMERGENCY_PROTOCOL:
+                return Handoff("emergency")
+            if decision in {SafetyDecision.TRANSFER, SafetyDecision.ESCALATE}:
+                return Handoff("requested")
+            return None
+
+        try:
+            session.validate_binding(state)
+            if not utterance.strip() or len(utterance) > 4000:
+                raise ToolValidationError("Invalid utterance size")
+            words = redact_verification_secrets(utterance)
+            # 1. The instant safety rules. They need no model and nothing outranks them.
+            fixed = await self.safety.evaluate(state, words, semantic=False)
+            if fixed is not None:
+                yield say(fixed)
+                if (event := handoff()) is not None:
+                    yield event
+                yield done("safety")
+                return
+            session.validate(state)
+            # 2. A number that belongs to one patient identifies them.
+            if not state.identity_state.is_verified and session.contact and session.writes:
+                try:
+                    await self.identity.recognise(session, state)
+                except ApplicationError:
+                    logger.warning("assistant_recognition_failed")
+            # 3. What the server answers itself: a code, or yes/no to its own question.
+            direct = await self.flow.before_turn(session, state, utterance)
+            if direct is not None:
+                tools.append(direct.tool)
+                yield say(direct.response)
+                yield done("confirmation")
+                return
+            # 4. The model, with its own reading of the risk running beside it.
+            if self.safety.classifier is not None:
+                semantic = asyncio.create_task(self.safety.semantic_check(state, words))
+            turns: list[Turn] = history(state, words)
+            specs = self.registry.specs(session)
+            system = system_prompt(session, state)
+            while steps < MAX_STEPS:
+                if perf_counter() - started > TURN_SECONDS:
+                    raise TimeoutError
+                steps += 1
+                splitter = SentenceSplitter()
+                completed: Completed | None = None
+                async for item in self.model.stream(ChatRequest(system, tuple(turns), specs)):
+                    if isinstance(item, TextDelta):
+                        for sentence in splitter.feed(item.text):
+                            semantic, alarm = await self._alarm(semantic, started)
+                            if alarm is not None:
+                                yield say(alarm)
+                                if (event := handoff()) is not None:
+                                    yield event
+                                yield done("safety")
+                                return
+                            yield say(sentence)
+                    else:
+                        completed = item
+                if completed is None:
+                    raise LLMInvalidResponseError("LLM returned no usable response")
+                usage = Usage(
+                    usage.input_tokens + completed.usage.input_tokens,
+                    usage.output_tokens + completed.usage.output_tokens,
+                )
+                model = completed.model or model
+                semantic, alarm = await self._alarm(semantic, started)
+                if alarm is not None:
+                    yield say(alarm)
+                    if (event := handoff()) is not None:
+                        yield event
+                    yield done("safety")
+                    return
+                rest = splitter.finish(cut_off=completed.finish == "length")
+                if rest:
+                    yield say(rest)
+                calls = completed.turn.tool_calls
+                if not calls:
+                    yield done("answered")
+                    return
+                if len(tools) + len(calls) > MAX_TOOL_CALLS:
+                    raise ToolValidationError("Tool budget exhausted")
+                turns.append(completed.turn)
+                proposals = [call for call in calls if call.name in MUTATION_TOOLS]
+                for call in calls:
+                    yield Working(call.name)
+                    result: dict[str, Any]
+                    try:
+                        if proposals and (len(calls) > 1):
+                            raise ToolValidationError("Propose one change at a time")
+                        result = await self.registry.execute(session, state, call)
+                        ok = True
+                    except AssistantAuthorizationError:
+                        raise
+                    except (ToolValidationError, ValidationError, ValueError):
+                        # The model can read this and try again with better arguments.
+                        result, ok = {"status": "invalid_arguments"}, False
+                    except (TimeoutError, ApplicationError) as error:
+                        code = error.code if isinstance(error, ApplicationError) else "timeout"
+                        result, ok = {"status": "failed", "reason": code}, False
+                    tools.append(call.name)
+                    ConversationStateManager.record_tool_call(state, call.name)
+                    yield Worked(call.name, ok)
+                    turns.append(ToolResult(call.id, call.name, result))
+                    if (event := handoff()) is not None:
+                        # The tool asked for a person.
+                        yield say(self.safety.message(state))
+                        yield event
+                        yield done("handoff")
+                        return
+                    spoken_by_server = str(result.get("say") or "")
+                    if spoken_by_server:
+                        # The server's own wording, such as the question to confirm.
+                        yield say(spoken_by_server)
+                        yield done("confirmation")
+                        return
+                    if call.name == "get_knowledge" and result.get("status") == "not_found":
+                        yield say(session.configuration.receptionist.unknown_answer)
+                        yield done("answered")
+                        return
+            raise ToolValidationError("Step budget exhausted")
+        except AssistantAuthorizationError:
+            yield say(spoken(state.language, "unavailable"))
+            yield done("blocked", "not_authorized")
+        except (LLMBlockedError, LLMInvalidResponseError) as error:
+            # Nothing usable came back. Say so and offer a person; do not guess.
+            yield say(spoken(state.language, "could_not_answer"))
+            yield done("blocked", error.code)
+        except LLMInterruptedError as error:
+            # Part of the reply was already delivered; it is never said twice.
+            yield say(spoken(state.language, "say_again"))
+            yield done("interrupted", error.code)
+        except (LLMProviderError, TimeoutError, ToolValidationError, ValidationError) as error:
+            code = error.code if isinstance(error, LLMProviderError) else "could_not_finish"
+            logger.warning(
+                "assistant_turn_unavailable",
+                extra={"conversation_id": str(session.conversation_id), "error_type": code},
+            )
+            yield say(
+                spoken(
+                    state.language,
+                    "staff_will_call" if session.channel == "voice" else "staff_will_reply",
+                )
+            )
+            yield Handoff("unavailable")
+            yield done("unavailable", code)
+        finally:
+            if semantic is not None and not semantic.done():
+                semantic.cancel()
+
+    @staticmethod
+    async def _alarm(
+        task: asyncio.Task[str | None] | None, started: float
+    ) -> tuple[asyncio.Task[str | None] | None, str | None]:
+        """The safety reply if the model's reading raised the alarm.
+
+        The first words wait a moment for it; after that it is checked without waiting.
+        """
+        if task is None:
+            return None, None
+        if not task.done():
+            remaining = SAFETY_WAIT_SECONDS - (perf_counter() - started)
+            if remaining > 0:
+                await asyncio.wait({task}, timeout=remaining)
+        if not task.done():
+            return task, None
+        try:
+            return None, task.result()
+        except Exception:
+            # The rules already ran; a failed second opinion changes nothing.
+            return None, None

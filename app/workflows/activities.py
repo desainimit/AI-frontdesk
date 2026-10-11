@@ -10,9 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.calls.models import Call
 from app.core.database.rls import set_tenant_scope
 from app.events.store import verify_worker_role
-from app.postcall.models import CallTranscript, FollowUpEvent, PostCallReport
+from app.postcall.models import CallTranscript, PostCallReport
 from app.postcall.schemas import PostCallInput, analyze_post_call
+from app.tickets.service import open_ticket
 from app.workflows.intent import WorkflowRequest
+
+FOLLOW_UPS = {
+    "human_review": "A call needs someone to look at it",
+    "appointment_followup": "An appointment request from a call was not finished",
+}
 
 
 class WorkflowActivities:
@@ -58,12 +64,14 @@ class WorkflowActivities:
                 .returning(PostCallReport.id)
             )
             if inserted is not None and analysis.outcome.follow_up is not None:
-                session.add(
-                    FollowUpEvent(
-                        tenant_id=tenant_id,
-                        call_id=call_id,
-                        kind=analysis.outcome.follow_up,
-                        status="pending",
-                    )
+                # One ticket per call: the receptionist may already have opened it.
+                await open_ticket(
+                    session,
+                    tenant_id,
+                    source="call",
+                    subject=FOLLOW_UPS[analysis.outcome.follow_up],
+                    description=analysis.summary,
+                    call_id=call_id,
+                    dedupe_key=f"call:{call_id}:follow-up",
                 )
             return "recorded"

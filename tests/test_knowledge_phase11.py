@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
-from app.agents.language import spoken
+from app.ai.wording import spoken
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
 from app.core.errors import AuthorizationError

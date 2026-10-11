@@ -1,11 +1,12 @@
 import json
-from typing import Any
+from enum import StrEnum
+from typing import Any, Self
 
 import httpx
 import pytest
-from pydantic import SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
-from app.agents.providers.base import (
+from app.ai.llm.base import (
     LLMBlockedError,
     LLMCredentialsError,
     LLMCreditsError,
@@ -18,11 +19,36 @@ from app.agents.providers.base import (
     LLMTimeoutError,
     LLMUnavailableError,
 )
-from app.agents.providers.gemini import GeminiLLMProvider
-from app.agents.providers.openrouter import OpenRouterLLMProvider
-from app.agents.providers.schema import wire_schema
-from app.agents.schemas import AgentDecision
+from app.ai.llm.gemini import GeminiLLMProvider
+from app.ai.llm.openrouter import OpenRouterLLMProvider
+from app.ai.llm.schema import wire_schema
 from app.safety.classifier import SafetySignal
+
+
+class Intent(StrEnum):
+    GREETING = "greeting"
+    UNKNOWN = "unknown"
+
+
+class Step(BaseModel):
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    arguments_json: str = Field(min_length=2, max_length=4096)
+
+
+class AgentDecision(BaseModel):
+    """A structured answer with a nested model, an enum and a rule of its own."""
+
+    model_config = ConfigDict(extra="forbid")
+    intent: Intent
+    response: str = Field(max_length=1000)
+    tool_calls: list[Step] = Field(max_length=3)
+
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        if not self.tool_calls and not self.response.strip():
+            raise ValueError("A final decision requires a response")
+        return self
+
 
 REQUEST = LLMRequest(
     (
@@ -116,39 +142,6 @@ async def test_gemini_adapter_contract(outcome: str) -> None:
         assert "$ref" not in sent_schema and "maxLength" not in sent_schema
     finally:
         await provider.close()
-
-
-async def test_gemini_plain_text_and_optional_thinking() -> None:
-    seen: list[dict[str, Any]] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(json.loads(request.content))
-        return httpx.Response(
-            200,
-            json={
-                "candidates": [
-                    {
-                        "content": {"role": "model", "parts": [{"text": "Hi"}]},
-                        "finishReason": "STOP",
-                    }
-                ]
-            },
-        )
-
-    provider = GeminiLLMProvider(
-        SecretStr("test-key"),
-        "test-model",
-        1,
-        800,
-        thinking_level=None,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-    )
-    try:
-        assert (await provider.generate(REQUEST)).text == "Hi"
-    finally:
-        await provider.close()
-    generation = seen[0]["generationConfig"]
-    assert "thinkingConfig" not in generation and "responseJsonSchema" not in generation
 
 
 @pytest.mark.parametrize("schema", [AgentDecision, SafetySignal])
@@ -283,32 +276,6 @@ async def test_openrouter_adapter_contract(outcome: str) -> None:
     assert wire["type"] == "json_schema" and wire["json_schema"]["strict"] is True
     assert wire["json_schema"]["name"] == "AgentDecision"
     assert "$ref" not in json.dumps(wire) and "maxLength" not in json.dumps(wire)
-
-
-async def test_openrouter_plain_text_uses_the_configured_model_and_optional_reasoning() -> None:
-    seen: list[dict[str, Any]] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(json.loads(request.content))
-        return httpx.Response(
-            200,
-            json={"choices": [{"finish_reason": "stop", "message": {"content": "Hi"}}]},
-        )
-
-    provider = OpenRouterLLMProvider(
-        SecretStr("test-key"),
-        "google/gemini-3.5-flash-lite",
-        1,
-        800,
-        reasoning_effort=None,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-    )
-    try:
-        assert (await provider.generate(REQUEST)).text == "Hi"
-    finally:
-        await provider.close()
-    assert seen[0]["model"] == "google/gemini-3.5-flash-lite"
-    assert "reasoning" not in seen[0] and "response_format" not in seen[0]
 
 
 def test_adapters_refuse_to_start_without_a_key() -> None:

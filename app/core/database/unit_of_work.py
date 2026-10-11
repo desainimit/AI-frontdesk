@@ -88,6 +88,27 @@ async def enter_tenant_scope(session: AsyncSession, context: RequestContext) -> 
         from app.calls.access import active_call
         from app.calls.service import CallContext
 
+        if context.conversation_id is not None:
+            from app.messaging.models import Conversation
+
+            # A patient writing in: the thread must be this clinic's, still open, and
+            # already tied to the patient they claim to be.
+            conversation = await session.scalar(
+                select(Conversation)
+                .join(Tenant, Tenant.id == Conversation.tenant_id)
+                .where(
+                    Conversation.id == context.conversation_id,
+                    Conversation.tenant_id == context.tenant_id,
+                    Conversation.status == "open",
+                    Tenant.is_active.is_(True),
+                )
+                .with_for_update(read=True, of=Conversation)
+            )
+            if conversation is None or (
+                context.patient_id is not None and conversation.patient_id != context.patient_id
+            ):
+                raise AuthorizationError()
+            return
         if context.call_id is None or context.provider_call_id is None:
             raise AuthorizationError()
         call = await active_call(

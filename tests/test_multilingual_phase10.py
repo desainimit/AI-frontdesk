@@ -7,8 +7,8 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from app.agents.appointment_flow import affirmative
-from app.agents.language import spoken
+from app.ai.wording import spoken
+from app.conversation.confirmation import confirmation_answer
 from app.conversation.language import observe_language
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConfirmationStatus
@@ -17,6 +17,7 @@ from app.voice.stt.base import TranscriptionResult
 from app.voice.stt.live import DeepgramLiveStream
 from app.voice.tts.azure import AzureTTSProvider
 from app.voice.tts.elevenlabs import ElevenLabsTTSProvider
+from tests.confirmations import ask_to_confirm
 from tests.fake_stt import MockSTTProvider
 from tests.fake_tts import MockTTSProvider
 
@@ -138,11 +139,9 @@ async def test_tts_language_and_fallback_routing() -> None:
 def test_hindi_confirmation_and_server_owned_speech() -> None:
     state = ConversationStateManager.create_initial_state(uuid4(), uuid4(), "CAphase10")
     state.language_state.primary_language = "hi"
-    ConversationStateManager.propose_appointment_slot(
-        state, {"slot_time": "10:00"}, "Confirm 10:00?"
-    )
-    assert affirmative("\u0939\u093e\u0901", "hi")
-    assert not affirmative("\u0928\u0939\u0940\u0902")
+    ask_to_confirm(state, {"slot_time": "10:00"}, "Confirm 10:00?")
+    assert confirmation_answer("\u0939\u093e\u0901", "hi") is True
+    assert confirmation_answer("\u0928\u0939\u0940\u0902", "en") is not True
     ConversationStateManager.process_caller_utterance(state, "\u0939\u093e\u0901")
     assert state.confirmation_state.status == ConfirmationStatus.CONFIRMED
     assert "\u0905\u092a\u0949\u0907\u0902\u091f\u092e\u0947\u0902\u091f" in spoken(

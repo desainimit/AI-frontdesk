@@ -68,7 +68,7 @@ _LABELS = {
     Permission.APPOINTMENT_READ: "View appointments",
     Permission.APPOINTMENT_WRITE: "Book, change and cancel appointments",
     Permission.CALL_READ: "View calls and transcripts",
-    Permission.FOLLOW_UP_MANAGE: "Work on follow-ups",
+    Permission.FOLLOW_UP_MANAGE: "Work on tickets and reply to messages",
     Permission.KNOWLEDGE_READ: "View knowledge",
     Permission.KNOWLEDGE_WRITE: "Add and approve knowledge",
     Permission.USER_READ: "View the team",

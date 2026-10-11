@@ -5,7 +5,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agents.providers.base import LLMMessage, LLMProvider, LLMRequest
+from app.ai.llm.base import LLMMessage, LLMProvider, LLMRequest
 
 
 class SafetySignal(BaseModel):

@@ -20,6 +20,8 @@ class RequestContext:
     call_id: UUID | None = None
     patient_id: UUID | None = None
     provider_call_id: str | None = None
+    # A patient writing to the receptionist rather than calling: the thread.
+    conversation_id: UUID | None = None
     # A platform administrator working inside this workspace: their account.
     platform_user_id: UUID | None = None
     support_session_id: UUID | None = None
@@ -32,10 +34,11 @@ class RequestContext:
     role_name: str | None = None
 
     def __post_init__(self) -> None:
+        on_a_call = self.call_id is not None and self.provider_call_id is not None
         if self.actor_type == ActorType.CALLER and (
-            self.call_id is None or self.provider_call_id is None or self.actor_id is not None
+            self.actor_id is not None or on_a_call == (self.conversation_id is not None)
         ):
-            raise ValueError("Caller context requires a server call binding")
+            raise ValueError("Caller context requires one server call or conversation binding")
         if self.actor_type == ActorType.USER and self.actor_id is None:
             raise ValueError("User context requires an actor")
         if self.actor_type == ActorType.PLATFORM_SUPPORT and (

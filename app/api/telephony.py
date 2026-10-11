@@ -20,12 +20,13 @@ from fastapi import (
 )
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.agents.appointment_tools import appointment_tools
-from app.agents.context import AgentContext
-from app.agents.providers.base import LLMProvider
-from app.agents.runtime import AgentRuntime
+from app.ai.engine import Engine
+from app.ai.llm.base import LLMProvider
+from app.ai.llm.factory import build_llm_provider, llm_from_connection
+from app.ai.llm.gateway import ModelGateway, TurnLimits, breaker_for
+from app.ai.session import Session
+from app.ai.tools.toolbox import build_tools
 from app.api.tenancy import Context, Cursor, DatabaseDependency, Limit, Since, Until
-from app.audit.events import AuditAction
 from app.calls.access import CallPatientAccess, IssuePatientAccess, PatientAccessCode
 from app.calls.service import (
     CallBinding,
@@ -35,7 +36,7 @@ from app.calls.service import (
 )
 from app.conversation import ConversationStateManager, build_conversation_store
 from app.conversation.locales import LOCALES, base_language
-from app.conversation.state import CallStatus, ConversationState, SafetyDecision
+from app.conversation.state import CallStatus, ConversationState
 from app.conversation.store import ConversationStateStore
 from app.core.database.pages import Page, decode_cursor, page
 from app.core.database.session import Database
@@ -50,8 +51,6 @@ from app.integrations.resolver import (
 from app.postcall.schemas import PostCallInput
 from app.safety.classifier import LLMSafetyClassifier
 from app.safety.engine import SafetyEngine
-from app.safety.messages import transfer_failed_message
-from app.safety.transfer import TransferError, transfer_call
 from app.voice.circuit import CircuitRegistry
 from app.voice.factory import (
     follows_caller_language,
@@ -63,7 +62,8 @@ from app.voice.factory import (
 from app.voice.metrics import VoiceMetrics
 from app.voice.pipeline import VoicePipeline
 from app.voice.processors.interruption import InterruptionConfig
-from app.voice.stt.base import SpeechToTextProvider, TranscriptionResult
+from app.voice.receptionist import CallReceptionist
+from app.voice.stt.base import SpeechToTextProvider
 from app.voice.tts.base import TextToSpeechProvider
 from app.voice.twilio import (
     TwilioCredentials,
@@ -82,10 +82,6 @@ WEBHOOK_REQUESTS_PER_CALL_PER_MINUTE = 60
 IDLE_SECONDS = 30
 MAX_CALL_SECONDS = 600
 CONVERSATION_TTL_SECONDS = 3600
-TOOL_TIMEOUT_SECONDS = 3
-# Model requests and tool calls allowed while answering one thing the caller said.
-AGENT_MAX_STEPS = 3
-AGENT_MAX_TOOL_CALLS = 4
 
 
 @router.get("/api/v1/calls")
@@ -129,6 +125,13 @@ def tenant_resolver(app: FastAPI) -> TenantIntegrationResolver | None:
     """The connection resolver; absent only when the app runs without a real database."""
     resolver = getattr(app.state, "integration_resolver", None)
     return resolver if isinstance(resolver, TenantIntegrationResolver) else None
+
+
+def turn_limits(app: FastAPI) -> TurnLimits:
+    limits = getattr(app.state, "turn_limits", None)
+    if not isinstance(limits, TurnLimits):
+        limits = app.state.turn_limits = TurnLimits()
+    return limits
 
 
 def circuit_registry(app: FastAPI) -> CircuitRegistry:
@@ -282,11 +285,14 @@ async def incoming(request: Request, database: DatabaseDependency) -> Response:
     credentials = await authenticate_for_number(request, service, params)
     if not re.fullmatch(r"\+[1-9][0-9]{7,14}", params.get("To", "")):
         raise HTTPException(400, "Invalid destination")
+    caller = params.get("From", "")
     context = await service.receive(
         params["To"],
         params["CallSid"],
         UUID(request.state.request_id),
         CallBinding(credentials.integration_id, credentials.version_id),
+        # A withheld or malformed caller ID is simply not kept.
+        caller if re.fullmatch(r"\+[1-9][0-9]{7,14}", caller) else None,
     )
     return Response(
         twiml(request.app.state.settings, context, credentials),
@@ -352,7 +358,11 @@ class CallProviders:
     stt_connection: ResolvedIntegration | None
     tts: TextToSpeechProvider
     llm: LLMProvider
-    owned_llm: LLMProvider | None
+    # The quicker model: the safety check, and one last attempt at a reply.
+    light_llm: LLMProvider | None
+    owned: tuple[LLMProvider, ...]
+    # Which model account this call uses, for its circuit breaker.
+    account: str
     multilingual: bool
 
     def speech_to_text(
@@ -390,24 +400,27 @@ async def resolve_call_providers(
     if tts is None:
         raise IntegrationUnavailableError()
     llm: LLMProvider | None = app.state.llm_provider
-    owned_llm: LLMProvider | None = None
+    light: LLMProvider | None = None
+    owned: tuple[LLMProvider, ...] = ()
+    account = "platform"
     if llm_connection is not None:
-        from app.agents.factory import llm_from_connection
-
-        owned_llm = llm = llm_from_connection(
-            settings,
-            llm_connection.provider,
-            llm_connection.secret("api_key"),
-            dict(llm_connection.config),
-        )
-    if llm is None and settings.platform_llm_key.get_secret_value():
-        from app.agents.factory import build_llm_provider
-
-        owned_llm = llm = build_llm_provider(settings)
+        key, config = llm_connection.secret("api_key"), dict(llm_connection.config)
+        llm = llm_from_connection(llm_connection.provider, key, config)
+        light = llm_from_connection(llm_connection.provider, key, config, light=True)
+        owned, account = (llm, light), str(llm_connection.integration_id)
+    elif llm is None and settings.platform_llm_key.get_secret_value():
+        llm, light = build_llm_provider(settings), build_llm_provider(settings, light=True)
+        owned = (llm, light)
     if llm is None:
         raise IntegrationUnavailableError()
     return CallProviders(
-        stt_connection, tts, llm, owned_llm, follows_caller_language(settings, stt_connection)
+        stt_connection,
+        tts,
+        llm,
+        light,
+        owned,
+        account,
+        follows_caller_language(settings, stt_connection),
     )
 
 
@@ -421,8 +434,9 @@ async def run_media(
 ) -> None:
     # The account that authenticated this stream: the tenant's own, or the platform's.
     account = credentials or TwilioCredentials.from_settings(settings)
-    owned_llm: LLMProvider | None = None
+    owned: tuple[LLMProvider, ...] = ()
     context: CallContext | None = None
+    receptionist: CallReceptionist | None = None
     conversation_state: ConversationState | None = None
     conversation_store: ConversationStateStore | None = None
     received = sent = 0
@@ -454,20 +468,15 @@ async def run_media(
                 )
             ):
                 raise ValueError("Invalid stream binding")
-            await service.start(candidate, stream_sid)
+            caller_number = await service.start(candidate, stream_sid)
             context = candidate
         telemetry = socket.app.state.telemetry
         redis_dep = getattr(getattr(socket.app.state, "resources", None), "redis", None)
         resolver = tenant_resolver(socket.app)
         providers = await resolve_call_providers(socket.app, settings, tenant_id)
-        owned_llm, llm, multilingual = (
-            providers.owned_llm,
-            providers.llm,
-            providers.multilingual,
-        )
+        owned, llm, multilingual = providers.owned, providers.llm, providers.multilingual
         tts = providers.tts
         configuration = await service.settings(context)
-        receptionist = configuration.receptionist
         conv_store = socket.app.state.conversation_store or build_conversation_store(
             settings, redis_dep
         )
@@ -476,8 +485,8 @@ async def run_media(
             call_id=call_id,
             tenant_id=tenant_id,
             telephony_call_id=sid,
-            caller_phone=getattr(context, "caller_phone", None),
-            language_policy=receptionist.languages,
+            caller_phone=caller_number,
+            language_policy=configuration.receptionist.languages,
         )
 
         def speech_locale() -> str:
@@ -487,94 +496,52 @@ async def run_media(
         conversation_state = initial_conv_state
         initial_conv_state.call_state.stream_sid = stream_sid
         await conv_store.save(initial_conv_state, ttl_seconds=CONVERSATION_TTL_SECONDS)
-        transfer_number = configuration.calls.transfer_number
-        # Adds one model request per caller turn; the deterministic rules always run.
-        classifier = LLMSafetyClassifier(llm) if settings.safety_semantic_enabled else None
-        safety_engine = SafetyEngine(
-            classifier,
-            transfer_available=transfer_number is not None,
-        )
         voice_metrics = VoiceMetrics(telemetry)
-        registry, appointment_flow = appointment_tools(
-            service.sessions, TOOL_TIMEOUT_SECONDS, settings, resolver
-        )
-        agent = AgentRuntime(
-            llm,
+        registry, flow, identity = build_tools(service.sessions, settings, resolver)
+        engine = Engine(
+            ModelGateway(
+                llm,
+                fallback=providers.light_llm,
+                breaker=breaker_for(circuit_registry(socket.app), tenant_id, providers.account),
+                slot=turn_limits(socket.app).slot(tenant_id),
+            ),
             registry,
-            appointment_flow=appointment_flow,
-            safety_engine=safety_engine,
-            max_steps=AGENT_MAX_STEPS,
-            max_tool_calls=AGENT_MAX_TOOL_CALLS,
-            metrics=voice_metrics,
+            flow,
+            # The model's own reading of the risk uses the quicker model and runs beside
+            # the reply; the rules always run first.
+            SafetyEngine(
+                LLMSafetyClassifier(providers.light_llm or llm)
+                if settings.safety_semantic_enabled
+                else None,
+                transfer_available=configuration.calls.transfer_number is not None,
+            ),
+            identity,
         )
-        agent_context = AgentContext(
-            context,
-            receptionist.allowed_tools,
-            business_name=configuration.clinic.name,
-            instructions=receptionist.instructions,
-            tone=receptionist.tone,
-            configuration=configuration,
+        receptionist = CallReceptionist(
+            engine=engine,
+            session=Session(
+                tenant_id,
+                call_id,
+                "voice",
+                context.request_id,
+                configuration,
+                configuration.receptionist.allowed_tools,
+                provider_call_id=sid,
+                contact=caller_number,
+            ),
+            state=initial_conv_state,
+            store=conv_store,
+            store_ttl_seconds=CONVERSATION_TTL_SECONDS,
+            service=service,
+            sessions=service.sessions,
+            settings=settings,
+            account=account,
+            metrics=voice_metrics,
         )
 
         async def send_frame(msg: dict[str, Any]) -> None:
             async with asyncio.timeout(5):
                 await socket.send_json(msg)
-
-        async def on_transcript_cb(result: TranscriptionResult) -> None:
-            nonlocal status, reason
-            if not result.is_final or not result.text.strip():
-                return
-            reply = await agent.respond(agent_context, initial_conv_state, result.text)
-            response = reply.response
-            safety = initial_conv_state.safety_state
-            if safety.decision == SafetyDecision.EMERGENCY_PROTOCOL and not safety.event_recorded:
-                safety.event_recorded = True
-                voice_metrics.record_emergency(safety.source or "rule")
-                try:
-                    await service.record_safety_event(context, AuditAction.EMERGENCY_DETECTED)
-                except Exception:
-                    logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
-            if safety.decision == SafetyDecision.ESCALATE and not safety.event_recorded:
-                safety.event_recorded = True
-                voice_metrics.record_human_transfer("unavailable")
-                try:
-                    await service.record_safety_event(context, AuditAction.HUMAN_TRANSFER_REQUESTED)
-                except Exception:
-                    logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
-            if safety.decision == SafetyDecision.TRANSFER:
-                if safety.transfer_attempted:
-                    return
-                safety.transfer_attempted = True
-                try:
-                    await service.record_safety_event(context, AuditAction.HUMAN_TRANSFER_REQUESTED)
-                except Exception:
-                    logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
-                await pipeline.speak(response)
-                if transfer_number is None:
-                    return
-                try:
-                    await transfer_call(settings, context, transfer_number, credentials=account)
-                    safety.transfer_confirmed = True
-                    status, reason = "completed", "human_transfer"
-                    voice_metrics.record_human_transfer("redirected")
-                    try:
-                        await service.record_safety_event(
-                            context, AuditAction.HUMAN_TRANSFER_REDIRECTED
-                        )
-                    except Exception:
-                        logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
-                except TransferError:
-                    voice_metrics.record_human_transfer("failed")
-                    safety.decision = SafetyDecision.ESCALATE
-                    await pipeline.speak(transfer_failed_message(initial_conv_state.language))
-                    try:
-                        await service.record_safety_event(
-                            context, AuditAction.HUMAN_TRANSFER_FAILED
-                        )
-                    except Exception:
-                        logger.warning("safety_audit_failed", extra={"call_id": str(call_id)})
-                return
-            await pipeline.speak(response)
 
         pipeline = VoicePipeline(
             stream_sid=stream_sid,
@@ -582,17 +549,18 @@ async def run_media(
             stt_provider=stt,
             tts_provider=tts,
             send_frame=send_frame,
-            on_transcript=on_transcript_cb,
+            on_transcript=receptionist.reply,
             interruption_config=InterruptionConfig(),
             conversation_state=initial_conv_state,
             conversation_store=conv_store,
             conversation_ttl_seconds=CONVERSATION_TTL_SECONDS,
             multilingual_enabled=multilingual,
         )
+        receptionist.pipeline = pipeline
         previous_sequence = int(message["sequenceNumber"])
         try:
             await pipeline.start()
-            await pipeline.speak(receptionist.greeting)
+            await pipeline.speak(configuration.receptionist.greeting)
             async with asyncio.timeout(configuration.calls.max_duration_minutes * 60):
                 while True:
                     async with asyncio.timeout(IDLE_SECONDS):
@@ -609,11 +577,7 @@ async def run_media(
                         ):
                             raise ValueError("Invalid stop binding")
                         status = "completed"
-                        reason = (
-                            "human_transfer"
-                            if initial_conv_state.safety_state.transfer_confirmed
-                            else "stream_stopped"
-                        )
+                        reason = "human_transfer" if receptionist.transferred else "stream_stopped"
                         break
                     if event == "mark":
                         pipeline.acknowledge_playback(message.get("mark", {}).get("name", ""))
@@ -644,9 +608,9 @@ async def run_media(
         status, reason = "failed", "pipeline_error"
         logger.error("call_pipeline_failed", extra={"call_id": str(call_id)})
     finally:
-        if owned_llm is not None:
+        for model in owned:
             with suppress(Exception):
-                await owned_llm.close()
+                await model.close()
         if conversation_state is not None and conversation_store is not None:
             conversation_state.call_state.status = {
                 "completed": CallStatus.COMPLETED,

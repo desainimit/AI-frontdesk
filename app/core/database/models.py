@@ -1,5 +1,6 @@
 """Explicit model registration for Alembic metadata; no runtime database access."""
 
+from app.ai.models import AiTurn as AiTurn
 from app.appointments.models import Appointment as Appointment
 from app.audit.models import AuditEvent as AuditEvent
 from app.calendar_sync.models import AppointmentCalendarLink as AppointmentCalendarLink
@@ -25,6 +26,8 @@ from app.knowledge.models import DocumentChunk as DocumentChunk
 from app.knowledge.models import DocumentVersion as DocumentVersion
 from app.knowledge.models import KnowledgeJob as KnowledgeJob
 from app.locations.models import Location as Location
+from app.messaging.models import Conversation as Conversation
+from app.messaging.models import ConversationMessage as ConversationMessage
 from app.notifications.models import OutboundMessage as OutboundMessage
 from app.patients.models import Patient as Patient
 from app.platform.models import PlatformAuditEvent as PlatformAuditEvent
@@ -32,7 +35,6 @@ from app.platform.models import PlatformConnection as PlatformConnection
 from app.platform.models import PlatformSettings as PlatformSettings
 from app.platform.models import WorkspaceCreation as WorkspaceCreation
 from app.postcall.models import CallTranscript as CallTranscript
-from app.postcall.models import FollowUpEvent as FollowUpEvent
 from app.postcall.models import PostCallReport as PostCallReport
 from app.providers.models import Provider as Provider
 from app.rbac.models import RolePermission as RolePermission
@@ -40,5 +42,7 @@ from app.rbac.models import TenantRole as TenantRole
 from app.settings.models import SettingsChange as SettingsChange
 from app.settings.models import TenantSettings as TenantSettings
 from app.tenants.models import Tenant as Tenant
+from app.tickets.models import Ticket as Ticket
+from app.tickets.models import TicketEvent as TicketEvent
 from app.users.models import User as User
 from app.workflows.models import WorkflowIntent as WorkflowIntent

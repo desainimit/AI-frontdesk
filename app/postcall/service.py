@@ -3,7 +3,7 @@
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 
-from sqlalchemy import Date, cast, func, select, update
+from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.audit.events import AuditAction
@@ -13,8 +13,8 @@ from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
 from app.core.database.rls import set_tenant_scope, verify_runtime_role
 from app.core.errors import NotFoundError
-from app.postcall.models import FollowUpEvent, PostCallReport
-from app.postcall.schemas import DailyCallAnalytics, FollowUpView, PostCallReportView
+from app.postcall.models import PostCallReport
+from app.postcall.schemas import DailyCallAnalytics, PostCallReportView
 
 
 class PostCallQueryService:
@@ -45,64 +45,6 @@ class PostCallQueryService:
                 context, AuditAction.POST_CALL_REPORT_VIEWED, "post_call_report", report.id
             )
             return PostCallReportView.model_validate(report)
-
-    async def follow_ups(
-        self,
-        context: RequestContext,
-        limit: int,
-        offset: int,
-        *,
-        status: str | None = "pending",
-        kind: str | None = None,
-    ) -> list[FollowUpView]:
-        require_permission(context, Permission.CALL_READ)
-        async with self.sessions.begin() as session:
-            await self._scope(session, context)
-            query = select(FollowUpEvent).where(FollowUpEvent.tenant_id == context.tenant_id)
-            if status is not None:
-                query = query.where(FollowUpEvent.status == status)
-            if kind is not None:
-                query = query.where(FollowUpEvent.kind == kind)
-            rows = (
-                await session.scalars(
-                    query.order_by(FollowUpEvent.created_at, FollowUpEvent.id)
-                    .limit(limit)
-                    .offset(offset)
-                )
-            ).all()
-            return [FollowUpView.model_validate(row) for row in rows]
-
-    async def acknowledge(self, context: RequestContext, event_id: UUID) -> FollowUpView:
-        require_permission(context, Permission.FOLLOW_UP_MANAGE)
-        async with self.sessions.begin() as session:
-            await self._scope(session, context)
-            row = await session.scalar(
-                update(FollowUpEvent)
-                .where(
-                    FollowUpEvent.tenant_id == context.tenant_id,
-                    FollowUpEvent.id == event_id,
-                    FollowUpEvent.status == "pending",
-                )
-                .values(
-                    status="acknowledged",
-                    acknowledged_at=func.coalesce(FollowUpEvent.acknowledged_at, func.now()),
-                )
-                .returning(FollowUpEvent)
-            )
-            if row is None:
-                row = await session.scalar(
-                    select(FollowUpEvent).where(
-                        FollowUpEvent.tenant_id == context.tenant_id,
-                        FollowUpEvent.id == event_id,
-                    )
-                )
-                if row is None:
-                    raise NotFoundError()
-            else:
-                AuditService(AuditRepository(session, context)).record(
-                    context, AuditAction.FOLLOW_UP_ACKNOWLEDGED, "follow_up_event", event_id
-                )
-            return FollowUpView.model_validate(row)
 
     async def analytics(
         self, context: RequestContext, start: date, end: date

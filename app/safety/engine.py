@@ -5,7 +5,7 @@ import logging
 import re
 from datetime import UTC, datetime
 
-from app.agents.language import spoken
+from app.ai.wording import spoken
 from app.conversation.state import ConversationState, FlowType, SafetyDecision
 from app.safety.classifier import SafetyClassifier
 from app.safety.messages import safety_message
@@ -26,7 +26,20 @@ class SafetyEngine:
         self.transfer_available = transfer_available
         self.classifier_timeout_seconds = classifier_timeout_seconds
 
-    async def evaluate(self, state: ConversationState, utterance: str) -> str | None:
+    def message(self, state: ConversationState) -> str:
+        """The fixed sentence for the decision already in force."""
+        return safety_message(
+            state.language, state.safety_state.decision, transfer_available=self.transfer_available
+        )
+
+    async def evaluate(
+        self, state: ConversationState, utterance: str, *, semantic: bool = True
+    ) -> str | None:
+        """The fixed reply when safety takes over this turn, otherwise nothing.
+
+        With `semantic=False` only the instant rules run; `semantic_check` then asks the
+        model about the same words without holding the reply up.
+        """
         safety = state.safety_state
         if safety.decision == SafetyDecision.BLOCK_TOOL:
             return spoken(state.language, "unavailable")
@@ -49,7 +62,8 @@ class SafetyEngine:
             re.fullmatch(r"\s*(?:[0-9]{8}|\[call access code\])\s*", utterance) is not None
         )
         if (
-            self.classifier is not None
+            semantic
+            and self.classifier is not None
             and decision != SafetyDecision.EMERGENCY_PROTOCOL
             and not access_code
         ):
@@ -125,3 +139,12 @@ class SafetyEngine:
         elif decision in {SafetyDecision.TRANSFER, SafetyDecision.ESCALATE}:
             state.active_flow_state.flow_type = FlowType.HUMAN_TRANSFER
         return safety_message(state.language, decision, transfer_available=self.transfer_available)
+
+    async def semantic_check(self, state: ConversationState, utterance: str) -> str | None:
+        """The model's own reading of the same words, run beside the reply.
+
+        It can only raise the alarm, never lower one the rules already raised.
+        """
+        if self.classifier is None or state.safety_state.decision != SafetyDecision.CONTINUE:
+            return None
+        return await self.evaluate(state, utterance)

@@ -12,20 +12,22 @@ from app.core.database.rls import set_tenant_scope
 from app.core.database.session import Database
 from app.core.settings import Settings
 from app.events.store import verify_worker_role
-from app.postcall.models import CallTranscript, FollowUpEvent, PostCallReport
+from app.postcall.models import CallTranscript, PostCallReport
 from app.settings.models import TenantSettings
+from app.tickets.models import Ticket
 
 # Transcripts removed per clinic in one pass; the next pass takes the rest.
 SWEEP_BATCH = 500
 
 
 def _pending_followup(tenant_id: UUID):
+    """A report is kept while a ticket about its call is still being worked on."""
     return (
-        select(FollowUpEvent.id)
+        select(Ticket.id)
         .where(
-            FollowUpEvent.tenant_id == tenant_id,
-            FollowUpEvent.call_id == PostCallReport.call_id,
-            FollowUpEvent.status == "pending",
+            Ticket.tenant_id == tenant_id,
+            Ticket.call_id == PostCallReport.call_id,
+            Ticket.status != "resolved",
         )
         .exists()
     )

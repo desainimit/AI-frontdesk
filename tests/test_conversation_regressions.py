@@ -9,6 +9,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConfirmationStatus, IdentifierType, LanguageState
 from app.conversation.store import ConversationStoreError, RedisConversationStateStore
+from tests.confirmations import ask_to_confirm
 
 
 def new_state():
@@ -28,7 +29,7 @@ def new_state():
 )
 def test_negation_never_confirms(reply: str) -> None:
     state = new_state()
-    ConversationStateManager.propose_appointment_slot(state, {"slot": "10am"}, "Confirm?")
+    ask_to_confirm(state, {"slot": "10am"}, "Confirm?")
     ConversationStateManager.process_caller_utterance(state, reply)
     assert state.confirmation_state.status == ConfirmationStatus.DENIED
 
@@ -36,7 +37,7 @@ def test_negation_never_confirms(reply: str) -> None:
 @pytest.mark.parametrize("reply", ["yes but tomorrow", "maybe yes", "sure if it is free"])
 def test_ambiguous_answer_never_confirms(reply: str) -> None:
     state = new_state()
-    ConversationStateManager.propose_appointment_slot(state, {"slot": "10am"}, "Confirm?")
+    ask_to_confirm(state, {"slot": "10am"}, "Confirm?")
     ConversationStateManager.process_caller_utterance(state, reply)
     assert state.confirmation_state.status != ConfirmationStatus.CONFIRMED
 

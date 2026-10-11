@@ -1,24 +1,17 @@
 """Regression coverage for emergency overrides, context, and human transfer."""
 
 import asyncio
-from typing import cast
 from urllib.parse import parse_qs
 from uuid import uuid4
 from xml.etree.ElementTree import fromstring
 
 import httpx
 import pytest
-from pydantic import BaseModel, SecretStr
+from pydantic import SecretStr
 
-from app.agents.appointment_flow import AppointmentFlow
-from app.agents.context import AgentContext
-from app.agents.providers.base import LLMRequest, LLMResponse
-from app.agents.runtime import AgentRuntime
-from app.agents.schemas import Intent
-from app.agents.tools import ToolRegistry
 from app.calls.service import CallContext
 from app.conversation.manager import ConversationStateManager
-from app.conversation.state import ConfirmationStatus, ConversationState, SafetyDecision
+from app.conversation.state import ConversationState, SafetyDecision
 from app.core.settings import Settings
 from app.safety.classifier import SafetySignal
 from app.safety.engine import SafetyEngine
@@ -27,28 +20,12 @@ from app.safety.rules import deterministic_rule
 from app.safety.transfer import TransferError, transfer_call, transfer_twiml
 
 
-class CountingProvider:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def generate(self, request: LLMRequest) -> LLMResponse:
-        self.calls += 1
-        return LLMResponse("unused")
-
-    async def generate_structured[T: BaseModel](self, request: LLMRequest, schema: type[T]) -> T:
-        self.calls += 1
-        raise AssertionError("The normal LLM must not run")
-
-    async def close(self) -> None:
-        pass
-
-
-def bound_state() -> tuple[AgentContext, ConversationState]:
+def bound_state() -> tuple[CallContext, ConversationState]:
     call = CallContext(uuid4(), uuid4(), "CA" + uuid4().hex, uuid4())
     state = ConversationStateManager.create_initial_state(
         call.call_id, call.tenant_id, call.provider_call_id
     )
-    return AgentContext(call), state
+    return call, state
 
 
 @pytest.mark.parametrize(
@@ -112,56 +89,6 @@ def test_historical_negated_and_scheduling_phrases_do_not_trigger(phrase: str) -
 def test_normalization_handles_speech_punctuation_and_zero_width() -> None:
     assert normalize_transcript("I CAN\u2019T\u200b breathe!") == "i cannot breathe"
     assert normalize_transcript("  साँस   नहीं आ रही  ") == "साँस नहीं आ रही"
-
-
-async def test_emergency_preempts_llm_and_cancels_pending_mutation() -> None:
-    context, state = bound_state()
-    state.confirmation_state.request("book_appointment", {"slot_id": "old"}, "Book?", 120)
-    provider = CountingProvider()
-    runtime = AgentRuntime(provider, ToolRegistry([]))
-    result = await runtime.respond(context, state, "I can't breathe")
-    assert result.intent == Intent.EMERGENCY and result.status == "blocked"
-    assert "emergency services" in result.response
-    assert provider.calls == 0
-    assert state.safety_state.decision == SafetyDecision.EMERGENCY_PROTOCOL
-    assert state.confirmation_state.status == ConfirmationStatus.IDLE
-    assert state.appointment_operation is None
-    persisted = ConversationState.model_validate_json(state.model_dump_json())
-    assert persisted.safety_state.is_emergency
-    assert (await runtime.respond(context, persisted, "Hello")).intent == Intent.EMERGENCY
-    assert provider.calls == 0
-
-
-async def test_emergency_blocks_pending_appointment_commit_path() -> None:
-    class AppointmentSpy:
-        calls = 0
-
-        async def before_turn(
-            self, context: AgentContext, state: ConversationState, utterance: str
-        ) -> None:
-            self.calls += 1
-            raise AssertionError("Appointment flow ran before safety")
-
-    context, state = bound_state()
-    state.confirmation_state.request("book_appointment", {"slot_id": "old"}, "Book?", 120)
-    flow = AppointmentSpy()
-    result = await AgentRuntime(
-        CountingProvider(), ToolRegistry([]), appointment_flow=cast(AppointmentFlow, flow)
-    ).respond(context, state, "I cannot breathe")
-    assert result.intent == Intent.EMERGENCY
-    assert flow.calls == 0
-    assert state.confirmation_state.status == ConfirmationStatus.IDLE
-
-
-async def test_ambiguous_context_then_worsening_preempts_agent() -> None:
-    context, state = bound_state()
-    provider = CountingProvider()
-    runtime = AgentRuntime(provider, ToolRegistry([]))
-    first = await runtime.respond(context, state, "My chest feels strange")
-    assert first.status == "blocked" and state.safety_state.decision == SafetyDecision.CLARIFY
-    second = await runtime.respond(context, state, "It is getting worse")
-    assert second.intent == Intent.EMERGENCY
-    assert provider.calls == 0
 
 
 async def test_semantic_alarm_adds_to_rules_but_cannot_veto_clear_emergency() -> None:

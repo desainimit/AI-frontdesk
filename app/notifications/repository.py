@@ -39,8 +39,11 @@ class MessageRepository:
         sender: str | None = None,
         available_at: datetime | None = None,
         appointment_id: UUID | None = None,
-    ) -> None:
-        """Queue a message once: the same `dedupe_key` again changes nothing."""
+    ) -> UUID | None:
+        """Queue a message once: the same `dedupe_key` again changes nothing.
+
+        Returns the queued message's ID, or nothing when it was already queued.
+        """
         values: dict[str, object] = {
             "tenant_id": self._tenant_id,
             "channel": channel,
@@ -54,10 +57,11 @@ class MessageRepository:
         }
         if available_at is not None:
             values["available_at"] = available_at
-        await self._session.execute(
+        return await self._session.scalar(
             insert(OutboundMessage)
             .values(**values)
             .on_conflict_do_nothing(constraint="uq_outbound_messages_dedupe")
+            .returning(OutboundMessage.id)
         )
 
     async def cancel_for_appointment(self, appointment_id: UUID) -> None:

@@ -1,4 +1,5 @@
 """Server-owned caller messages in the conversation's stable language."""
+# ruff: noqa: E501
 
 from typing import Any
 
@@ -20,8 +21,19 @@ MESSAGES: dict[str, dict[str, str]] = {
         "moved": "Your appointment has been moved to {time}.",
         "unavailable": "I cannot complete that request right now. Please contact reception.",
         "knowledge_unavailable": "I couldn't find approved information about that.",
+        "one_moment": "One moment, please.",
+        "staff_will_reply": "I could not finish that myself. I have passed it to the team and someone will get back to you shortly.",
+        "staff_will_call": "I'm sorry, I cannot help with that right now. I have left a note for the team to call you back.",
+        "could_not_answer": "I'm sorry, I could not answer that. Would you like me to take a message for the team?",
+        "say_again": "Sorry, could you say that again?",
+        "test_mode": "This is a test chat, so nothing was changed. In a real conversation I would now ask for confirmation.",
+        "stopped": "You will not get any more texts from us. Reply START to turn them back on.",
+        "started": "Texts are back on. How can we help?",
     },
     "es": {
+        "one_moment": "Un momento, por favor.",
+        "staff_will_reply": "No he podido completarlo. Lo he pasado al equipo y le responderán en breve.",
+        "say_again": "Perdone, ¿puede repetirlo?",
         "access_denied": "No se pudo confirmar el acceso. Contacte con recepción.",
         "identified": "El acceso autorizado por recepción está activo para esta llamada.",
         "identity_required": (
@@ -42,6 +54,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "knowledge_unavailable": "No encontré información aprobada sobre eso.",
     },
     "fr": {
+        "one_moment": "Un instant, s'il vous plaît.",
+        "staff_will_reply": "Je n'ai pas pu terminer. J'ai transmis votre demande à l'équipe, qui vous répondra bientôt.",
+        "say_again": "Pardon, pouvez-vous répéter ?",
         "access_denied": "L'accès n'a pas pu être confirmé. Contactez l'accueil.",
         "identified": "L'accès autorisé par l'accueil est actif pour cet appel.",
         "identity_required": (
@@ -62,6 +77,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "knowledge_unavailable": "Je n'ai pas trouvé d'information approuvée à ce sujet.",
     },
     "de": {
+        "one_moment": "Einen Moment bitte.",
+        "staff_will_reply": "Das konnte ich nicht abschließen. Ich habe es an das Team weitergegeben; es meldet sich in Kürze.",
+        "say_again": "Entschuldigung, können Sie das wiederholen?",
         "access_denied": (
             "Der Zugriff konnte nicht bestätigt werden. Bitte wenden Sie sich an den Empfang."
         ),
@@ -92,6 +110,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "knowledge_unavailable": "Dazu habe ich keine freigegebenen Informationen gefunden.",
     },
     "pt": {
+        "one_moment": "Um momento, por favor.",
+        "staff_will_reply": "Não consegui concluir. Passei o pedido à equipa, que responderá em breve.",
+        "say_again": "Desculpe, pode repetir?",
         "access_denied": "Não foi possível confirmar o acesso. Entre em contato com a recepção.",
         "identified": "O acesso autorizado pela recepção está ativo para esta ligação.",
         "identity_required": (
@@ -116,6 +137,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "knowledge_unavailable": "Não encontrei informações aprovadas sobre isso.",
     },
     "hi": {
+        "one_moment": "एक क्षण रुकिए।",
+        "staff_will_reply": "मैं यह पूरा नहीं कर सका। मैंने आपका अनुरोध टीम को भेज दिया है, वे जल्द ही आपसे संपर्क करेंगे।",
+        "say_again": "माफ़ कीजिए, क्या आप दोबारा कह सकते हैं?",
         "access_denied": "पहचान की पुष्टि नहीं हो सकी। कृपया रिसेप्शन से संपर्क करें।",
         "identified": "इस कॉल के लिए रिसेप्शन द्वारा अनुमत पहुँच सक्रिय है।",
         "identity_required": "जाँच के बाद कृपया रिसेप्शन से कॉल एक्सेस कोड लें।",
@@ -134,6 +158,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "knowledge_unavailable": "मुझे इस बारे में स्वीकृत जानकारी नहीं मिली।",
     },
     "hinglish": {
+        "one_moment": "Ek minute rukiye.",
+        "staff_will_reply": "Main yeh complete nahi kar paya. Maine aapki request team ko bhej di hai, woh jaldi aapse contact karenge.",
+        "say_again": "Sorry, kya aap dobara bol sakte hain?",
         "access_denied": "Access confirm nahi ho saka. Kripya reception se baat karein.",
         "identified": "Is call ke liye reception-authorized access active hai.",
         "identity_required": "Verification ke baad reception se call access code lein.",
@@ -158,4 +185,5 @@ MESSAGES: dict[str, dict[str, str]] = {
 
 def spoken(language: str, key: str, **values: Any) -> str:
     templates = MESSAGES.get(language, MESSAGES["en"])
-    return templates[key].format(**values)
+    # A sentence not yet translated is said in English rather than not at all.
+    return (templates.get(key) or MESSAGES["en"][key]).format(**values)

@@ -141,7 +141,7 @@ async def test_visit_is_scoped_to_one_workspace_attributed_and_ends(
         assert patients.status_code == 200
         assert {row["id"] for row in patients.json()["items"]} == {str(a_patient_id)}
         assert patients.headers["cache-control"] == "no-store"
-        for route in ("calls", "follow-ups", "appointments", "locations", "audit-events", "users"):
+        for route in ("calls", "appointments", "locations", "audit-events", "users"):
             response = await client.get(route)
             assert response.status_code == 200, (route, response.text)
         assert (await client.get(f"patients/{b_patient_id}")).status_code == 404

@@ -12,6 +12,7 @@ from app.core.database.session import Database
 from app.core.errors import NotFoundError
 from app.postcall.schemas import PostCallInput
 from app.postcall.service import PostCallQueryService
+from app.tickets.service import TicketService, UpdateTicket
 from app.workflows.activities import WorkflowActivities
 from app.workflows.intent import WorkflowRequest
 from app.workflows.models import WorkflowIntent
@@ -22,7 +23,7 @@ from tests.integration.test_tenancy import pytestmark as pytestmark
 from tests.integration.test_tenancy import tenancy as tenancy
 
 
-async def test_post_call_callback_race_reports_follow_up_and_tenant_analytics(
+async def test_post_call_callback_race_opens_a_ticket_and_feeds_tenant_analytics(
     tenancy: TenancyFixture,
 ) -> None:
     assert isinstance(tenancy.settings.worker_database_url, SecretStr)
@@ -61,15 +62,25 @@ async def test_post_call_callback_race_reports_follow_up_and_tenant_analytics(
         assert "alice@example.com" not in report.summary
         with pytest.raises(NotFoundError):
             await query.report(tenancy.context(tenancy.b), context.call_id)
-        follow_ups = await query.follow_ups(tenancy.context(tenancy.a), 10, 0)
-        assert len(follow_ups) == 1 and follow_ups[0].kind == "human_review"
+        # A call that needs a person becomes a ticket, opened by the worker.
+        tickets = TicketService(tenancy.database.session_factory)
+        waiting = await tickets.list(tenancy.context(tenancy.a), 10, 0)
+        assert [(row.number, row.source, row.call_id) for row in waiting] == [
+            (1, "call", context.call_id)
+        ]
+        assert await tickets.list(tenancy.context(tenancy.b), 10, 0) == []
         today = datetime.now(UTC).date()
         analytics = await query.analytics(tenancy.context(tenancy.a), today, today)
         assert len(analytics) == 1
         assert analytics[0].total == 1 and analytics[0].needs_follow_up == 1
         assert await query.analytics(tenancy.context(tenancy.b), today, today) == []
-        await query.acknowledge(tenancy.context(tenancy.a), follow_ups[0].id)
-        assert await query.follow_ups(tenancy.context(tenancy.a), 10, 0) == []
+        # Running the job again opens no second ticket for the same call.
+        await activities.record_post_call(request)
+        resolved = await tickets.update(
+            tenancy.context(tenancy.a), waiting[0].id, UpdateTicket(status="resolved")
+        )
+        assert resolved.resolved_at is not None and resolved.events[-1].kind == "status"
+        assert await tickets.list(tenancy.context(tenancy.a), 10, 0) == []
     finally:
         await worker_db.close()
 

@@ -8,7 +8,7 @@ import httpx
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from app.agents.language import MESSAGES, spoken
+from app.ai.wording import MESSAGES, spoken
 from app.conversation.confirmation import confirmation_answer
 from app.conversation.language import observe_language
 from app.conversation.locales import LOCALES, LanguagePolicy
@@ -20,6 +20,7 @@ from app.voice.stt.deepgram import DeepgramSTTProvider
 from app.voice.stt.live import DeepgramLiveStream
 from app.voice.tts.azure import AzureTTSProvider
 from app.voice.tts.elevenlabs import ElevenLabsTTSProvider
+from tests.confirmations import ask_to_confirm
 from tests.test_multilingual_phase10 import SpeechSocketFake
 
 SENTENCES = [
@@ -110,12 +111,12 @@ def test_localized_consent_is_exact(code: str, yes: str, no: str, revised: str) 
     state = ConversationStateManager.create_initial_state(
         uuid4(), uuid4(), "CAlanguages", default_language=code
     )
-    ConversationStateManager.propose_appointment_slot(state, {"time": "10:00"}, "Confirm?")
+    ask_to_confirm(state, {"time": "10:00"}, "Confirm?")
     ConversationStateManager.process_caller_utterance(state, revised, detected_language=code)
     assert state.confirmation_state.status != ConfirmationStatus.CONFIRMED
     ConversationStateManager.process_caller_utterance(state, yes)
     assert state.confirmation_state.status != ConfirmationStatus.CONFIRMED
-    ConversationStateManager.propose_appointment_slot(state, {"time": "11:00"}, "Confirm?")
+    ask_to_confirm(state, {"time": "11:00"}, "Confirm?")
     ConversationStateManager.process_caller_utterance(state, yes)
     assert state.confirmation_state.status == ConfirmationStatus.CONFIRMED
 
@@ -125,7 +126,8 @@ def test_translation_keys_and_placeholders_match() -> None:
         return {name for _, name, _, _ in Formatter().parse(value) if name}
 
     for code in (*LOCALES, "hinglish"):
-        assert MESSAGES[code].keys() == MESSAGES["en"].keys()
+        # A sentence may wait for its translation; it is then said in English.
+        assert MESSAGES[code].keys() <= MESSAGES["en"].keys()
         for key, template in MESSAGES[code].items():
             assert placeholders(template) == placeholders(MESSAGES["en"][key])
         assert "10:00" in spoken(code, "booked", time="10:00")

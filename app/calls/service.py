@@ -105,6 +105,7 @@ class CallService:
         sid: str,
         request_id: UUID,
         binding: CallBinding | None = None,
+        caller: str | None = None,
     ) -> CallContext:
         # Only invoked after provider signature and account validation.
         pinned = binding or CallBinding(None, None)
@@ -140,6 +141,7 @@ class CallService:
                     provider_call_id=sid,
                     integration_id=pinned.integration_id,
                     credential_version_id=pinned.credential_version_id,
+                    caller_number=caller,
                 )
                 session.add(call)
                 await session.flush()
@@ -179,7 +181,8 @@ class CallService:
         if await session.scalar(query) is None:
             raise AuthorizationError()
 
-    async def start(self, context: CallContext, stream_sid: str) -> None:
+    async def start(self, context: CallContext, stream_sid: str) -> str | None:
+        """Mark the call as connected. Returns the number it came from, when known."""
         async with self.sessions.begin() as session:
             await verify_runtime_role(session)
             await set_tenant_scope(session, context.tenant_id)
@@ -197,6 +200,7 @@ class CallService:
             call.stream_sid = stream_sid
             call.started_at = datetime.now(UTC)
             audit(session, context, "call_started")
+            return call.caller_number
 
     async def _locked(self, session: AsyncSession, context: CallContext) -> Call:
         call = await session.scalar(

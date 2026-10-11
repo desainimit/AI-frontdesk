@@ -64,7 +64,7 @@ class VoicePipeline:
 
         self._stt_stream: STTStream | None = None
         self._stt_task: asyncio.Task[None] | None = None
-        self._active_tts_task: asyncio.Task[None] | None = None
+        self._active_tts_task: asyncio.Task[bool] | None = None
         self._turn_task: asyncio.Task[None] | None = None
         self._active_response_task: asyncio.Task[None] | None = None
         self._turns: asyncio.Queue[TranscriptionResult] = asyncio.Queue(maxsize=8)
@@ -179,12 +179,25 @@ class VoicePipeline:
             finally:
                 self._turns.task_done()
 
-    async def speak(self, text: str, voice_id: str | None = None) -> None:
-        """Synthesizes text into streaming audio and sends µ-law frames to the caller."""
-        if not self._running or not text.strip():
-            return
+    async def speak(
+        self,
+        text: str,
+        voice_id: str | None = None,
+        *,
+        record: bool = True,
+        follow_on: bool = False,
+    ) -> bool:
+        """Speak one piece of text. True when it played to the end, false when the
+        caller spoke over it or the call ended.
 
-        if self.conversation_state:
+        With `record=False` the caller of this method keeps the transcript itself, as
+        the receptionist does for a reply spoken sentence by sentence. `follow_on`
+        continues what is already playing instead of cutting its last words off.
+        """
+        if not self._running or not text.strip():
+            return False
+
+        if record and self.conversation_state:
             ConversationStateManager.record_agent_response(self.conversation_state, text)
             self.conversation_state.append_transcript_turn("agent", text)
             if self.conversation_store:
@@ -198,16 +211,18 @@ class VoicePipeline:
 
         if self._playback_mark is not None:
             self._playback_mark = None
-            await self._send_clear()
+            if not follow_on:
+                await self._send_clear()
         self._active_tts_task = asyncio.create_task(self._stream_tts(text, voice_id))
         try:
-            await self._active_tts_task
+            return await self._active_tts_task
         except asyncio.CancelledError:
             current = asyncio.current_task()
             if current is not None and current.cancelling():
                 raise
+            return False
 
-    async def _stream_tts(self, text: str, voice_id: str | None) -> None:
+    async def _stream_tts(self, text: str, voice_id: str | None) -> bool:
         self.interruption.set_synthesizing(True)
         completed = False
         first_chunk = True
@@ -254,6 +269,7 @@ class VoicePipeline:
         finally:
             if not completed:
                 self.interruption.set_synthesizing(False)
+        return completed
 
     def acknowledge_playback(self, name: str) -> None:
         if name == self._playback_mark:
@@ -263,7 +279,7 @@ class VoicePipeline:
     async def close(self) -> None:
         """Shuts down pipeline tasks and releases provider resources."""
         self._running = False
-        tasks = [
+        tasks: list[asyncio.Task[Any]] = [
             task
             for task in (
                 self._active_response_task,
