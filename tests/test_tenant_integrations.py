@@ -203,7 +203,12 @@ async def test_verifier_classifies_provider_answers_and_uses_fixed_hosts() -> No
     status["code"] = 404
     missing = await verifier.verify("llm", "gemini", None, {"model": "x"}, {"api_key": "k" * 20})
     assert (missing.outcome, missing.code) == ("invalid", "model_unavailable")
-    status["code"] = 400  # How Google reports a key it does not recognise.
+    status["code"] = 400  # How ElevenLabs reports a voice the account does not have.
+    voice = await verifier.verify(
+        "tts", "elevenlabs", None, {"voice_id": "v" * 20}, {"api_key": "k" * 20}
+    )
+    assert (voice.outcome, voice.code) == ("invalid", "voice_not_found")
+    # How Google reports a key it does not recognise.
     unknown = await verifier.verify("llm", "gemini", None, {"model": "x"}, {"api_key": "k" * 20})
     assert (unknown.outcome, unknown.code) == ("invalid", "credentials_rejected")
     assert requests[-1].headers["x-goog-api-key"] == "k" * 20

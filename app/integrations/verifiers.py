@@ -97,6 +97,9 @@ class HttpProviderVerifier:
                         f"https://api.elevenlabs.io/v1/voices/{config['voice_id']}",
                         headers={"xi-api-key": secrets["api_key"]},
                     )
+                    # ElevenLabs answers 400, not 404, for a voice the account does not have.
+                    if response.status_code == 400:
+                        return Verification("invalid", "voice_not_found")
                     return _classify(response.status_code, missing="voice_not_found")
                 if provider == "azure_speech":
                     host = f"{config['region']}.api.cognitive.microsoft.com"

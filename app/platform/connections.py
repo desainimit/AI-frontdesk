@@ -60,11 +60,18 @@ PROBLEMS = {
     "account_not_found": "The provider has no account with this ID.",
     "account_not_active": "This provider account is not active.",
     "api_key_rejected": "The provider did not accept the API key.",
-    "voice_not_found": "The provider has no voice with this ID.",
+    "voice_not_found": (
+        "This account has no voice with this ID. Use the ID of a voice listed under "
+        "My Voices in ElevenLabs."
+    ),
     "model_unavailable": "This account cannot use the selected model.",
     "provider_unavailable": "The provider could not be reached. Try again in a moment.",
     "server_unreachable": "The email server could not be reached. Check the host and port.",
     "secure_connection_failed": "The email server refused a secure connection.",
+    "encryption_required": (
+        "The email server did not accept the sign-in without encryption. "
+        "Choose STARTTLS and try again."
+    ),
 }
 
 
@@ -157,6 +164,7 @@ def _view(purpose: Purpose, row: PlatformConnection | None) -> ConnectionView:
 
 def _check_smtp(config: dict[str, Any], password: str) -> Verification:
     """Connect, secure the connection and sign in. Sends nothing."""
+    offers_encryption = False
     try:
         if config["tls_mode"] == "tls":
             connection: smtplib.SMTP = smtplib.SMTP_SSL(
@@ -170,10 +178,17 @@ def _check_smtp(config: dict[str, Any], password: str) -> Verification:
         with connection:
             if config["tls_mode"] == "starttls":
                 connection.starttls(context=ssl.create_default_context())
+            elif config["tls_mode"] == "plain":
+                connection.ehlo_or_helo_if_needed()
+                offers_encryption = connection.has_extn("starttls")
             if config["username"]:
                 connection.login(config["username"], password)
             connection.noop()
     except smtplib.SMTPAuthenticationError:
+        # Most servers accept a sign-in only once the connection is encrypted, and say
+        # nothing more than "rejected" when it is not.
+        if offers_encryption:
+            return Verification("invalid", "encryption_required")
         return Verification("invalid", "credentials_rejected")
     except (smtplib.SMTPNotSupportedError, ssl.SSLError):
         return Verification("invalid", "secure_connection_failed")
