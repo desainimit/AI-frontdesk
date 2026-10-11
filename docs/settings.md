@@ -13,7 +13,7 @@ saved on its own and takes effect at once; there is no draft and nothing to publ
 | `calls` | Whether calls are answered, the longest call, and the number callers are transferred to. |
 | `scheduling` | Booking rules for patients: notice, how far ahead, change and cancellation notice, usual appointment length. |
 | `notifications` | Whether bookings are confirmed and reminded, when the reminder goes out, and the wording of confirmation, reminder and cancellation. |
-| `privacy` | How long call transcripts are kept (the worker deletes older ones every hour) and how callers are verified before patient details are discussed. Calls are not recorded. |
+| `privacy` | How long call transcripts are kept (the worker deletes older ones every hour), what a matching phone number is enough for, what staff check before giving a caller a code, and whether a calendar entry names the patient. Calls are not recorded. |
 | `tickets` | Ticket categories (used from Phase 5). |
 
 - `GET /api/v1/settings` returns every section with a `version` that goes up by one on each save.

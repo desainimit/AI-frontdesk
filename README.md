@@ -11,7 +11,7 @@ it is updated as each phase lands.
 | Process | Command | Purpose |
 | --- | --- | --- |
 | Setup job | `python -m app.setup` | Applies migrations, provisions the restricted database logins and creates the first super admin. Safe to run again. |
-| API | `uvicorn app.main:create_app --factory` | HTTP API, Twilio webhooks and the call media stream. |
+| API | `uvicorn app.main:create_app --factory` | HTTP API, Twilio webhooks, the call media stream, and the receptionist's replies to calls and text messages. |
 | Worker | `python -m app.worker` | Every background queue: messages to patients, calendar sync, account email, post-call reports, knowledge ingestion and transcript retention. |
 
 The AI model and knowledge search use Gemini models (directly from Google, or through
@@ -101,6 +101,7 @@ at a disposable database, never a development one.
 
 ## More
 
+- [The receptionist: calls, text messages, tickets](docs/assistant.md)
 - [Sign-in and accounts](docs/sign-in.md)
 - [Workspaces and provider connections](docs/tenant-integrations.md)
 - [Fresh database setup](docs/fresh-install.md)
