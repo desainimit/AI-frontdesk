@@ -52,7 +52,7 @@ jobs:
 
   compose-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
       POSTGRES_USER: ci
@@ -65,11 +65,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose config --quiet
-      - run: docker compose up --build -d --wait --wait-timeout 120
+      # The worker image carries the document-reading libraries; give it time to build.
+      - run: docker compose build
+      - run: docker compose up -d --wait --wait-timeout 180
       - run: |
           curl --fail --retry 5 --retry-all-errors http://127.0.0.1:8000/health/live
           curl --fail --retry 5 --retry-all-errors http://127.0.0.1:8000/health/ready
-          docker compose run --rm --no-deps migrate alembic current
+          docker compose run --rm --no-deps setup alembic current
       - if: failure()
         run: docker compose logs --no-color
       - if: always()

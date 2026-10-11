@@ -1,0 +1,137 @@
+# Production on one server: the API, the worker, the website, Redis and an HTTPS proxy.
+# PostgreSQL is not here: use a managed PostgreSQL 17 with the `vector` extension.
+#
+#   cd deploy
+#   cp env.example .env        # then fill it in
+#   docker compose up -d --wait
+#
+# See docs/runbook.md for every step, upgrades, backups and what to watch.
+name: frontdesk
+
+x-backend-environment: &backend-environment
+  ENVIRONMENT: production
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  REDIS_URL: redis://redis:6379/0
+  TENANT_AUTH_PUBLIC_ORIGIN: https://${APP_DOMAIN:?Set APP_DOMAIN}
+  TELEPHONY_PUBLIC_BASE_URL: https://${API_DOMAIN:?Set API_DOMAIN}
+  SECRET_ENCRYPTION_KEYS: ${SECRET_ENCRYPTION_KEYS:?Set SECRET_ENCRYPTION_KEYS}
+  SECRET_ENCRYPTION_ACTIVE_KEY: ${SECRET_ENCRYPTION_ACTIVE_KEY:?Set SECRET_ENCRYPTION_ACTIVE_KEY}
+  STREAM_TOKEN_KEY: ${STREAM_TOKEN_KEY:?Set STREAM_TOKEN_KEY}
+  KNOWLEDGE_STORAGE_BACKEND: s3
+  KNOWLEDGE_S3_BUCKET: ${KNOWLEDGE_S3_BUCKET:?Set KNOWLEDGE_S3_BUCKET}
+  KNOWLEDGE_S3_REGION: ${KNOWLEDGE_S3_REGION:-}
+  KNOWLEDGE_S3_ENDPOINT: ${KNOWLEDGE_S3_ENDPOINT:-}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+
+x-hardened: &hardened
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  # Runs once on every start: applies migrations, provisions the two restricted
+  # database logins and creates the first administrator. It is the only service that
+  # holds the schema owner's login.
+  setup:
+    <<: *hardened
+    image: ${BACKEND_IMAGE:?Set BACKEND_IMAGE}
+    environment:
+      <<: *backend-environment
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL}
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:-}
+      SUPER_ADMIN_NAME: ${SUPER_ADMIN_NAME:-Super Admin}
+    command: ["python", "-m", "app.setup"]
+    healthcheck: { disable: true }
+    restart: "no"
+
+  api:
+    <<: *hardened
+    image: ${BACKEND_IMAGE:?Set BACKEND_IMAGE}
+    environment:
+      <<: *backend-environment
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+    depends_on:
+      setup: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  # Sends messages and reminders, syncs calendars, reads uploaded documents, writes
+  # call reports. It holds the worker login, which cannot read patient records.
+  worker:
+    <<: *hardened
+    image: ${WORKER_IMAGE:?Set WORKER_IMAGE}
+    environment:
+      <<: *backend-environment
+      DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?Set WORKER_DATABASE_URL}
+      HF_HOME: /srv/app/data/models
+    volumes:
+      - worker-models:/srv/app/data/models
+    depends_on:
+      setup: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker", "--check"]
+      interval: 60s
+      timeout: 20s
+      start_period: 60s
+      retries: 3
+    stop_grace_period: 75s
+    restart: unless-stopped
+
+  web:
+    <<: *hardened
+    # The website keeps a small cache of its own beside its files.
+    read_only: false
+    image: ${WEB_IMAGE:?Set WEB_IMAGE}
+    environment:
+      BACKEND_API_URL: http://api:8000
+      APP_ORIGIN: https://${APP_DOMAIN:?Set APP_DOMAIN}
+      SESSION_ENCRYPTION_KEY: ${SESSION_ENCRYPTION_KEY:?Set SESSION_ENCRYPTION_KEY}
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Live calls and rate limits. Nothing in it has to survive a restart.
+  redis:
+    image: valkey/valkey:8.1.10-alpine@sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # The only service reachable from the internet. It gets and renews the certificates.
+  proxy:
+    image: caddy:2.10-alpine
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - proxy-data:/data
+      - proxy-config:/config
+    depends_on: [web, api]
+    restart: unless-stopped
+
+volumes:
+  worker-models:
+  proxy-data:
+  proxy-config:

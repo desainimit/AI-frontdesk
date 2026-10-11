@@ -1,0 +1,18 @@
+# The website. Browsers only ever talk to this address.
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:3000
+}
+
+# The address the phone service calls. Only its webhooks, the live audio of a call and
+# the health checks are reachable from outside; the rest of the API is used by the
+# website from inside and answers 404 here.
+{$API_DOMAIN} {
+	@public path /webhooks/* /health/*
+	handle @public {
+		reverse_proxy api:8000
+	}
+	handle {
+		respond 404
+	}
+}

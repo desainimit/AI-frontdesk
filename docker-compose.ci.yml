@@ -1,6 +1,6 @@
 # Explicit CI-only overlay. Normal local Compose uses the installed PostgreSQL server.
 services:
-  migrate:
+  setup:
     depends_on:
       postgres:
         condition: service_healthy
