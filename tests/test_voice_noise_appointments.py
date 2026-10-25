@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -84,7 +84,9 @@ class Appointments:
 
 
 @pytest.mark.parametrize("which", ["upcoming", "past"])
-async def test_a_caller_hears_their_appointments_the_spoken_way(which: str) -> None:
+async def test_a_caller_hears_their_appointments_the_spoken_way(
+    which: Literal["upcoming", "past"],
+) -> None:
     _, flow, _ = build_tools(MagicMock(), MagicMock(), None)
     appointments = Appointments()
     flow.appointments = appointments  # type: ignore[assignment]
