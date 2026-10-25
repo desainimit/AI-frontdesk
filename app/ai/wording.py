@@ -26,6 +26,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "staff_will_call": "અત્યારે હું મદદ કરી શકતો નથી. તમને પાછો કૉલ કરવા માટે ટીમને સંદેશ મોકલ્યો છે.",
         "could_not_answer": "હું તેનો જવાબ આપી શક્યો નથી. શું ટીમ માટે તમારો સંદેશ લઈ લઉં?",
         "say_again": "માફ કરશો, શું તમે ફરી કહી શકશો?",
+        "line_unclear": "માફ કરશો, અવાજ થોડો કપાઈ ગયો. શું તમે ફરી કહી શકશો?",
         "test_mode": "આ પરીક્ષણ માટેની વાતચીત છે, તેથી કોઈ ફેરફાર થયો નથી. વાસ્તવિક વાતચીતમાં હું હવે પુષ્ટિ માગીશ.",
         "stopped": "તમને હવે અમારા તરફથી સંદેશા નહીં મળે. ફરી શરૂ કરવા માટે START લખીને જવાબ આપો.",
         "started": "સંદેશા ફરી શરૂ થયા છે. અમે કેવી રીતે મદદ કરી શકીએ?",
@@ -52,6 +53,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "staff_will_call": "I'm sorry, I cannot help with that right now. I have left a note for the team to call you back.",
         "could_not_answer": "I'm sorry, I could not answer that. Would you like me to take a message for the team?",
         "say_again": "Sorry, could you say that again?",
+        "line_unclear": "Sorry, the line broke up for a second. Could you say that again?",
         "test_mode": "This is a test chat, so nothing was changed. In a real conversation I would now ask for confirmation.",
         "stopped": "You will not get any more texts from us. Reply START to turn them back on.",
         "started": "Texts are back on. How can we help?",
@@ -60,6 +62,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "one_moment": "Un momento, por favor.",
         "staff_will_reply": "No he podido completarlo. Lo he pasado al equipo y le responderán en breve.",
         "say_again": "Perdone, ¿puede repetirlo?",
+        "line_unclear": "Perdone, se cortó un momento. ¿Me lo repite?",
         "access_denied": "No se pudo confirmar el acceso. Contacte con recepción.",
         "identified": "El acceso autorizado por recepción está activo para esta llamada.",
         "identity_required": (
@@ -83,6 +86,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "one_moment": "Un instant, s'il vous plaît.",
         "staff_will_reply": "Je n'ai pas pu terminer. J'ai transmis votre demande à l'équipe, qui vous répondra bientôt.",
         "say_again": "Pardon, pouvez-vous répéter ?",
+        "line_unclear": "Pardon, la ligne a coupé un instant. Vous pouvez répéter ?",
         "access_denied": "L'accès n'a pas pu être confirmé. Contactez l'accueil.",
         "identified": "L'accès autorisé par l'accueil est actif pour cet appel.",
         "identity_required": (
@@ -106,6 +110,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "one_moment": "Einen Moment bitte.",
         "staff_will_reply": "Das konnte ich nicht abschließen. Ich habe es an das Team weitergegeben; es meldet sich in Kürze.",
         "say_again": "Entschuldigung, können Sie das wiederholen?",
+        "line_unclear": "Entschuldigung, die Leitung war kurz weg. Können Sie das wiederholen?",
         "access_denied": (
             "Der Zugriff konnte nicht bestätigt werden. Bitte wenden Sie sich an den Empfang."
         ),
@@ -139,6 +144,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "one_moment": "Um momento, por favor.",
         "staff_will_reply": "Não consegui concluir. Passei o pedido à equipa, que responderá em breve.",
         "say_again": "Desculpe, pode repetir?",
+        "line_unclear": "Desculpe, a ligação falhou um instante. Pode repetir?",
         "access_denied": "Não foi possível confirmar o acesso. Entre em contato com a recepção.",
         "identified": "O acesso autorizado pela recepção está ativo para esta ligação.",
         "identity_required": (
@@ -166,6 +172,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "one_moment": "एक क्षण रुकिए।",
         "staff_will_reply": "मैं यह पूरा नहीं कर सका। मैंने आपका अनुरोध टीम को भेज दिया है, वे जल्द ही आपसे संपर्क करेंगे।",
         "say_again": "माफ़ कीजिए, क्या आप दोबारा कह सकते हैं?",
+        "line_unclear": "माफ़ कीजिए, आवाज़ थोड़ी कट गई। क्या आप दोबारा बोल सकते हैं?",
         "access_denied": "पहचान की पुष्टि नहीं हो सकी। कृपया रिसेप्शन से संपर्क करें।",
         "identified": "इस कॉल के लिए रिसेप्शन द्वारा अनुमत पहुँच सक्रिय है।",
         "identity_required": "जाँच के बाद कृपया रिसेप्शन से कॉल एक्सेस कोड लें।",
@@ -187,6 +194,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "one_moment": "Ek minute rukiye.",
         "staff_will_reply": "Main yeh complete nahi kar paya. Maine aapki request team ko bhej di hai, woh jaldi aapse contact karenge.",
         "say_again": "Sorry, kya aap dobara bol sakte hain?",
+        "line_unclear": "Sorry, awaaz thodi kat gayi. Kya aap dobara bol sakte hain?",
         "access_denied": "Access confirm nahi ho saka. Kripya reception se baat karein.",
         "identified": "Is call ke liye reception-authorized access active hai.",
         "identity_required": "Verification ke baad reception se call access code lein.",

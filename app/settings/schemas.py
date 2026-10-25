@@ -75,6 +75,10 @@ class HoursSettings(Section):
 class ReceptionistSettings(Section):
     greeting: str = Field(min_length=1, max_length=1000)
     tone: Literal["professional", "friendly", "concise"] = "friendly"
+    # The name the receptionist gives when asked; empty, it does not use one.
+    persona_name: str = Field(default="", max_length=40, pattern=r"^[^\n{}<>]*$")
+    # An ElevenLabs voice for this clinic; empty, the voice connection's own voice.
+    voice_id: str = Field(default="", pattern=r"^([A-Za-z0-9]{20})?$")
     instructions: str = Field(default="", max_length=4000)
     unknown_answer: str = Field(min_length=1, max_length=1000)
     # What the receptionist may do on its own; everything else is passed to staff.

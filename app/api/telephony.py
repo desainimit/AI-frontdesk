@@ -643,6 +643,12 @@ async def run_media(
             conversation_ttl_seconds=CONVERSATION_TTL_SECONDS,
             multilingual_enabled=multilingual,
             phrases=phrase_cache(socket.app, redis_dep, tenant_id),
+            # A clinic's chosen voice is an ElevenLabs voice; another service keeps its own.
+            voice_id=(
+                configuration.receptionist.voice_id or None
+                if tts.name in {"elevenlabs", "language_router"}
+                else None
+            ),
         )
         receptionist.pipeline = pipeline
         previous_sequence = int(message["sequenceNumber"])

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.ai.engine import Done, Engine, Event, Handoff, Say, Working
 from app.ai.session import Session
 from app.ai.usage import record_turn
-from app.ai.wording import filler
+from app.ai.wording import filler, spoken
 from app.audit.events import AuditAction
 from app.calls.service import CallService
 from app.conversation.manager import ConversationStateManager
@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 FILLER_AFTER_SECONDS = 1.5
 # A lookup that has not answered by now gets the same, unless something was said.
 LOOKUP_FILLER_AFTER_SECONDS = 0.8
+# Recognition this unsure of what was said is asked for again, not answered.
+UNCLEAR_BELOW = 0.5
 TICKETS = {
     "requested": "Caller asked to speak to someone",
     "emergency": "Possible emergency on a call",
@@ -74,12 +76,26 @@ class CallReceptionist:
         self._fillers = 0
         # What a noise interrupted, said once the caller turns out to have said nothing.
         self._unsaid: list[str] = []
+        # The last turn was too unclear to answer and the caller was asked to repeat it.
+        self._asked_again = False
 
     async def reply(self, result: TranscriptionResult) -> None:
         if self.pipeline is None or not result.is_final or not result.text.strip():
             return
         self._unsaid = []
+        if result.confidence < UNCLEAR_BELOW and not self._asked_again:
+            # Probably misheard: ask once rather than answer the wrong thing. A second
+            # unclear answer goes to the model, which can still ask in its own words.
+            self._asked_again = True
+            await self._respond(self._lines(spoken(self.state.language, "line_unclear")))
+            return
+        self._asked_again = False
         await self._respond(self.engine.run(self.session, self.state, result.text))
+
+    @staticmethod
+    async def _lines(*texts: str) -> AsyncIterator[Event]:
+        for text in texts:
+            yield Say(text)
 
     async def resume(self) -> None:
         """A noise stopped the reply and the caller said nothing: finish it."""
@@ -87,11 +103,7 @@ class CallReceptionist:
         if self.pipeline is None or not unsaid:
             return
 
-        async def rest() -> AsyncIterator[Event]:
-            for text in unsaid:
-                yield Say(text)
-
-        await self._respond(rest(), fillers=False)
+        await self._respond(self._lines(*unsaid), fillers=False)
 
     async def _respond(self, source: AsyncIterator[Event], *, fillers: bool = True) -> None:
         pipeline = self.pipeline

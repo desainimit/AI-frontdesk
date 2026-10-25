@@ -19,7 +19,8 @@ from app.voice.tts.elevenlabs_stream import ElevenLabsSocket
 
 # Models ElevenLabs serves over its multi-context WebSocket; Eleven v3 is not one of them.
 SOCKET_MODELS = frozenset({"eleven_flash_v2_5", "eleven_turbo_v2_5", "eleven_multilingual_v2"})
-VOICE_SETTINGS = {"stability": 0.5, "similarity_boost": 0.8}
+# A little less stable than the default sounds livelier and less read-out.
+VOICE_SETTINGS = {"stability": 0.45, "similarity_boost": 0.75}
 
 
 class ElevenLabsTTSProvider:

@@ -25,6 +25,7 @@ from app.rbac.service import RoleService
 from app.settings.schemas import SettingsChangePage, SettingsSection, SettingsView
 from app.settings.service import SettingsService
 from app.tenants.getting_started import GettingStarted, GettingStartedService
+from app.voice.voices import VoiceOption, list_voices, voice_key
 
 router = APIRouter(prefix="/api/v1", tags=["settings"])
 
@@ -46,6 +47,18 @@ async def save_settings(
     return await SettingsService(database.session_factory, request.app.state.settings).save(
         context, section, value
     )
+
+
+@router.get("/settings/voices")
+async def receptionist_voices(request: Request, context: Context) -> list[VoiceOption]:
+    """Voices the receptionist can speak with, each with a sample to listen to.
+
+    Empty when the clinic's calls do not use ElevenLabs, or its key cannot list voices.
+    """
+    require_permission(context, Permission.SETTINGS_READ)
+    settings = request.app.state.settings
+    key = await voice_key(request.app, settings, context.tenant_id)
+    return await list_voices(key) if key is not None else []
 
 
 @router.get("/settings/history")

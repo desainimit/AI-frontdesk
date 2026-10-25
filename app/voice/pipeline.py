@@ -8,6 +8,7 @@ from time import monotonic
 from typing import Any, Protocol
 from uuid import uuid4
 
+from app.ai.speech_text import speakable
 from app.conversation.backchannel import is_backchannel
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConversationState
@@ -134,6 +135,7 @@ class VoicePipeline:
         barge_in_enabled: bool = True,
         phrases: PhraseStore | None = None,
         on_resume: Callable[[], Coroutine[Any, Any, None]] | None = None,
+        voice_id: str | None = None,
     ) -> None:
         self.stream_sid = stream_sid
         self.stt = stt_provider
@@ -150,6 +152,8 @@ class VoicePipeline:
         self.phrases = phrases
         # Called when a noise stopped a reply and the caller then said nothing.
         self.on_resume = on_resume
+        # The clinic's own voice, when it chose one.
+        self.voice_id = voice_id
 
         self.interruption = InterruptionHandler(
             stream_sid=stream_sid,
@@ -377,7 +381,10 @@ class VoicePipeline:
         With `cache`, a phrase made on an earlier call is replayed instead of made again.
         """
         language = self.conversation_state.language if self.conversation_state else None
+        voice_id = voice_id or self.voice_id
         voice = str(getattr(self.tts, "voice_key", self.tts.name)) + ":" + (voice_id or "")
+        # Said the way a person reads it; the transcript keeps the written form.
+        spoken = speakable(text, language)
         if cache and self.phrases is not None:
             audio = await self.phrases.get(voice, language or "", text)
             if audio:
@@ -387,8 +394,8 @@ class VoicePipeline:
             async def keep(made: bytes) -> None:
                 await phrases.put(voice, language or "", text, made)
 
-            return Speech(text, ulaw_speech(self.tts, text, voice_id, language), keep)
-        return Speech(text, ulaw_speech(self.tts, text, voice_id, language))
+            return Speech(text, ulaw_speech(self.tts, spoken, voice_id, language), keep)
+        return Speech(text, ulaw_speech(self.tts, spoken, voice_id, language))
 
     async def speak(
         self,

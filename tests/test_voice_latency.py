@@ -14,6 +14,7 @@ import pytest
 from pydantic import SecretStr
 
 from app.ai.engine import Done, Event, Say, Working
+from app.ai.speech_text import speakable
 from app.conversation.manager import ConversationStateManager
 from app.conversation.store import MemoryConversationStateStore
 from app.voice.phrases import MemoryPhraseCache
@@ -60,7 +61,7 @@ async def test_next_sentence_is_ready_before_the_current_one_ends() -> None:
     # Each sentence waited a quarter of a second for its first audio; the caller hears
     # none of it, because the next sentence was being made while one played.
     assert line.played_gaps() == [] or max(line.played_gaps()) < 0.03
-    assert tts.requests == list(SENTENCES)
+    assert tts.requests == [speakable(text) for text in SENTENCES]
 
 
 @pytest.mark.asyncio
