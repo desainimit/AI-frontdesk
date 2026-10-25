@@ -209,6 +209,8 @@ class AppointmentFlow:
             items=[
                 {
                     "appointment_id": str(row.id),
+                    # What the caller may quote ("my appointment A-1042").
+                    "number": row.reference,
                     "provider_id": str(row.provider_id),
                     "doctor": row.provider_name or "",
                     "service": row.service_name or "",
@@ -421,7 +423,10 @@ class AppointmentFlow:
                 key = "moved"
             _, timezone = await self._provider(session, state, result.provider_id)
             message = spoken(
-                state.language, key, time=said(session, result.starts_at, timezone, state.language)
+                state.language,
+                key,
+                time=said(session, result.starts_at, timezone, state.language),
+                reference=result.reference,
             )
         except ApplicationError as error:
             operation.status = "completed"

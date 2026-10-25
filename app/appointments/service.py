@@ -81,6 +81,7 @@ class AppointmentService:
                 entity = await tx.appointments.add(
                     Appointment(
                         tenant_id=context.tenant_id,
+                        number=await tx.appointments.next_number(),
                         provider_id=command.provider_id,
                         patient_id=command.patient_id,
                         service_id=command.service_id,
@@ -146,6 +147,7 @@ class AppointmentService:
         starts_from: datetime | None = None,
         starts_to: datetime | None = None,
         newest_first: bool = False,
+        number: int | None = None,
     ) -> list[AppointmentView]:
         require_permission(context, Permission.APPOINTMENT_READ)
         async with self._uow.transaction(context) as tx:
@@ -158,6 +160,7 @@ class AppointmentService:
                 starts_from=starts_from,
                 starts_to=starts_to,
                 newest_first=newest_first,
+                number=number,
             )
             AuditService(tx.audit).record(context, AuditAction.APPOINTMENTS_VIEWED, "appointments")
             return await self._views(context, tx, entities)

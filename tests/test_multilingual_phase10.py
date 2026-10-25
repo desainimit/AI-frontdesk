@@ -145,9 +145,9 @@ def test_hindi_confirmation_and_server_owned_speech() -> None:
     ConversationStateManager.process_caller_utterance(state, "\u0939\u093e\u0901")
     assert state.confirmation_state.status == ConfirmationStatus.CONFIRMED
     assert "\u0905\u092a\u0949\u0907\u0902\u091f\u092e\u0947\u0902\u091f" in spoken(
-        "hi", "booked", time="10:00"
+        "hi", "booked", time="10:00", reference="A-7"
     )
-    assert "appointment" in spoken("hinglish", "booked", time="10:00")
+    assert "appointment" in spoken("hinglish", "booked", time="10:00", reference="A-7")
 
 
 @pytest.mark.asyncio

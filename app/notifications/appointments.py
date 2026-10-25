@@ -8,7 +8,7 @@ never needs to read patient records.
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from app.appointments.models import Appointment
+from app.appointments.models import Appointment, reference
 from app.core.database.unit_of_work import Transaction
 from app.notifications.templates import SMS_LIMIT, render, when
 
@@ -48,6 +48,7 @@ async def queue_appointment_messages(tx: Transaction, entity: Appointment, chang
         "provider_name": provider,
         "service_name": service,
         "starts_at": when(entity.starts_at, timezone),
+        "appointment_number": reference(entity.number),
     }
     sender = await tx.messages.sender_number()
     # A text needs a clinic number to come from and a patient who still wants texts.
@@ -59,6 +60,9 @@ async def queue_appointment_messages(tx: Transaction, entity: Appointment, chang
 
     async def queue(kind: str, text: str, available_at: datetime | None = None) -> None:
         body = render(text, values)
+        if "appointment_number" not in text:
+            # Every message carries the number, whatever wording the clinic saved.
+            body = f"{body} Appointment number: {values['appointment_number']}."
         for channel, recipient in channels:
             await tx.messages.enqueue(
                 channel=channel,

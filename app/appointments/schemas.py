@@ -2,7 +2,9 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
+
+from app.appointments.models import reference
 
 
 class Slot(BaseModel):
@@ -21,6 +23,7 @@ class AppointmentView(BaseModel):
     ends_at: datetime
     status: Literal["booked", "cancelled"]
     version: int
+    number: int
     created_at: datetime
     updated_at: datetime
     # Display labels for lists. The patient name is present only for callers who may
@@ -28,3 +31,9 @@ class AppointmentView(BaseModel):
     provider_name: str | None = None
     patient_name: str | None = None
     service_name: str | None = None
+
+    @computed_field
+    @property
+    def reference(self) -> str:
+        """The appointment number as patients and staff quote it: A-1042."""
+        return reference(self.number)

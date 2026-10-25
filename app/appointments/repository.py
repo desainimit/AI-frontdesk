@@ -3,9 +3,10 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.appointments.models import Appointment
+from app.appointments.models import Appointment, AppointmentCounter
 from app.auth.context import ActorType, RequestContext
 from app.core.database.domain import ScopedRepository
 
@@ -22,6 +23,20 @@ class AppointmentRepository(ScopedRepository[Appointment]):
             query = query.where(Appointment.patient_id == self._context.patient_id)
         return await self._session.scalar(query.with_for_update() if lock else query)
 
+    async def next_number(self) -> int:
+        """The clinic's next appointment number. Taken in the booking's own transaction,
+        so a booking that fails gives its number back."""
+        statement = (
+            insert(AppointmentCounter)
+            .values(tenant_id=self._context.tenant_id, last=1)
+            .on_conflict_do_update(
+                index_elements=[AppointmentCounter.tenant_id],
+                set_={"last": AppointmentCounter.last + 1},
+            )
+            .returning(AppointmentCounter.last)
+        )
+        return int(await self._session.scalar(statement) or 1)
+
     async def search(
         self,
         limit: int,
@@ -33,6 +48,7 @@ class AppointmentRepository(ScopedRepository[Appointment]):
         starts_from: datetime | None = None,
         starts_to: datetime | None = None,
         newest_first: bool = False,
+        number: int | None = None,
     ) -> Sequence[Appointment]:
         query = select(Appointment).where(Appointment.tenant_id == self._context.tenant_id)
         if self._context.actor_type == ActorType.CALLER:
@@ -47,6 +63,8 @@ class AppointmentRepository(ScopedRepository[Appointment]):
             query = query.where(Appointment.starts_at >= starts_from)
         if starts_to is not None:
             query = query.where(Appointment.starts_at <= starts_to)
+        if number is not None:
+            query = query.where(Appointment.number == number)
         order = Appointment.starts_at.desc() if newest_first else Appointment.starts_at
         return (
             await self._session.scalars(

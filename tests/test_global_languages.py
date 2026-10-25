@@ -130,7 +130,8 @@ def test_translation_keys_and_placeholders_match() -> None:
         assert MESSAGES[code].keys() <= MESSAGES["en"].keys()
         for key, template in MESSAGES[code].items():
             assert placeholders(template) == placeholders(MESSAGES["en"][key])
-        assert "10:00" in spoken(code, "booked", time="10:00")
+        booked = spoken(code, "booked", time="10:00", reference="A-7")
+        assert "10:00" in booked and "A-7" in booked
 
 
 @pytest.mark.parametrize("boundary", ["speech_final", "UtteranceEnd"])

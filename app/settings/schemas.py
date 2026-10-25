@@ -15,7 +15,14 @@ from app.calls.verification import VerificationPolicy
 from app.conversation.locales import LanguagePolicy
 
 TEMPLATE_VARIABLES = frozenset(
-    {"patient_name", "starts_at", "clinic_name", "provider_name", "service_name"}
+    {
+        "patient_name",
+        "starts_at",
+        "clinic_name",
+        "provider_name",
+        "service_name",
+        "appointment_number",
+    }
 )
 
 

@@ -59,7 +59,7 @@ def default_settings(clinic_name: str, timezone: str = DEFAULT_TIMEZONE) -> Clin
         notifications=NotificationSettings(
             confirmation_text=(
                 "Hi {{patient_name}}, your appointment at {{clinic_name}} is confirmed for "
-                "{{starts_at}}."
+                "{{starts_at}}. Your appointment number is {{appointment_number}}."
             ),
             reminder_text=(
                 "Reminder: you have an appointment at {{clinic_name}} on {{starts_at}}. "

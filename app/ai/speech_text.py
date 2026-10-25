@@ -81,8 +81,13 @@ def _digits(match: re.Match[str]) -> str:
     return ", ".join(spoken)
 
 
+# An appointment number, said letter by letter and digit by digit: "A, 1 0 4 2".
+_REFERENCE = re.compile(r"\bA-(\d{1,7})\b")
+
+
 def speakable(text: str, language: str | None = None) -> str:
     code = normalize_language(language or "en")
+    text = _REFERENCE.sub(lambda match: "A, " + " ".join(match[1]), text)
     text = _DIGITS.sub(_digits, text)
     if code in {"en", "hinglish"}:
         text = _TIME.sub(_time, text).replace(".m..", ".m.")

@@ -368,6 +368,7 @@ async def test_domain_rls_and_composite_foreign_keys(
             session.add(
                 Appointment(
                     tenant_id=tenancy.a.tenant_id,
+                    number=900,
                     provider_id=domain.provider_id,
                     patient_id=other.patient_id,
                     starts_at=domain.start + timedelta(hours=1),
@@ -393,6 +394,8 @@ async def test_database_exclusions_block_partial_overlap_and_patient_conflict(
                 session.add(
                     Appointment(
                         tenant_id=domain.context.tenant_id,
+                        # A number of its own, so only the overlap can refuse it.
+                        number=900,
                         provider_id=provider,
                         patient_id=domain.patient_id,
                         starts_at=domain.start + timedelta(minutes=15),

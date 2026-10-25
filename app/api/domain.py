@@ -281,6 +281,10 @@ async def list_appointments(
     starts_from: Since = None,
     starts_to: Until = None,
     order: Literal["asc", "desc"] = "asc",
+    # The number a patient quotes: "A-1042" or just "1042".
+    number: Annotated[
+        str | None, Query(max_length=12, pattern=r"^\s*(?:[Aa]-?)?\d{1,9}\s*$")
+    ] = None,
 ) -> Page[AppointmentView]:
     offset = decode_cursor(cursor)
     rows = await AppointmentService(UnitOfWork(database.session_factory)).list(
@@ -293,6 +297,7 @@ async def list_appointments(
         starts_from=starts_from,
         starts_to=starts_to,
         newest_first=order == "desc",
+        number=int("".join(c for c in number if c.isdigit())) if number else None,
     )
     return page(rows, limit, offset)
 

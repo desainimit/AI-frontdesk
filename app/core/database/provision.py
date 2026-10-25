@@ -175,6 +175,10 @@ async def provision_runtime_role(settings: Settings) -> None:
                 f"GRANT SELECT, INSERT ON {domain_tables} TO {quoted_role}"
             )
             await connection.exec_driver_sql(f"GRANT UPDATE ON appointments TO {quoted_role}")
+            # Taking the next appointment number.
+            await connection.exec_driver_sql(
+                f"GRANT SELECT, INSERT, UPDATE ON appointment_counters TO {quoted_role}"
+            )
             await connection.exec_driver_sql(
                 "GRANT UPDATE (name, timezone, address, phone, updated_at) ON locations "
                 f"TO {quoted_role}"
