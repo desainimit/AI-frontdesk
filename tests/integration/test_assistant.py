@@ -67,7 +67,7 @@ async def test_gujarati_booking_requires_current_explicit_confirmation(
     thread = await clinic.text("મારે ડૉક્ટરની મુલાકાત બુક કરાવવી છે")
     await assistant.answer(clinic.tenant_id, thread)
     proposal = (await clinic.rows(OutboundMessage))[-1].body
-    assert "પુષ્ટિ કરવા માટે હા કહો" in proposal
+    assert "Dr. Rao" in proposal and "બુક કરી દઉં?" in proposal
     assert "Dr. Rao" in proposal and "AM" not in proposal and "PM" not in proposal
     assert await clinic.rows(Appointment) == []
     await clinic.text(answer)
@@ -97,7 +97,7 @@ async def test_a_patient_books_by_text_and_staff_take_the_thread_over(
     assert await assistant.answer(clinic.tenant_id, thread) is False
     asked = (await clinic.rows(OutboundMessage))[-1]
     assert (asked.kind, asked.recipient, asked.sender) == ("reply", PATIENT_NUMBER, clinic.number)
-    assert "Dr. Rao" in asked.body and "Say yes to confirm" in asked.body
+    assert "Dr. Rao" in asked.body and "Shall I book it" in asked.body
     # Times are worded for people, never as raw timestamps.
     assert "T0" not in asked.body and "+05:30" not in asked.body
     assert await clinic.rows(Appointment) == []
@@ -110,8 +110,8 @@ async def test_a_patient_books_by_text_and_staff_take_the_thread_over(
     assert [(row.patient_id, row.provider_id, row.status) for row in booked] == [
         (clinic.patient_id, clinic.provider_id, "booked")
     ]
-    assert "is booked for" in (await clinic.rows(OutboundMessage))[-3].body or any(
-        "is booked for" in row.body for row in await clinic.rows(OutboundMessage)
+    assert "booked for" in (await clinic.rows(OutboundMessage))[-3].body or any(
+        "booked for" in row.body for row in await clinic.rows(OutboundMessage)
     )
     turns = await clinic.rows(AiTurn)
     assert [(row.channel, row.outcome) for row in turns] == [

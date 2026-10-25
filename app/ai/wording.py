@@ -30,6 +30,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "still_there": "હેલો? શું તમે લાઇન પર છો?",
         "goodbye_silent": "હાલ પૂરતો કૉલ મૂકીએ છીએ. ગમે ત્યારે ફરી કૉલ કરજો. આવજો.",
         "closed_now": "અત્યારે ક્લિનિક બંધ છે, પણ એપોઇન્ટમેન્ટ અને પ્રશ્નોમાં મદદ થઈ શકે છે.",
+        "hello_name": "નમસ્તે {name}!",
         "test_mode": "આ પરીક્ષણ માટેની વાતચીત છે, તેથી કોઈ ફેરફાર થયો નથી. વાસ્તવિક વાતચીતમાં હું હવે પુષ્ટિ માગીશ.",
         "stopped": "તમને હવે અમારા તરફથી સંદેશા નહીં મળે. ફરી શરૂ કરવા માટે START લખીને જવાબ આપો.",
         "started": "સંદેશા ફરી શરૂ થયા છે. અમે કેવી રીતે મદદ કરી શકીએ?",
@@ -60,6 +61,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "still_there": "Hello? Are you still there?",
         "goodbye_silent": "I will let you go for now. Please call back any time. Goodbye.",
         "closed_now": "We are closed right now, but I can still help with appointments and questions.",
+        "hello_name": "Hi {name}!",
         "test_mode": "This is a test chat, so nothing was changed. In a real conversation I would now ask for confirmation.",
         "stopped": "You will not get any more texts from us. Reply START to turn them back on.",
         "started": "Texts are back on. How can we help?",
@@ -72,6 +74,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "still_there": "¿Hola? ¿Sigue ahí?",
         "goodbye_silent": "Le dejo por ahora. Llámenos cuando quiera. Adiós.",
         "closed_now": "Ahora estamos cerrados, pero puedo ayudarle con citas y preguntas.",
+        "hello_name": "¡Hola, {name}!",
         "access_denied": "No se pudo confirmar el acceso. Contacte con recepción.",
         "identified": "El acceso autorizado por recepción está activo para esta llamada.",
         "identity_required": (
@@ -99,6 +102,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "still_there": "Allô ? Vous êtes toujours là ?",
         "goodbye_silent": "Je vous laisse pour le moment. Rappelez quand vous voulez. Au revoir.",
         "closed_now": "Nous sommes fermés pour le moment, mais je peux vous aider pour les rendez-vous et les questions.",
+        "hello_name": "Bonjour {name} !",
         "access_denied": "L'accès n'a pas pu être confirmé. Contactez l'accueil.",
         "identified": "L'accès autorisé par l'accueil est actif pour cet appel.",
         "identity_required": (
@@ -126,6 +130,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "still_there": "Hallo? Sind Sie noch dran?",
         "goodbye_silent": "Ich lege jetzt auf. Rufen Sie gern jederzeit wieder an. Auf Wiederhören.",
         "closed_now": "Wir haben gerade geschlossen, aber ich helfe Ihnen gern bei Terminen und Fragen.",
+        "hello_name": "Hallo {name}!",
         "access_denied": (
             "Der Zugriff konnte nicht bestätigt werden. Bitte wenden Sie sich an den Empfang."
         ),
@@ -163,6 +168,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "still_there": "Alô? Ainda está aí?",
         "goodbye_silent": "Vou encerrar por agora. Ligue quando quiser. Tchau.",
         "closed_now": "Estamos fechados agora, mas posso ajudar com consultas e dúvidas.",
+        "hello_name": "Olá, {name}!",
         "access_denied": "Não foi possível confirmar o acesso. Entre em contato com a recepção.",
         "identified": "O acesso autorizado pela recepção está ativo para esta ligação.",
         "identity_required": (
@@ -194,6 +200,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "still_there": "हैलो? क्या आप लाइन पर हैं?",
         "goodbye_silent": "अभी के लिए कॉल रख रहे हैं। कभी भी दोबारा कॉल करें। नमस्ते।",
         "closed_now": "अभी क्लिनिक बंद है, पर अपॉइंटमेंट और सवालों में मदद हो सकती है।",
+        "hello_name": "नमस्ते {name} जी!",
         "access_denied": "पहचान की पुष्टि नहीं हो सकी। कृपया रिसेप्शन से संपर्क करें।",
         "identified": "इस कॉल के लिए रिसेप्शन द्वारा अनुमत पहुँच सक्रिय है।",
         "identity_required": "जाँच के बाद कृपया रिसेप्शन से कॉल एक्सेस कोड लें।",
@@ -219,6 +226,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "still_there": "Hello? Kya aap line par hain?",
         "goodbye_silent": "Abhi ke liye call rakh rahe hain. Kabhi bhi dobara call karein. Bye.",
         "closed_now": "Abhi clinic band hai, par appointment aur sawaalon mein madad ho sakti hai.",
+        "hello_name": "Namaste {name} ji!",
         "access_denied": "Access confirm nahi ho saka. Kripya reception se baat karein.",
         "identified": "Is call ke liye reception-authorized access active hai.",
         "identity_required": "Verification ke baad reception se call access code lein.",

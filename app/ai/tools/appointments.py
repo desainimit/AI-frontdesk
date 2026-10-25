@@ -54,6 +54,15 @@ class NoInput(ToolInput):
     pass
 
 
+class AppointmentsInput(ToolInput):
+    # "upcoming": appointments still to come; "past": visits that already happened.
+    which: Literal["upcoming", "past"] = "upcoming"
+
+
+# Enough to choose from on a call without reading out a long list.
+LISTED_APPOINTMENTS = 5
+
+
 class RegisterInput(ToolInput):
     full_name: str = Field(min_length=2, max_length=120, description="As the person gave it.")
 
@@ -180,13 +189,31 @@ class AppointmentFlow:
         refused = self._must_be_known(session, state, managing=True)
         if refused is not None:
             return refused
-        rows = await self.appointments.list(session.request(state), 10, 0)
+        which = payload.which if isinstance(payload, AppointmentsInput) else "upcoming"
+        now = datetime.now(UTC)
+        if which == "past":
+            rows = await self.appointments.list(
+                session.request(state), LISTED_APPOINTMENTS, 0, starts_to=now, newest_first=True
+            )
+        else:
+            rows = await self.appointments.list(
+                session.request(state),
+                LISTED_APPOINTMENTS,
+                0,
+                status="booked",
+                starts_from=now,
+            )
+        timezone = session.configuration.clinic.timezone
         return Outcome(
-            status="appointments",
+            status="appointments" if rows else f"no_{which}_appointments",
             items=[
                 {
                     "appointment_id": str(row.id),
                     "provider_id": str(row.provider_id),
+                    "doctor": row.provider_name or "",
+                    "service": row.service_name or "",
+                    # Said the way a receptionist says it; starts_at is for the tools.
+                    "when": said(session, row.starts_at, timezone, state.language),
                     "starts_at": row.starts_at.isoformat(),
                     "status": row.status,
                 }

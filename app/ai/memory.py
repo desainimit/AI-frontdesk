@@ -2,8 +2,9 @@
 
 - Earlier in this call: once a call runs past what the model is shown word for word,
   the quicker model keeps a short running summary of the older part, in the background.
-- Earlier calls: a caller whose identity is trusted gets a few lines about their last
-  calls and their coming appointments, so they are not asked everything again.
+- Earlier calls: a caller whose identity is trusted gets their name, a few lines about
+  their last calls, recent visits and coming appointments, so they are not asked
+  everything again.
 """
 
 import json
@@ -22,6 +23,7 @@ from app.calls.models import Call
 from app.conversation.redaction import redact_transcript
 from app.conversation.state import ConversationState, IdentifierType, TranscriptTurn
 from app.core.database.unit_of_work import enter_tenant_scope
+from app.patients.models import Patient
 from app.postcall.models import PostCallReport
 from app.providers.models import Provider
 
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 HISTORY_DAYS = 90
 PAST_CALLS = 3
 COMING_APPOINTMENTS = 3
+PAST_VISITS = 2
 
 
 class Summary(BaseModel):
@@ -93,6 +96,19 @@ class CallerHistory:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
+    async def name(self, session: Session, state: ConversationState) -> str | None:
+        """The trusted caller's name on file, to greet them by."""
+        patient_id = state.identity_state.patient_id
+        if patient_id is None or not records_trusted(session, state):
+            return None
+        async with self._sessions.begin() as database:
+            await enter_tenant_scope(database, session.request(state))
+            return await database.scalar(
+                select(Patient.display_name).where(
+                    Patient.tenant_id == session.tenant_id, Patient.id == patient_id
+                )
+            )
+
     async def load(self, session: Session, state: ConversationState) -> str:
         """A few lines about this person's last calls and coming appointments; empty
         when there is nothing to tell or the clinic turned this off."""
@@ -106,6 +122,13 @@ class CallerHistory:
         lines: list[str] = []
         async with self._sessions.begin() as database:
             await enter_tenant_scope(database, session.request(state))
+            name = await database.scalar(
+                select(Patient.display_name).where(
+                    Patient.tenant_id == session.tenant_id, Patient.id == patient_id
+                )
+            )
+            if name:
+                lines.append(f"Name on file: {name}")
             if session.contact:
                 reports = await database.execute(
                     select(PostCallReport.call_ended_at, PostCallReport.summary)
@@ -145,4 +168,24 @@ class CallerHistory:
             for starts_at, provider in appointments:
                 when = starts_at.astimezone(zone).strftime("%A %d %b at %H:%M")
                 lines.append(f"Coming appointment: {when} with {provider}")
+            visits = await database.execute(
+                select(Appointment.starts_at, Provider.display_name)
+                .join(
+                    Provider,
+                    (Provider.tenant_id == Appointment.tenant_id)
+                    & (Provider.id == Appointment.provider_id),
+                )
+                .where(
+                    Appointment.tenant_id == session.tenant_id,
+                    Appointment.patient_id == patient_id,
+                    Appointment.starts_at < datetime.now(UTC),
+                    Appointment.starts_at >= since,
+                    Appointment.status == "booked",
+                )
+                .order_by(Appointment.starts_at.desc())
+                .limit(PAST_VISITS)
+            )
+            for starts_at, provider in visits:
+                when = starts_at.astimezone(zone).strftime("%d %b")
+                lines.append(f"Earlier visit: {when} with {provider}")
         return "\n".join(lines)[:4000]

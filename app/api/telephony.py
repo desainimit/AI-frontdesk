@@ -23,6 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.ai.catalog import VOICE_TOOLS
 from app.ai.consent import ConsentReader
 from app.ai.engine import Engine
+from app.ai.identity import ContactIdentity
 from app.ai.llm.base import LLMProvider
 from app.ai.llm.factory import build_llm_provider, llm_from_connection
 from app.ai.llm.gateway import ModelGateway, TurnLimits, breaker_for
@@ -585,6 +586,26 @@ async def resolve_call_providers(
     )
 
 
+async def caller_name(
+    receptionist: CallReceptionist, identity: ContactIdentity, history: CallerHistory
+) -> str | None:
+    """The first name to greet a caller by: only when the clinic trusts a matching number
+    and remembers callers. Never holds the greeting up for long."""
+    session, state = receptionist.session, receptionist.state
+    privacy = session.configuration.privacy
+    if not (session.contact and privacy.known_number_can_manage and privacy.remember_callers):
+        return None
+    try:
+        async with asyncio.timeout(1.5):
+            if not await identity.recognise(session, state):
+                return None
+            name = await history.name(session, state)
+    except (TimeoutError, SQLAlchemyError, ApplicationError):
+        logger.warning("caller_name_unavailable", extra={"call_id": str(session.conversation_id)})
+        return None
+    return name.split()[0] if name and name.split() else None
+
+
 def needs_call_back(
     configuration: ClinicConfiguration | None,
     state: ConversationState,
@@ -709,6 +730,7 @@ async def run_media(
         await conv_store.save(initial_conv_state, ttl_seconds=CONVERSATION_TTL_SECONDS)
         voice_metrics = VoiceMetrics(telemetry)
         registry, flow, identity = build_tools(service.sessions, settings, resolver)
+        history = CallerHistory(service.sessions)
         engine = Engine(
             ModelGateway(
                 llm,
@@ -728,7 +750,7 @@ async def run_media(
                 ask_first=True,
             ),
             identity,
-            CallerHistory(service.sessions),
+            history,
             ConsentReader(providers.light_llm or llm),
         )
         receptionist = CallReceptionist(
@@ -790,6 +812,13 @@ async def run_media(
                     voice_metrics.record_human_transfer("no_answer")
                     await pipeline.speak(handover_message(returned.language, "no_answer"))
                 else:
+                    name = await caller_name(receptionist, identity, history)
+                    if name:
+                        # A caller the clinic trusts by their number is greeted by name.
+                        await pipeline.speak(
+                            spoken(initial_conv_state.language, "hello_name", name=name),
+                            record=False,
+                        )
                     await pipeline.speak(configuration.receptionist.greeting, cache=True)
                     if not opened_while_open:
                         await pipeline.speak(

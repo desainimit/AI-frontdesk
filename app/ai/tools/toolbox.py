@@ -11,6 +11,7 @@ from app.ai.identity import ContactIdentity
 from app.ai.session import Session
 from app.ai.tools.appointments import (
     AppointmentFlow,
+    AppointmentsInput,
     AvailabilityInput,
     BookInput,
     CancelInput,
@@ -263,8 +264,9 @@ def build_tools(
         ),
         Tool(
             "list_my_appointments",
-            "The person's own appointments, to pick one to move or cancel.",
-            NoInput,
+            "The person's own appointments: upcoming ones (to tell them, or to pick one to "
+            "move or cancel) or past visits (when they ask about an earlier visit).",
+            AppointmentsInput,
             flow.list_appointments,
         ),
         Tool(

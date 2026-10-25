@@ -102,8 +102,10 @@ async def test_history_of_a_trusted_caller(tenancy: TenancyFixture) -> None:
     history = await CallerHistory(clinic.sessions).load(session, state)
 
     lines = history.splitlines()
-    assert lines[0].startswith("Call on ") and "moved to later the same day" in lines[0]
-    assert lines[1].startswith("Coming appointment: ") and lines[1].endswith("with Dr. Rao")
+    assert lines[0] == "Name on file: Meera Shah"
+    assert lines[1].startswith("Call on ") and "moved to later the same day" in lines[1]
+    assert lines[2].startswith("Coming appointment: ") and lines[2].endswith("with Dr. Rao")
+    assert await CallerHistory(clinic.sessions).name(session, state) == "Meera Shah"
     # The clinic can turn it off.
     quiet = configuration.model_copy(
         update={"privacy": configuration.privacy.model_copy(update={"remember_callers": False})}

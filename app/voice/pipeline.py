@@ -14,7 +14,7 @@ from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConversationState
 from app.conversation.store import ConversationStateStore
 from app.voice.audio import ULAW_FRAME, ulaw_speech
-from app.voice.codec import loudness, ulaw_to_pcm
+from app.voice.codec import ulaw_to_pcm
 from app.voice.metrics import VoiceMetrics
 from app.voice.processors.interruption import (
     ENERGY_REASON,
@@ -33,6 +33,8 @@ LEAD_SECONDS = 0.4
 MARK_GRACE_SECONDS = 1.5
 # A noise stopped the receptionist but no words followed: carry on after this long.
 RESUME_AFTER_SECONDS = 1.5
+# Words heard this uncertainly while the receptionist talks are taken for background.
+BARGE_IN_CONFIDENCE = 0.5
 # Silence after the receptionist finished, before it asks whether the caller is there.
 SILENCE_SECONDS = 7.0
 
@@ -298,10 +300,9 @@ class VoicePipeline:
         # Check for caller barge-in if TTS is currently synthesizing/playing
         if self.barge_in_enabled:
             self.interruption.process_incoming_audio(pcm16)
-        if (
-            self.on_silence is not None
-            and loudness(pcm16) >= self.interruption.config.energy_threshold
-        ):
+        else:
+            self.interruption.hear(pcm16)
+        if self.on_silence is not None and self.interruption.voiced:
             self._caller_active()
 
         # Forward audio to active STT stream
@@ -321,6 +322,9 @@ class VoicePipeline:
         if (
             self.barge_in_enabled
             and self.interruption.is_synthesizing
+            # Background chatter is often half-heard: words the recognizer is unsure of
+            # do not stop the receptionist; the caller's own clear words do.
+            and result.confidence >= BARGE_IN_CONFIDENCE
             and not is_backchannel(result.text, self._language)
         ):
             self.interruption.trigger_interruption(reason="caller_words")

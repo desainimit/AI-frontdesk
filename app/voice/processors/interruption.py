@@ -10,6 +10,13 @@ logger = logging.getLogger(__name__)
 
 
 ENERGY_REASON = "speech_energy_detected"
+# Speech must be this many times louder than the line's background noise. The noise
+# level rises slowly in a noisy place (traffic, a TV) and falls quickly when it is quiet.
+NOISE_MARGIN = 2.5
+NOISE_RISE = 0.005
+NOISE_FALL = 0.1
+# However noisy the line, a caller speaking up still counts.
+MAX_THRESHOLD = 3000.0
 
 
 @dataclass
@@ -40,6 +47,28 @@ class InterruptionHandler:
         self._consecutive_active_frames: int = 0
         self._interrupted_event = asyncio.Event()
         self.last_reason: str | None = None
+        # The line's background noise, learned from every frame the caller sends.
+        self.noise_floor = 0.0
+        # Whether the last frame sounded like someone speaking.
+        self.voiced = False
+
+    @property
+    def threshold(self) -> float:
+        """How loud a frame must be to count as speech on this line right now."""
+        return min(
+            MAX_THRESHOLD, max(self.config.energy_threshold, self.noise_floor * NOISE_MARGIN)
+        )
+
+    def hear(self, pcm16: bytes) -> bool:
+        """Learn the background noise from this frame; True when it sounds like speech."""
+        try:
+            rms = loudness(pcm16) if pcm16 else 0.0
+        except Exception:
+            return False
+        rate = NOISE_RISE if rms > self.noise_floor else NOISE_FALL
+        self.noise_floor += (rms - self.noise_floor) * rate
+        self.voiced = rms >= self.threshold
+        return self.voiced
 
     @property
     def is_synthesizing(self) -> bool:
@@ -61,18 +90,11 @@ class InterruptionHandler:
         If caller speaks while system is speaking, triggers barge-in.
         Returns True if barge-in was just triggered.
         """
+        voiced = self.hear(pcm16)
         if not self._is_synthesizing or self._interrupted_event.is_set():
             return False
 
-        if not pcm16:
-            return False
-
-        try:
-            rms = loudness(pcm16)
-        except Exception:
-            return False
-
-        if rms >= self.config.energy_threshold:
+        if voiced:
             self._consecutive_active_frames += 1
             if self._consecutive_active_frames >= self.config.consecutive_frames_required:
                 self.trigger_interruption(reason=ENERGY_REASON)
