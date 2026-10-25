@@ -78,8 +78,9 @@ docker compose up -d --wait
 ```
 
 Take a database backup first. The setup job applies the database changes before the
-API and the worker start. Calls in progress end when the API restarts, so upgrade at a
-quiet time.
+API and the worker start. When the API is stopped it reports itself not ready, takes no
+new calls and gives calls in progress up to five minutes to end (`app/serve.py`; the
+container's stop grace period is 330 s). Still, upgrade at a quiet time.
 
 If the new version does not come up, read `docker compose logs setup api` before
 anything else. Going back to the old images is safe only when the release changed
@@ -203,7 +204,13 @@ Run these against the version you are about to deploy:
 
 ## Limits to know
 
-- One API process holds a call from start to end; a restart ends calls in progress.
+- One API process holds a call from start to end; a stop waits up to five minutes for
+  calls in progress, then ends them.
+- Speech: Deepgram Flux for recognition (Nova 3 for Gujarati) and the ElevenLabs
+  WebSocket for speech. Choose them under the platform's speech connections; a connection
+  saved before this release keeps Nova 3 and Turbo 2.5 until it is changed.
+- A transfer nobody answers can come back to the receptionist only within three minutes
+  of the redirect; the call summary staff read covers the part before the transfer.
 - The cap of eight replies at once per clinic, and the circuit breaker for an AI
   account, are per API process. Behind a load balancer with several API processes they
   apply to each separately.

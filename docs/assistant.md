@@ -64,10 +64,63 @@ receptionist takes a message.
 
 ## On the phone
 
-The reply is spoken sentence by sentence while the rest is still being written. Silence
-of more than a second and a half before the first words is filled with "one moment".
-When the caller speaks over the reply it stops at once, the model is cancelled, and only
-what the caller actually heard is kept in the transcript.
+**No pauses.** Each sentence's audio is made as soon as the model writes it and played
+in order, so the next sentence is ready before the current one ends. ElevenLabs runs over
+one WebSocket per call (Flash 2.5, one context per sentence, µ-law 8 kHz straight to
+Twilio); Eleven v3 and Azure use HTTP with one connection for the whole call. Audio is
+sent about 0.4 s ahead of what the caller hears. The first words do not wait for the
+model's safety reading; an alarm raised later cuts in. The greeting and fixed lines are
+replayed from a cache (Redis, a week). A lookup slower than 0.8 s, or a reply that has
+not started after 1.5 s, gets one short filler ("Let me check that."); the model is also
+asked to say a few words before it looks something up.
+
+**Turn taking.** Deepgram Flux decides when the caller has finished (end of a thought,
+not a fixed silence): Flux English, or Flux Multilingual with the clinic's languages as
+hints. Gujarati keeps Nova 3 with a 500 ms endpoint. Clinic, provider, service and
+location names are sent as key terms so they are heard right. Speech the recogniser was
+unsure of (confidence under 0.5) is asked for again once instead of being answered.
+
+**Interruptions.** Real words (or more than half a second of speech) stop the reply and
+clear what Twilio has buffered; "mm-hmm", "okay", "haan", "ji" never do. A "yes" said over
+a question is answered once the question ends. Each sentence has its own playback mark, so
+the transcript keeps a cut sentence only as far as the caller heard it and the model is
+told what went unsaid. A noise with no words after it: the reply carries on after 1.5 s.
+
+**Sounding like a person.** The voice prompt is a short spoken-style guide; the clinic's
+tone becomes concrete instructions; `receptionist.persona_name` is given when asked and
+`receptionist.voice_id` picks an ElevenLabs voice (`GET /settings/voices` lists them with
+their samples, free). Times, phone numbers and codes are rewritten the way a person reads
+them before they are spoken (`app/ai/speech_text.py`); the transcript keeps the written
+form. Asked directly, the receptionist says it is the clinic's virtual receptionist.
+
+**Memory.** A call keeps up to 200 turns; the model sees the last 40 word for word and a
+running summary of the older part, written in the background by the quicker model. It
+sees the email and phone number a caller says (still redacted in everything stored); codes
+and dates of birth stay hidden. The quicker model writes the call summary at the end (the
+rule-based one is the fallback). Once a caller is trusted (a code, or a matching number
+when the clinic trusts numbers), the receptionist is reminded of their last three calls
+and coming appointments (`privacy.remember_callers`, on by default).
+
+**Transfers, only with a yes.** Asking for a person gets an offer first ("is it something
+I can help with, or shall I put you through?"); a yes, or asking a second time, puts the
+caller through, a no carries on. `transfer_to_staff` offers too, and transfers only once
+the caller agreed in a later turn. When the model fails, the caller is asked rather than
+moved; after the emergency script, the receptionist offers to connect them to the clinic.
+`calls.transfer_targets` lists where calls can go (name, number, what for, and when:
+always, opening hours, or after hours for an on-call line); closed with `after_hours` not
+`transfer`, a message for the team is offered instead. The staff member hears who is
+calling and why before the call is put through (`/whisper`); if nobody answers, Twilio
+calls `/transfer-result` and the call comes back to the receptionist (`resume`), which
+says the team has the request and carries on.
+
+**Ending.** After 7 s of silence the receptionist asks whether the caller is still there;
+after 7 s more it says goodbye and hangs up. The model's `end_call` tool hangs up after a
+goodbye, never while a question is open. A call while closed starts with a line saying so;
+with `after_hours` set to `callback`, such a call that left nothing booked or with the
+team opens a call-back ticket.
+
+**Timing.** Each reply on a call records the time from the end of the caller's words to
+the first sound of the reply, and whether the caller spoke over it (`ai_turns`).
 
 `GET /calls/{id}/live` streams the transcript of a call in progress.
 
@@ -129,8 +182,6 @@ real lookups, and changes nothing: a booking it would propose is described, not 
 
 ## Not built yet
 
-- The summary of a finished call is still assembled from what was said, not written by
-  the model.
 - Confirmations and reminders are not shown inside the patient's thread; a reply to one
   still arrives in that thread and is answered.
 - Gemini speech-to-speech (Phase 6).

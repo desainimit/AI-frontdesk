@@ -27,7 +27,7 @@ from app.core.errors import ApplicationError
 from app.core.settings import Settings
 from app.safety import handover
 from app.safety.messages import transfer_failed_message
-from app.safety.transfer import TransferError, transfer_call
+from app.safety.transfer import TransferError, hang_up, transfer_call
 from app.tickets.service import open_ticket
 from app.voice.metrics import VoiceMetrics
 from app.voice.pipeline import Speech, VoicePipeline
@@ -89,11 +89,18 @@ class CallReceptionist:
         # The quicker model: the running summary of a long call, and the call summary.
         self.summarizer = summarizer
         self._summarizing: asyncio.Task[None] | None = None
+        # The receptionist ended the call after saying goodbye.
+        self.ended = False
+        # Tickets opened during the call, so an after-hours call is not ticketed twice.
+        self.tickets = 0
+        # When the caller's last words ended, for the time until the reply was heard.
+        self._turn_started: float | None = None
 
     async def reply(self, result: TranscriptionResult) -> None:
         if self.pipeline is None or not result.is_final or not result.text.strip():
             return
         self._unsaid = []
+        self._turn_started = monotonic()
         if result.confidence < UNCLEAR_BELOW and not self._asked_again:
             # Probably misheard: ask once rather than answer the wrong thing. A second
             # unclear answer goes to the model, which can still ask in its own words.
@@ -114,7 +121,34 @@ class CallReceptionist:
         if self.pipeline is None or not unsaid:
             return
 
+        self.metrics.record_false_interruption()
         await self._respond(self._lines(*unsaid), fillers=False)
+
+    async def silence(self, times: int) -> None:
+        """The caller has said nothing for a while: check they are there, then let them go."""
+        if self.pipeline is None or self.transferred or self.ended:
+            return
+        if times == 1:
+            await self._respond(
+                self._lines(spoken(self.state.language, "still_there")), fillers=False
+            )
+            return
+        await self._respond(
+            self._lines(spoken(self.state.language, "goodbye_silent")), fillers=False
+        )
+        await self._end_call("caller_silent")
+
+    async def _end_call(self, reason: str) -> None:
+        """Hang up once the goodbye has been heard."""
+        if self.ended or self.transferred:
+            return
+        self.ended = True
+        try:
+            await hang_up(self.settings, self.session.call, credentials=self.account)
+        except (TransferError, ValueError):
+            # The caller can still hang up themselves.
+            logger.warning("call_hang_up_failed", extra={"reason": reason})
+            self.ended = False
 
     async def _respond(self, source: AsyncIterator[Event], *, fillers: bool = True) -> None:
         pipeline = self.pipeline
@@ -214,12 +248,31 @@ class CallReceptionist:
             self._remember(items, finished, pipeline.interrupted_at)
             with suppress(Exception):
                 await self.store.save(self.state, self.store_ttl_seconds)
+            first_audio = self._first_audio(items)
+            if first_audio is not None:
+                self.metrics.record_first_audio(first_audio)
             if done is not None:
                 self.metrics.record_llm_latency(float(done.total_ms), done.model or "model")
-                await record_turn(self.sessions, self.session, done)
+                await record_turn(
+                    self.sessions,
+                    self.session,
+                    done,
+                    first_audio_ms=first_audio,
+                    interrupted=not finished,
+                )
             self._keep_summary()
         if handoff is not None:
             await self._hand_over(pipeline, handoff)
+        elif finished and self.state.end_requested:
+            await self._end_call("goodbye")
+
+    def _first_audio(self, items: list[tuple[Speech, bool]]) -> int | None:
+        """Milliseconds from the end of the caller's words to the first sound of the reply."""
+        started, self._turn_started = self._turn_started, None
+        heard = [speech.started_at for speech, _ in items if speech.started_at is not None]
+        if started is None or not heard:
+            return None
+        return max(0, int((min(heard) - started) * 1000))
 
     def _keep_summary(self) -> None:
         """Summarize, in the background, turns that have moved out of the model's view."""
@@ -400,6 +453,7 @@ class CallReceptionist:
                     dedupe_key=f"call:{self.session.conversation_id}:{reason}",
                     author="assistant",
                 )
+            self.tickets += 1
         except SQLAlchemyError:
             logger.error(
                 "call_ticket_not_opened", extra={"call_id": str(self.session.conversation_id)}

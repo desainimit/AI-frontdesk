@@ -20,6 +20,7 @@ from fastapi import (
 )
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.ai.catalog import VOICE_TOOLS
 from app.ai.engine import Engine
 from app.ai.llm.base import LLMProvider
 from app.ai.llm.factory import build_llm_provider, llm_from_connection
@@ -28,6 +29,7 @@ from app.ai.memory import CallerHistory
 from app.ai.runtime import AssistantRuntime
 from app.ai.session import Session
 from app.ai.tools.toolbox import build_tools
+from app.ai.wording import spoken
 from app.api.tenancy import Context, Cursor, DatabaseDependency, Limit, Since, Until
 from app.calls.access import CallPatientAccess, IssuePatientAccess, PatientAccessCode
 from app.calls.service import (
@@ -43,6 +45,7 @@ from app.conversation.store import ConversationStateStore
 from app.core.database.pages import Page, decode_cursor, page
 from app.core.database.rls import set_tenant_scope
 from app.core.database.session import Database
+from app.core.drain import DRAIN
 from app.core.errors import ApplicationError, NotFoundError
 from app.core.security.rate_limit import enforce_rate_limit
 from app.core.settings import Settings
@@ -58,6 +61,7 @@ from app.safety.classifier import LLMSafetyClassifier
 from app.safety.engine import SafetyEngine
 from app.safety.handover_messages import handover_message
 from app.safety.transfer import whisper_twiml
+from app.settings.schemas import ClinicConfiguration
 from app.tickets.service import open_ticket
 from app.voice.circuit import CircuitRegistry
 from app.voice.factory import (
@@ -579,6 +583,22 @@ async def resolve_call_providers(
     )
 
 
+def needs_call_back(
+    configuration: ClinicConfiguration | None,
+    state: ConversationState,
+    receptionist: CallReceptionist,
+) -> bool:
+    """A call the clinic wants returned: it came in while closed, with after-hours set to
+    "call back", the caller said something, and nothing was booked or left for the team."""
+    if configuration is None or configuration.hours.after_hours != "callback":
+        return False
+    if configuration.is_open(state.created_at) or state.utterance_count == 0:
+        return False
+    operation = state.appointment_operation
+    booked = operation is not None and operation.status == "completed"
+    return not booked and receptionist.tickets == 0 and not receptionist.transferred
+
+
 def phrase_cache(app: FastAPI, redis: object, tenant_id: UUID) -> PhraseStore:
     """Where the audio of repeated phrases is kept: Redis, or this process for local runs."""
     client = getattr(redis, "client", None)
@@ -607,6 +627,7 @@ async def run_media(
     conversation_store: ConversationStateStore | None = None
     received = sent = 0
     resuming = False
+    configuration: ClinicConfiguration | None = None
     call_summary: str | None = None
     status, reason = "disconnected", "socket_disconnected"
     try:
@@ -646,6 +667,7 @@ async def run_media(
         redis_dep = getattr(getattr(socket.app.state, "resources", None), "redis", None)
         resolver = tenant_resolver(socket.app)
         configuration = await service.settings(context)
+        opened_while_open = configuration.is_open(datetime.now(UTC))
         providers = await resolve_call_providers(
             socket.app, settings, tenant_id, configuration.receptionist.languages
         )
@@ -714,7 +736,7 @@ async def run_media(
                 "voice",
                 context.request_id,
                 configuration,
-                configuration.receptionist.allowed_tools,
+                configuration.receptionist.allowed_tools | VOICE_TOOLS,
                 provider_call_id=sid,
                 contact=caller_number,
             ),
@@ -741,6 +763,7 @@ async def run_media(
             send_frame=send_frame,
             on_transcript=receptionist.reply,
             on_resume=receptionist.resume,
+            on_silence=receptionist.silence,
             interruption_config=InterruptionConfig(),
             conversation_state=initial_conv_state,
             conversation_store=conv_store,
@@ -759,9 +782,14 @@ async def run_media(
         try:
             await pipeline.start()
             if returned is not None:
+                voice_metrics.record_human_transfer("no_answer")
                 await pipeline.speak(handover_message(returned.language, "no_answer"))
             else:
                 await pipeline.speak(configuration.receptionist.greeting, cache=True)
+                if not opened_while_open:
+                    await pipeline.speak(
+                        spoken(initial_conv_state.language, "closed_now"), cache=True
+                    )
             async with asyncio.timeout(configuration.calls.max_duration_minutes * 60):
                 while True:
                     async with asyncio.timeout(IDLE_SECONDS):
@@ -778,7 +806,13 @@ async def run_media(
                         ):
                             raise ValueError("Invalid stop binding")
                         status = "completed"
-                        reason = "human_transfer" if receptionist.transferred else "stream_stopped"
+                        reason = (
+                            "human_transfer"
+                            if receptionist.transferred
+                            else "receptionist_ended"
+                            if receptionist.ended
+                            else "stream_stopped"
+                        )
                         break
                     if event == "mark":
                         pipeline.acknowledge_playback(message.get("mark", {}).get("name", ""))
@@ -850,6 +884,29 @@ async def run_media(
                     )
             except (SQLAlchemyError, TimeoutError, ApplicationError):
                 logger.error("call_cleanup_failed", extra={"call_id": str(call_id)})
+            if (
+                status != "failed"
+                and receptionist is not None
+                and conversation_state is not None
+                and needs_call_back(configuration, conversation_state, receptionist)
+            ):
+                # The clinic asked to call back everyone who rang while it was closed.
+                with suppress(SQLAlchemyError, TimeoutError):
+                    async with asyncio.timeout(5), service.sessions.begin() as session:
+                        await set_tenant_scope(session, tenant_id)
+                        await open_ticket(
+                            session,
+                            tenant_id,
+                            source="call",
+                            subject="Call back: rang while the clinic was closed",
+                            description=(
+                                call_summary or conversation_state.last_caller_utterance or ""
+                            )[:500],
+                            priority="normal",
+                            contact=caller_number,
+                            call_id=call_id,
+                            dedupe_key=f"call:{call_id}:after_hours",
+                        )
             if status == "failed":
                 # Someone rang and was not helped: the team should know and call back.
                 with suppress(SQLAlchemyError, TimeoutError):
@@ -897,5 +954,10 @@ async def media(socket: WebSocket, tenant_id: UUID, call_id: UUID) -> None:
     if credentials is None:
         await socket.close(code=1008)
         return
+    if DRAIN.draining:
+        # This server is stopping; the phone service retries elsewhere.
+        await socket.close(code=1013)
+        return
     await socket.accept()
-    await run_media(socket, service, settings, tenant_id, call_id, credentials)
+    with DRAIN.call():
+        await run_media(socket, service, settings, tenant_id, call_id, credentials)

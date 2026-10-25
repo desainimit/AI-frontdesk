@@ -397,6 +397,8 @@ class ConversationState(BaseModel):
     utterance_count: int = 0
     last_caller_utterance: str | None = None
     last_agent_response: str | None = None
+    # The receptionist said goodbye and the call is to end once that has played.
+    end_requested: bool = False
     # The caller talked over the last reply; what they did not hear of it.
     reply_cut_off: bool = False
     unsaid: str | None = Field(default=None, max_length=1000)

@@ -14,7 +14,7 @@ from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConversationState
 from app.conversation.store import ConversationStateStore
 from app.voice.audio import ULAW_FRAME, ulaw_speech
-from app.voice.codec import ulaw_to_pcm
+from app.voice.codec import loudness, ulaw_to_pcm
 from app.voice.metrics import VoiceMetrics
 from app.voice.processors.interruption import (
     ENERGY_REASON,
@@ -33,6 +33,8 @@ LEAD_SECONDS = 0.4
 MARK_GRACE_SECONDS = 1.5
 # A noise stopped the receptionist but no words followed: carry on after this long.
 RESUME_AFTER_SECONDS = 1.5
+# Silence after the receptionist finished, before it asks whether the caller is there.
+SILENCE_SECONDS = 7.0
 
 
 class PhraseStore(Protocol):
@@ -136,6 +138,7 @@ class VoicePipeline:
         phrases: PhraseStore | None = None,
         on_resume: Callable[[], Coroutine[Any, Any, None]] | None = None,
         voice_id: str | None = None,
+        on_silence: Callable[[int], Coroutine[Any, Any, None]] | None = None,
     ) -> None:
         self.stream_sid = stream_sid
         self.stt = stt_provider
@@ -154,6 +157,11 @@ class VoicePipeline:
         self.on_resume = on_resume
         # The clinic's own voice, when it chose one.
         self.voice_id = voice_id
+        # Called with 1, 2, ... for each stretch of silence in a row from the caller.
+        self.on_silence = on_silence
+        self._quiet_since = monotonic()
+        self._silences = 0
+        self._silence_task: asyncio.Task[None] | None = None
 
         self.interruption = InterruptionHandler(
             stream_sid=stream_sid,
@@ -202,6 +210,8 @@ class VoicePipeline:
             self._stt_stream = await self.stt.create_stream(sample_rate=8000, encoding="linear16")
         self._stt_task = asyncio.create_task(self._consume_transcripts())
         self._turn_task = asyncio.create_task(self._consume_turns())
+        if self.on_silence is not None:
+            self._silence_task = asyncio.create_task(self._watch_silence())
 
     @property
     def _language(self) -> str:
@@ -218,6 +228,26 @@ class VoicePipeline:
             # Only a sound, no words yet: if none follow, the reply carries on.
             self._cancel_resume()
             self._resume_task = asyncio.create_task(self._resume_later())
+
+    def _caller_active(self) -> None:
+        self._quiet_since = monotonic()
+        self._silences = 0
+
+    async def _watch_silence(self) -> None:
+        """Ask whether the caller is still there after a long silence, then let them go."""
+        while self._running:
+            await asyncio.sleep(0.25)
+            if self.on_silence is None or not self._turns.empty() or self._deferred:
+                continue
+            if self._replying:
+                # Talking is not silence; the clock starts when the reply has been heard.
+                self._quiet_since = monotonic()
+                continue
+            if monotonic() - self._quiet_since < SILENCE_SECONDS:
+                continue
+            self._silences += 1
+            self._quiet_since = monotonic()
+            self._active_response_task = asyncio.create_task(self.on_silence(self._silences))
 
     async def _resume_later(self) -> None:
         await asyncio.sleep(RESUME_AFTER_SECONDS)
@@ -268,6 +298,11 @@ class VoicePipeline:
         # Check for caller barge-in if TTS is currently synthesizing/playing
         if self.barge_in_enabled:
             self.interruption.process_incoming_audio(pcm16)
+        if (
+            self.on_silence is not None
+            and loudness(pcm16) >= self.interruption.config.energy_threshold
+        ):
+            self._caller_active()
 
         # Forward audio to active STT stream
         if self._stt_stream:
@@ -282,6 +317,7 @@ class VoicePipeline:
     def _heard_words(self, result: TranscriptionResult) -> None:
         """The caller is saying something while the receptionist talks."""
         self._cancel_resume()
+        self._caller_active()
         if (
             self.barge_in_enabled
             and self.interruption.is_synthesizing
@@ -309,6 +345,7 @@ class VoicePipeline:
                         max(0.0, (monotonic() - self._last_audio_at) * 1000), self.stt.name
                     )
                 self._cancel_resume()
+                self._caller_active()
                 if self._replying and is_backchannel(result.text, self._language):
                     # "Okay" while the receptionist is talking means "go on".
                     self._deferred = result
@@ -533,6 +570,7 @@ class VoicePipeline:
                 self._stt_task,
                 self._turn_task,
                 self._resume_task,
+                self._silence_task,
             )
             if task is not None
         ]

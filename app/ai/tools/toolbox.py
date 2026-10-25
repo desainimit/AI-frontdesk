@@ -200,6 +200,15 @@ def build_tools(
         safety.triggered_at = datetime.now(UTC)
         return Outcome(status="handing_over")
 
+    async def end_call(session: Session, state: ConversationState, _: BaseModel) -> BaseModel:
+        if session.channel != "voice":
+            return Outcome(status="not_available")
+        if state.awaiting_confirmation or handover.pending(state):
+            # A question to the caller is still open; it is answered first.
+            return Outcome(status="not_now", next="answer_the_open_question_first")
+        state.end_requested = True
+        return Outcome(status="ending", next="say_a_short_warm_goodbye")
+
     def propose(action: Any) -> Any:
         async def handler(
             session: Session, state: ConversationState, payload: BaseModel
@@ -292,6 +301,13 @@ def build_tools(
             "call it again only once they have agreed.",
             TransferInput,
             transfer,
+        ),
+        Tool(
+            "end_call",
+            "End the call once the person has said goodbye and has nothing more to ask. "
+            "Then say a short, warm goodbye. Never while a question to them is still open.",
+            NoInput,
+            end_call,
         ),
     ]
     return ToolRegistry(tools, timeout_seconds), flow, identity

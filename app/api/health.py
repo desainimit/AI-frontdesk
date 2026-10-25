@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
 
 from app.api.dependencies import get_resources
+from app.core.drain import DRAIN
 from app.core.resources import Dependency, Resources
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -54,6 +55,9 @@ async def ready(
         check_dependency("redis", resources.redis, timeout),
     )
     checks: dict[str, Literal["ok", "unavailable"]] = {"postgresql": database, "redis": redis}
+    if DRAIN.draining:
+        # Stopping: finish the calls in progress, take no new ones.
+        checks["accepting_calls"] = "unavailable"
     healthy = all(value == "ok" for value in checks.values())
     response.status_code = 200 if healthy else 503
     response.headers["Cache-Control"] = "no-store"

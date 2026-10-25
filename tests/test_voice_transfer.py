@@ -9,6 +9,7 @@ from xml.etree.ElementTree import fromstring
 import pytest
 from pydantic import ValidationError
 
+from app.ai.catalog import VOICE_TOOLS
 from app.ai.engine import Done, Engine, Event, Handoff, Say
 from app.ai.identity import ContactIdentity
 from app.ai.llm.base import LLMUnavailableError, ToolCall
@@ -53,7 +54,7 @@ def call(configuration: ClinicConfiguration) -> tuple[Session, ConversationState
         "voice",
         uuid4(),
         configuration,
-        configuration.receptionist.allowed_tools,
+        configuration.receptionist.allowed_tools | VOICE_TOOLS,
         provider_call_id="CA" + "0" * 32,
     )
     state = ConversationStateManager.create_initial_state(call_id, tenant_id, "CA" + "0" * 32)

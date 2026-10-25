@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, Index, Integer, String
+from sqlalchemy import Boolean, CheckConstraint, Index, Integer, String, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,6 +31,10 @@ class AiTurn(IdentityMixin, Base):
     output_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Milliseconds until the first words were ready; empty when nothing was said.
     first_text_ms: Mapped[int | None] = mapped_column(Integer)
+    # On a call: from the end of the caller's words to the first sound of the reply.
+    first_audio_ms: Mapped[int | None] = mapped_column(Integer)
+    # On a call: the caller spoke over this reply.
+    interrupted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     total_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     steps: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     tools: Mapped[list[Any]] = mapped_column(JSONB, default=list, server_default="[]")

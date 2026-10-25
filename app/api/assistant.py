@@ -217,6 +217,9 @@ class TurnView(BaseModel):
     # What the receptionist looked up or did, in the words the screens use.
     steps: list[str]
     first_text_ms: int | None
+    # On a call: until the caller heard the first sound of the reply.
+    first_audio_ms: int | None = None
+    interrupted: bool = False
     total_ms: int
     error: str | None
 
@@ -254,6 +257,8 @@ async def call_turns(
                 outcome=row.outcome,
                 steps=[TOOL_LABELS.get(str(tool), str(tool)) for tool in row.tools],
                 first_text_ms=row.first_text_ms,
+                first_audio_ms=row.first_audio_ms,
+                interrupted=row.interrupted,
                 total_ms=row.total_ms,
                 error=row.error,
             )

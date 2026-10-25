@@ -13,7 +13,12 @@ logger = logging.getLogger(__name__)
 
 
 async def record_turn(
-    sessions: async_sessionmaker[AsyncSession], session: Session, done: Done
+    sessions: async_sessionmaker[AsyncSession],
+    session: Session,
+    done: Done,
+    *,
+    first_audio_ms: int | None = None,
+    interrupted: bool = False,
 ) -> None:
     """Best effort: a lost usage row must never cost the person their reply."""
     try:
@@ -29,6 +34,8 @@ async def record_turn(
                     input_tokens=done.usage.input_tokens,
                     output_tokens=done.usage.output_tokens,
                     first_text_ms=done.first_text_ms,
+                    first_audio_ms=first_audio_ms,
+                    interrupted=interrupted,
                     total_ms=done.total_ms,
                     steps=done.steps,
                     tools=list(done.tools),

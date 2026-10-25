@@ -79,6 +79,23 @@ class VoiceMetrics:
             if meter
             else None
         )
+        self.turn_first_audio: Histogram | None = (
+            meter.create_histogram(
+                "voice.turn.first_audio.duration",
+                unit="ms",
+                description="From the end of the caller's words to the first sound of the reply",
+            )
+            if meter
+            else None
+        )
+        self.call_false_interruption_total: Counter | None = (
+            meter.create_counter(
+                "voice.call.false_interruption.total",
+                description="Replies stopped by a sound with no words, then resumed",
+            )
+            if meter
+            else None
+        )
         self.call_interruption_total: Counter | None = (
             meter.create_counter(
                 "voice.call.interruption.total",
@@ -129,6 +146,14 @@ class VoiceMetrics:
                     "reason": reason,
                 },
             )
+
+    def record_first_audio(self, duration_ms: float) -> None:
+        if self.turn_first_audio:
+            self.turn_first_audio.record(duration_ms)
+
+    def record_false_interruption(self) -> None:
+        if self.call_false_interruption_total:
+            self.call_false_interruption_total.add(1)
 
     def record_interruption(self) -> None:
         if self.call_interruption_total:

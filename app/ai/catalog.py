@@ -14,5 +14,7 @@ APPOINTMENT_TOOLS = frozenset(
 )
 # Always available: leave a request for the team, or ask for a person.
 SUPPORT_TOOLS = frozenset({"create_ticket", "transfer_to_staff"})
-ALL_TOOLS = SAFE_READ_TOOLS | APPOINTMENT_TOOLS | SUPPORT_TOOLS
+# Only on a call.
+VOICE_TOOLS = frozenset({"end_call"})
+ALL_TOOLS = SAFE_READ_TOOLS | APPOINTMENT_TOOLS | SUPPORT_TOOLS | VOICE_TOOLS
 MUTATION_TOOLS = frozenset({"book_appointment", "cancel_appointment", "reschedule_appointment"})

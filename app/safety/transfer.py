@@ -57,15 +57,45 @@ async def transfer_call(
     whisper_url: str | None = None,
     action_url: str | None = None,
 ) -> None:
+    # The call is redirected on the account it was opened on: the tenant's own, or the
+    # platform's.
+    await _update_call(
+        settings,
+        context,
+        transfer_twiml(number, whisper_url=whisper_url, action_url=action_url),
+        client=client,
+        credentials=credentials,
+    )
+
+
+async def hang_up(
+    settings: Settings,
+    context: CallContext,
+    *,
+    client: httpx.AsyncClient | None = None,
+    credentials: "TwilioCredentials | None" = None,
+) -> None:
+    """End the call from this side, after the receptionist has said goodbye."""
+    await _update_call(
+        settings, context, "<Response><Hangup/></Response>", client=client, credentials=credentials
+    )
+
+
+async def _update_call(
+    settings: Settings,
+    context: CallContext,
+    twiml: str,
+    *,
+    client: httpx.AsyncClient | None,
+    credentials: "TwilioCredentials | None",
+) -> None:
     from app.voice.twilio import TwilioCredentials
 
-    # The account the call was opened on: the tenant's own, or the platform's.
     account = credentials or TwilioCredentials.from_settings(settings)
     if not re.fullmatch(r"CA[0-9a-fA-F]{32}", context.provider_call_id) or not re.fullmatch(
         r"AC[0-9a-fA-F]{32}", account.account_sid
     ):
         raise ValueError("Invalid provider call identifier")
-    twiml = transfer_twiml(number, whisper_url=whisper_url, action_url=action_url)
     url = (
         "https://api.twilio.com/2010-04-01/Accounts/"
         f"{account.account_sid}/Calls/{context.provider_call_id}.json"

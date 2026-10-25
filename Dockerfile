@@ -23,7 +23,8 @@ COPY --chown=frontdesk:frontdesk alembic.ini ./alembic.ini
 USER frontdesk
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"
-CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--no-proxy-headers", "--timeout-graceful-shutdown", "20", "--ws-max-size", "16384", "--ws-max-queue", "16"]
+# Uvicorn with the same options, but calls in progress may finish when it is stopped.
+CMD ["python", "-m", "app.serve"]
 
 # The worker also parses uploaded documents, so only its image carries those libraries.
 FROM builder AS worker-builder
