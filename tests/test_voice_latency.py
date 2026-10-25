@@ -41,6 +41,7 @@ async def started_pipeline(line: Line, tts: Any, **kwargs: Any) -> VoicePipeline
         send_frame=line.send,
         **kwargs,
     )
+    line.pipeline = pipeline
     await pipeline.start()
     return pipeline
 

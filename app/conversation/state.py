@@ -378,6 +378,9 @@ class ConversationState(BaseModel):
     utterance_count: int = 0
     last_caller_utterance: str | None = None
     last_agent_response: str | None = None
+    # The caller talked over the last reply; what they did not hear of it.
+    reply_cut_off: bool = False
+    unsaid: str | None = Field(default=None, max_length=1000)
     transcript_turns: list[TranscriptTurn] = Field(
         default_factory=_empty_transcript_turns, max_length=80
     )

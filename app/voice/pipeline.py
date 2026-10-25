@@ -1,19 +1,25 @@
 import asyncio
 import base64
 import logging
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import suppress
 from time import monotonic
 from typing import Any, Protocol
 from uuid import uuid4
 
+from app.conversation.backchannel import is_backchannel
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConversationState
 from app.conversation.store import ConversationStateStore
 from app.voice.audio import ULAW_FRAME, ulaw_speech
 from app.voice.codec import ulaw_to_pcm
 from app.voice.metrics import VoiceMetrics
-from app.voice.processors.interruption import InterruptionConfig, InterruptionHandler
+from app.voice.processors.interruption import (
+    ENERGY_REASON,
+    InterruptionConfig,
+    InterruptionHandler,
+)
 from app.voice.stt.base import SpeechToTextProvider, STTStream, TranscriptionResult
 from app.voice.tts.base import TextToSpeechProvider
 
@@ -22,8 +28,10 @@ logger = logging.getLogger(__name__)
 # Audio is sent this far ahead of what the caller hears. Twilio plays it from its buffer,
 # so the next sentence can start without a gap, and `clear` still stops it at once.
 LEAD_SECONDS = 0.4
-# A mark Twilio never echoes back stops counting as playing this long after its audio.
-MARK_GRACE_SECONDS = 3.0
+# A mark Twilio never echoes back counts as played this long after its audio ended.
+MARK_GRACE_SECONDS = 1.5
+# A noise stopped the receptionist but no words followed: carry on after this long.
+RESUME_AFTER_SECONDS = 1.5
 
 
 class PhraseStore(Protocol):
@@ -35,7 +43,8 @@ class Speech:
     """The audio for one piece of text, made from the moment it is asked for.
 
     Preparing the next sentence while the current one plays is what removes the pause
-    between them.
+    between them. Once sent, it knows when it started playing, so a sentence the caller
+    cut short can be remembered as far as they heard it.
     """
 
     def __init__(
@@ -45,6 +54,9 @@ class Speech:
         on_complete: Callable[[bytes], Coroutine[Any, Any, None]] | None = None,
     ) -> None:
         self.text = text
+        self.started_at: float | None = None
+        self.duration = 0.0
+        self.played = False
         self._queue: asyncio.Queue[bytes | BaseException | None] = asyncio.Queue()
         self._on_complete = on_complete
         self._task = asyncio.create_task(self._fill(source))
@@ -83,6 +95,16 @@ class Speech:
                 raise item
             yield item
 
+    def heard(self, at: float) -> str:
+        """The words the caller heard if playback stopped at `at`."""
+        if self.played:
+            return self.text
+        if self.started_at is None or self.duration <= 0 or at <= self.started_at:
+            return ""
+        words = self.text.split()
+        share = min(1.0, (at - self.started_at) / self.duration)
+        return " ".join(words[: int(len(words) * share)])
+
     def cancel(self) -> None:
         if not self._task.done():
             self._task.cancel()
@@ -111,6 +133,7 @@ class VoicePipeline:
         multilingual_enabled: bool = False,
         barge_in_enabled: bool = True,
         phrases: PhraseStore | None = None,
+        on_resume: Callable[[], Coroutine[Any, Any, None]] | None = None,
     ) -> None:
         self.stream_sid = stream_sid
         self.stt = stt_provider
@@ -125,6 +148,8 @@ class VoicePipeline:
         self.multilingual_enabled = multilingual_enabled
         self.barge_in_enabled = barge_in_enabled
         self.phrases = phrases
+        # Called when a noise stopped a reply and the caller then said nothing.
+        self.on_resume = on_resume
 
         self.interruption = InterruptionHandler(
             stream_sid=stream_sid,
@@ -138,13 +163,21 @@ class VoicePipeline:
         self._active_tts_task: asyncio.Task[bool] | None = None
         self._turn_task: asyncio.Task[None] | None = None
         self._active_response_task: asyncio.Task[None] | None = None
+        self._resume_task: asyncio.Task[None] | None = None
         self._turns: asyncio.Queue[TranscriptionResult] = asyncio.Queue(maxsize=8)
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._running = False
-        self._playback_mark: str | None = None
+        # Marks sent after each piece of speech, oldest first; Twilio echoes each one
+        # back when that speech has finished playing.
+        self._marks: OrderedDict[str, Speech] = OrderedDict()
         self._playback_deadline = 0.0
         # When the audio already sent to Twilio will have finished playing.
         self._play_clock = 0.0
+        self._played = asyncio.Event()
+        self._played.set()
+        # A "mm-hmm" heard while the receptionist was talking, kept until it finishes.
+        self._deferred: TranscriptionResult | None = None
+        self.interrupted_at: float | None = None
         self.received_frames = 0
         self.sent_frames = 0
         self._last_audio_at: float | None = None
@@ -166,6 +199,10 @@ class VoicePipeline:
         self._stt_task = asyncio.create_task(self._consume_transcripts())
         self._turn_task = asyncio.create_task(self._consume_turns())
 
+    @property
+    def _language(self) -> str:
+        return self.conversation_state.language if self.conversation_state else "en"
+
     def _handle_interruption_event(self) -> None:
         """Synchronously called by InterruptionHandler when speech is detected."""
         if self._active_tts_task and not self._active_tts_task.done():
@@ -173,15 +210,35 @@ class VoicePipeline:
         if self._active_response_task and not self._active_response_task.done():
             self._active_response_task.cancel()
         self._stop_playback()
+        if self.interruption.last_reason == ENERGY_REASON and self.on_resume is not None:
+            # Only a sound, no words yet: if none follow, the reply carries on.
+            self._cancel_resume()
+            self._resume_task = asyncio.create_task(self._resume_later())
+
+    async def _resume_later(self) -> None:
+        await asyncio.sleep(RESUME_AFTER_SECONDS)
+        if self.on_resume is None or not self._running or not self._turns.empty():
+            return
+        if self._active_response_task is not None and not self._active_response_task.done():
+            return
+        self._active_response_task = asyncio.create_task(self.on_resume())
+
+    def _cancel_resume(self) -> None:
+        if self._resume_task is not None and not self._resume_task.done():
+            self._resume_task.cancel()
+        self._resume_task = None
 
     @property
     def audio_pending(self) -> bool:
         """Whether Twilio may still be playing audio that was sent."""
-        return self._playback_mark is not None or self._play_clock > monotonic()
+        return bool(self._marks) or self._play_clock > monotonic()
 
     def _stop_playback(self) -> None:
         """Purge what Twilio has buffered but not yet played."""
-        self._playback_mark = None
+        # Twilio echoes the marks of cleared audio too; they no longer mean "played".
+        self._marks.clear()
+        self._played.set()
+        self.interrupted_at = monotonic()
         self._play_clock = monotonic()
         task = asyncio.create_task(self._send_clear())
         self._background_tasks.add(task)
@@ -198,9 +255,9 @@ class VoicePipeline:
         if not self._running:
             return
         self.check_tasks()
-        if self._playback_mark and monotonic() >= self._playback_deadline:
-            self._playback_mark = None
-            self.interruption.set_synthesizing(False)
+        if self._marks and monotonic() >= self._playback_deadline:
+            # Twilio did not echo the marks back; the audio has long since played.
+            self._acknowledge(next(reversed(self._marks)))
         self.received_frames += 1
         pcm16 = ulaw_to_pcm(ulaw_audio)
 
@@ -213,6 +270,21 @@ class VoicePipeline:
             await self._stt_stream.send_audio(pcm16)
             self._last_audio_at = monotonic()
 
+    @property
+    def _replying(self) -> bool:
+        active = self._active_response_task is not None and not self._active_response_task.done()
+        return active or self.audio_pending
+
+    def _heard_words(self, result: TranscriptionResult) -> None:
+        """The caller is saying something while the receptionist talks."""
+        self._cancel_resume()
+        if (
+            self.barge_in_enabled
+            and self.interruption.is_synthesizing
+            and not is_backchannel(result.text, self._language)
+        ):
+            self.interruption.trigger_interruption(reason="caller_words")
+
     async def _consume_transcripts(self) -> None:
         """Continuously reads transcription results from the STT stream."""
         if not self._stt_stream:
@@ -223,23 +295,45 @@ class VoicePipeline:
                     break
                 self.transcript_history.append(result)
                 del self.transcript_history[:-20]
-                if result.is_final and result.text.strip():
-                    if self.metrics is not None and self._last_audio_at is not None:
-                        self.metrics.record_stt_finalization_latency(
-                            max(0.0, (monotonic() - self._last_audio_at) * 1000), self.stt.name
-                        )
-                    if self._active_response_task and not self._active_response_task.done():
-                        self._active_response_task.cancel()
-                        if self.audio_pending:
-                            # The caller said something new; what was still queued to
-                            # play answers the old question.
-                            self._stop_playback()
-                    self._turns.put_nowait(result)
+                if not result.text.strip():
+                    continue
+                if not result.is_final:
+                    self._heard_words(result)
+                    continue
+                if self.metrics is not None and self._last_audio_at is not None:
+                    self.metrics.record_stt_finalization_latency(
+                        max(0.0, (monotonic() - self._last_audio_at) * 1000), self.stt.name
+                    )
+                self._cancel_resume()
+                if self._replying and is_backchannel(result.text, self._language):
+                    # "Okay" while the receptionist is talking means "go on".
+                    self._deferred = result
+                    continue
+                self._deferred = None
+                if self._active_response_task and not self._active_response_task.done():
+                    self._active_response_task.cancel()
+                    if self.audio_pending:
+                        # The caller said something new; what was still queued to
+                        # play answers the old question.
+                        self._stop_playback()
+                self._turns.put_nowait(result)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.error("stt_stream_consumer_failed")
             raise RuntimeError("Speech stream failed") from None
+
+    def _release_deferred(self) -> None:
+        """A "yes" said over the end of a question is the answer to it; any other
+        "mm-hmm" heard during a reply needed no answer."""
+        deferred, self._deferred = self._deferred, None
+        state = self.conversation_state
+        if deferred is None or state is None:
+            return
+        asked = (state.last_agent_response or "").rstrip().endswith(("?", "?"))
+        if asked or state.awaiting_confirmation:
+            with suppress(asyncio.QueueFull):
+                self._turns.put_nowait(deferred)
 
     def check_tasks(self) -> None:
         for task in (self._stt_task, self._turn_task):
@@ -270,6 +364,8 @@ class VoicePipeline:
                     except asyncio.CancelledError:
                         if not self._running:
                             raise
+                if self._turns.empty():
+                    self._release_deferred()
             finally:
                 self._turns.task_done()
 
@@ -331,7 +427,7 @@ class VoicePipeline:
         if self._active_tts_task and not self._active_tts_task.done():
             self._active_tts_task.cancel()
 
-        if self._playback_mark is not None and not follow_on:
+        if self._marks and not follow_on:
             self._stop_playback()
         self._active_tts_task = asyncio.create_task(self._stream(speech))
         try:
@@ -343,6 +439,18 @@ class VoicePipeline:
             return False
         finally:
             speech.cancel()
+
+    async def wait_played(self) -> None:
+        """Wait until everything sent has been heard, or was cleared."""
+        while self._marks and self._running:
+            self._played.clear()
+            timeout = max(0.05, self._playback_deadline - monotonic())
+            try:
+                async with asyncio.timeout(timeout):
+                    await self._played.wait()
+            except TimeoutError:
+                if self._marks:
+                    self._acknowledge(next(reversed(self._marks)))
 
     async def _pace(self) -> None:
         ahead = self._play_clock - monotonic()
@@ -372,31 +480,44 @@ class VoicePipeline:
                     {"event": "media", "streamSid": self.stream_sid, "media": {"payload": payload}}
                 )
                 self.sent_frames += 1
-                self._play_clock = max(self._play_clock, monotonic()) + len(frame) / 8000
+                begins = max(self._play_clock, monotonic())
+                if speech.started_at is None:
+                    speech.started_at = begins
+                speech.duration += len(frame) / 8000
+                self._play_clock = begins + len(frame) / 8000
             if not self.interruption.is_interrupted and self._running:
-                self._playback_mark = "tts-" + uuid4().hex
+                name = "tts-" + uuid4().hex
+                self._marks[name] = speech
                 self._playback_deadline = max(monotonic(), self._play_clock) + MARK_GRACE_SECONDS
                 await self.send_frame(
-                    {
-                        "event": "mark",
-                        "streamSid": self.stream_sid,
-                        "mark": {"name": self._playback_mark},
-                    }
+                    {"event": "mark", "streamSid": self.stream_sid, "mark": {"name": name}}
                 )
                 completed = True
         finally:
-            if not completed:
+            if not completed and not self._marks:
                 self.interruption.set_synthesizing(False)
         return completed
 
     def acknowledge_playback(self, name: str) -> None:
-        if name == self._playback_mark:
-            self._playback_mark = None
-            self.interruption.set_synthesizing(False)
+        if name in self._marks:
+            self._acknowledge(name)
+
+    def _acknowledge(self, name: str) -> None:
+        # Twilio plays in order: this mark, and every one before it, has been heard.
+        while self._marks:
+            mark, speech = self._marks.popitem(last=False)
+            speech.played = True
+            if mark == name:
+                break
+        if not self._marks:
+            self._played.set()
+            if self._active_tts_task is None or self._active_tts_task.done():
+                self.interruption.set_synthesizing(False)
 
     async def close(self) -> None:
         """Shuts down pipeline tasks and releases provider resources."""
         self._running = False
+        self._played.set()
         tasks: list[asyncio.Task[Any]] = [
             task
             for task in (
@@ -404,6 +525,7 @@ class VoicePipeline:
                 self._active_tts_task,
                 self._stt_task,
                 self._turn_task,
+                self._resume_task,
             )
             if task is not None
         ]

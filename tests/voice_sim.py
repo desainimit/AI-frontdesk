@@ -46,9 +46,27 @@ class Line:
     sent: list[tuple[float, dict[str, Any]]] = field(
         default_factory=list[tuple[float, dict[str, Any]]]
     )
+    # Set to echo marks back when their audio has played, as Twilio does.
+    pipeline: Any = None
+    playing_until: float = 0.0
 
     async def send(self, message: dict[str, Any]) -> None:
-        self.sent.append((monotonic(), message))
+        now = monotonic()
+        self.sent.append((now, message))
+        event = message.get("event")
+        if event == "media":
+            self.playing_until = max(self.playing_until, now) + 0.02
+        elif event == "clear":
+            self.playing_until = now
+        elif event == "mark" and self.pipeline is not None:
+            asyncio.get_running_loop().call_later(
+                max(0.0, self.playing_until - now),
+                self.pipeline.acknowledge_playback,
+                message["mark"]["name"],
+            )
+
+    def cleared(self) -> bool:
+        return any(message.get("event") == "clear" for _, message in self.sent)
 
     def media_times(self) -> list[float]:
         return [at for at, message in self.sent if message.get("event") == "media"]
@@ -95,3 +113,39 @@ class _SilentStream:
         await self._closed.wait()
         return
         yield  # pragma: no cover
+
+
+class ScriptedSTT:
+    """Recognition whose results a test pushes in as the caller would say them."""
+
+    name = "scripted"
+
+    def __init__(self) -> None:
+        self.stream = ScriptedStream()
+
+    async def create_stream(self, sample_rate: int = 8000, encoding: str = "linear16") -> STTStream:
+        return self.stream
+
+    async def transcribe(self, audio: bytes, sample_rate: int = 8000) -> TranscriptionResult:
+        return TranscriptionResult("", True)
+
+    async def health(self) -> bool:
+        return True
+
+
+class ScriptedStream:
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[TranscriptionResult | None] = asyncio.Queue()
+
+    def say(self, text: str, *, final: bool = True) -> None:
+        self._queue.put_nowait(TranscriptionResult(text, final))
+
+    async def send_audio(self, audio: bytes) -> None:
+        return None
+
+    async def close(self) -> None:
+        self._queue.put_nowait(None)
+
+    async def results(self) -> AsyncIterator[TranscriptionResult]:
+        while (result := await self._queue.get()) is not None:
+            yield result

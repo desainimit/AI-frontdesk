@@ -3,6 +3,7 @@ sentence while the rest is still being written, and whatever has to follow it.""
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import suppress
 from time import monotonic
 
@@ -71,38 +72,56 @@ class CallReceptionist:
         # Set once the call has been put through to a person.
         self.transferred = False
         self._fillers = 0
+        # What a noise interrupted, said once the caller turns out to have said nothing.
+        self._unsaid: list[str] = []
 
     async def reply(self, result: TranscriptionResult) -> None:
+        if self.pipeline is None or not result.is_final or not result.text.strip():
+            return
+        self._unsaid = []
+        await self._respond(self.engine.run(self.session, self.state, result.text))
+
+    async def resume(self) -> None:
+        """A noise stopped the reply and the caller said nothing: finish it."""
+        unsaid, self._unsaid = self._unsaid, []
+        if self.pipeline is None or not unsaid:
+            return
+
+        async def rest() -> AsyncIterator[Event]:
+            for text in unsaid:
+                yield Say(text)
+
+        await self._respond(rest(), fillers=False)
+
+    async def _respond(self, source: AsyncIterator[Event], *, fillers: bool = True) -> None:
         pipeline = self.pipeline
-        if pipeline is None or not result.is_final or not result.text.strip():
+        if pipeline is None:
             return
         events: asyncio.Queue[Event | None] = asyncio.Queue()
 
         async def produce() -> None:
             try:
-                async for event in self.engine.run(self.session, self.state, result.text):
+                async for event in source:
                     events.put_nowait(event)
             finally:
                 events.put_nowait(None)
 
         # Each sentence's audio is made as soon as the sentence is written and played in
         # order, so the next is ready before the current one ends.
-        queue: asyncio.Queue[tuple[Speech, bool] | None] = asyncio.Queue()
-        heard: list[str] = []
-        prepared: list[Speech] = []
+        queue: asyncio.Queue[Speech | None] = asyncio.Queue()
+        # Everything queued to be said, in order; False marks a filler, not remembered.
+        items: list[tuple[Speech, bool]] = []
+        finished = False
 
         async def play() -> None:
-            while (item := await queue.get()) is not None:
-                speech, record = item
+            while (speech := await queue.get()) is not None:
                 if not await pipeline.play(speech, follow_on=True):
                     return
-                if record:
-                    heard.append(speech.text)
 
         async def enqueue(text: str, *, record: bool = True, cache: bool = False) -> None:
             speech = await pipeline.prepare(text, cache=cache)
-            prepared.append(speech)
-            queue.put_nowait((speech, record))
+            items.append((speech, record))
+            queue.put_nowait(speech)
 
         async def say_filler() -> None:
             self._fillers += 1
@@ -116,7 +135,7 @@ class CallReceptionist:
         done: Done | None = None
         # When a short "let me check" fills the silence, if nothing has been said by then.
         # At most one per reply.
-        fill_at: float | None = monotonic() + FILLER_AFTER_SECONDS
+        fill_at: float | None = monotonic() + FILLER_AFTER_SECONDS if fillers else None
         try:
             while True:
                 try:
@@ -135,10 +154,14 @@ class CallReceptionist:
                         player.cancel()
                         with suppress(asyncio.CancelledError):
                             await player
-                        for speech in prepared:
-                            speech.cancel()
-                        await pipeline.speak(event.text, record=False)
-                        heard.append(event.text)
+                        for speech, _ in items:
+                            if not speech.played:
+                                speech.cancel()
+                        items = [(speech, record) for speech, record in items if speech.played]
+                        queue = asyncio.Queue()
+                        alarm = await pipeline.prepare(event.text)
+                        items.append((alarm, True))
+                        await pipeline.play(alarm)
                         player = asyncio.create_task(play())
                         continue
                     await enqueue(event.text)
@@ -152,6 +175,10 @@ class CallReceptionist:
                     done = event
             queue.put_nowait(None)
             await player
+            # The reply is over once the caller has heard its last word; a barge-in
+            # before then still counts as talking over it.
+            await pipeline.wait_played()
+            finished = True
         finally:
             # The caller spoke over the reply, or hung up: stop writing it at once.
             for task in (producer, player):
@@ -159,20 +186,53 @@ class CallReceptionist:
                     task.cancel()
                 with suppress(asyncio.CancelledError, Exception):
                     await task
-            for speech in prepared:
+            for speech, _ in items:
                 speech.cancel()
-            if heard:
-                # Only what the caller actually heard counts as having been said.
-                text = " ".join(heard)
-                ConversationStateManager.record_agent_response(self.state, text)
-                self.state.append_transcript_turn("agent", text)
-                with suppress(Exception):
-                    await self.store.save(self.state, self.store_ttl_seconds)
+            self._remember(items, finished, pipeline.interrupted_at)
+            with suppress(Exception):
+                await self.store.save(self.state, self.store_ttl_seconds)
             if done is not None:
                 self.metrics.record_llm_latency(float(done.total_ms), done.model or "model")
                 await record_turn(self.sessions, self.session, done)
         if handoff is not None:
             await self._hand_over(pipeline, handoff)
+
+    def _remember(
+        self, items: list[tuple[Speech, bool]], finished: bool, stopped_at: float | None
+    ) -> None:
+        """Only what the caller actually heard counts as having been said.
+
+        A sentence they talked over is kept as far as they heard it, and the model is
+        told the rest went unsaid, so it neither repeats the whole reply nor assumes
+        the caller heard the end of it.
+        """
+        heard: list[str] = []
+        unsaid: list[str] = []
+        cut = False
+        for speech, record in items:
+            if not record:
+                continue
+            if finished or speech.played:
+                heard.append(speech.text)
+                continue
+            if unsaid or speech.started_at is None:
+                unsaid.append(speech.text)
+                continue
+            # Talked over while it played.
+            cut = True
+            partial = speech.heard(stopped_at or monotonic())
+            if partial:
+                heard.append(partial + " —")
+            unsaid.append(speech.text)
+        if heard:
+            text = " ".join(heard)
+            ConversationStateManager.record_agent_response(self.state, text)
+            self.state.append_transcript_turn("agent", text)
+        # A reply cut off before a word of it played was never said at all.
+        cut = cut or bool(heard and unsaid)
+        self.state.reply_cut_off = cut
+        self.state.unsaid = " ".join(unsaid)[:1000] if cut else None
+        self._unsaid = unsaid if cut else []
 
     async def _hand_over(self, pipeline: VoicePipeline, handoff: Handoff) -> None:
         safety = self.state.safety_state

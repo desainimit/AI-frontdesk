@@ -9,11 +9,16 @@ from app.voice.metrics import VoiceMetrics
 logger = logging.getLogger(__name__)
 
 
+ENERGY_REASON = "speech_energy_detected"
+
+
 @dataclass
 class InterruptionConfig:
     energy_threshold: float = 400.0  # RMS threshold for voice energy (silence is typically < 150)
-    # ~40ms of continuous energy to avoid single-sample click false positives
-    consecutive_frames_required: int = 2
+    # Sound alone must last about 600 ms (30 frames of 20 ms) before it stops the
+    # receptionist; a cough, a click or a short "mm" does not. Words the recognizer
+    # hears stop it sooner (see VoicePipeline).
+    consecutive_frames_required: int = 30
 
 
 class InterruptionHandler:
@@ -34,6 +39,7 @@ class InterruptionHandler:
         self._is_synthesizing: bool = False
         self._consecutive_active_frames: int = 0
         self._interrupted_event = asyncio.Event()
+        self.last_reason: str | None = None
 
     @property
     def is_synthesizing(self) -> bool:
@@ -69,7 +75,7 @@ class InterruptionHandler:
         if rms >= self.config.energy_threshold:
             self._consecutive_active_frames += 1
             if self._consecutive_active_frames >= self.config.consecutive_frames_required:
-                self.trigger_interruption(reason="speech_energy_detected")
+                self.trigger_interruption(reason=ENERGY_REASON)
                 return True
         else:
             self._consecutive_active_frames = max(0, self._consecutive_active_frames - 1)
@@ -84,6 +90,7 @@ class InterruptionHandler:
         self._interrupted_event.set()
         self._is_synthesizing = False
         self._consecutive_active_frames = 0
+        self.last_reason = reason
 
         if self.metrics:
             self.metrics.record_interruption()

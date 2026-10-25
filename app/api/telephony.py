@@ -636,6 +636,7 @@ async def run_media(
             tts_provider=tts,
             send_frame=send_frame,
             on_transcript=receptionist.reply,
+            on_resume=receptionist.resume,
             interruption_config=InterruptionConfig(),
             conversation_state=initial_conv_state,
             conversation_store=conv_store,

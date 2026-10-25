@@ -144,8 +144,14 @@ async def test_barge_in_after_synthesis_until_playback_ack() -> None:
         pipeline.acknowledge_playback("unrelated")
         assert pipeline.interruption.is_synthesizing
         voiced = pcm_to_ulaw(b"\x10\x27" * 160)
-        await pipeline.process_inbound_audio(voiced)
-        await pipeline.process_inbound_audio(voiced)
+        # A short sound (a cough, a click) does not stop the receptionist...
+        for _ in range(5):
+            await pipeline.process_inbound_audio(voiced)
+        await asyncio.sleep(0)
+        assert not any(frame["event"] == "clear" for frame in sent)
+        # ...but more than half a second of speech does.
+        for _ in range(30):
+            await pipeline.process_inbound_audio(voiced)
         await asyncio.sleep(0)
         assert any(frame["event"] == "clear" for frame in sent)
         await pipeline.speak("Again")

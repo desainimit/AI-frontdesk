@@ -46,7 +46,11 @@ VOICE = (
     "You are on a phone call. Reply in one or two short spoken sentences, with no lists, "
     "symbols or formatting. Offer at most three times to choose from. Ask one question at a time. "
     "Before you look something up, first say a few natural words so the line is not silent, "
-    'such as "Let me check Dr. Shah\'s diary." or "One sec, I\'ll look."'
+    'such as "Let me check Dr. Shah\'s diary." or "One sec, I\'ll look." '
+    "If your last reply was cut off, the person spoke over you: answer what they just said, "
+    "and repeat only the part of what they did not hear that still matters. If they ask "
+    '"hello?" or "are you there?", say briefly that you are, then carry on. If they say '
+    '"sorry, go on", continue where you stopped.'
 )
 TEXT = (
     "You are replying by text message. Keep it under 300 characters where you can, plain text, "
@@ -71,6 +75,8 @@ def system_prompt(session: Session, state: ConversationState) -> str:
         "their_number_is_known": session.contact is not None,
         "waiting_for_confirmation": state.awaiting_confirmation,
         "times_last_offered": state.active_flow_state.offered_slots[:10],
+        "your_last_reply_was_cut_off": state.reply_cut_off,
+        "what_they_did_not_hear": state.unsaid if state.reply_cut_off else None,
     }
     clinic = {
         "name": settings.clinic.name,
