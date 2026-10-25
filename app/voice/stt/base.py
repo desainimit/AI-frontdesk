@@ -49,6 +49,8 @@ class TranscriptionResult:
     language: str | None = None
     duration_ms: float = 0.0
     languages: tuple[str, ...] = ()
+    # The recognizer heard the caller begin to speak; the text may still be empty.
+    speech_started: bool = False
 
     def __post_init__(self) -> None:
         _validate_text(self.text)

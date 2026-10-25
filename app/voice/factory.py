@@ -149,11 +149,16 @@ def _routed_tts(config: Mapping[str, Any], secrets: Mapping[str, SecretStr]) -> 
     )
 
 
+def _hints(policy: LanguagePolicy | None) -> tuple[str, ...]:
+    return tuple(policy.enabled_languages) if policy is not None else ()
+
+
 def stt_from_connection(
     settings: Settings,
     connection: ResolvedIntegration,
     language_resolver: LanguageResolver | None = None,
     language_policy: LanguagePolicy | None = None,
+    keyterms: tuple[str, ...] = (),
 ) -> SpeechToTextProvider:
     config = connection.config
     if connection.provider == "language_router":
@@ -163,6 +168,8 @@ def stt_from_connection(
             api_key=connection.secret("api_key"),
             model=str(config["model"]),
             language=str(config["language"]),
+            keyterms=keyterms,
+            language_hints=_hints(language_policy),
         )
     if connection.provider == "azure_speech":
         return AzureSTTProvider(
@@ -201,6 +208,7 @@ def platform_stt(
     settings: Settings,
     language_resolver: LanguageResolver | None = None,
     language_policy: LanguagePolicy | None = None,
+    keyterms: tuple[str, ...] = (),
 ) -> SpeechToTextProvider | None:
     """The platform account's speech-to-text, or None when its key is not configured."""
     if settings.stt_provider == "language_router":
@@ -217,6 +225,8 @@ def platform_stt(
             api_key=settings.deepgram_api_key,
             model=settings.deepgram_model,
             language=settings.deepgram_language,
+            keyterms=keyterms,
+            language_hints=_hints(language_policy),
         )
     azure_key = (
         settings.azure_stt_key

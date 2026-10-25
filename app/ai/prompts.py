@@ -44,7 +44,9 @@ How to reply
 
 VOICE = (
     "You are on a phone call. Reply in one or two short spoken sentences, with no lists, "
-    "symbols or formatting. Offer at most three times to choose from. Ask one question at a time."
+    "symbols or formatting. Offer at most three times to choose from. Ask one question at a time. "
+    "Before you look something up, first say a few natural words so the line is not silent, "
+    'such as "Let me check Dr. Shah\'s diary." or "One sec, I\'ll look."'
 )
 TEXT = (
     "You are replying by text message. Keep it under 300 characters where you can, plain text, "

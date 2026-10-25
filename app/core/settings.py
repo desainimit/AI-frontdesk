@@ -142,12 +142,12 @@ class Settings(BaseSettings):
     # Deepgram STT
     deepgram_api_key: SecretStr = SecretStr("")
     # "multi" follows a caller who mixes languages; set one language code to fix it.
-    deepgram_model: str = "nova-3"
+    deepgram_model: str = "flux"
     deepgram_language: str = "multi"
 
     # ElevenLabs TTS
     elevenlabs_api_key: SecretStr = SecretStr("")
-    elevenlabs_model_id: str = "eleven_turbo_v2_5"
+    elevenlabs_model_id: str = "eleven_flash_v2_5"
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
 
     # Azure Speech Services (STT & TTS)
@@ -193,8 +193,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_speech(self) -> Self:
-        if self.deepgram_language == "multi" and not self.deepgram_model.startswith("nova-3"):
-            raise ValueError("DEEPGRAM_LANGUAGE=multi requires a nova-3 model")
+        if self.deepgram_language == "multi" and not (
+            self.deepgram_model == "flux" or self.deepgram_model.startswith("nova-3")
+        ):
+            raise ValueError("DEEPGRAM_LANGUAGE=multi requires flux or a nova-3 model")
         return self
 
     @model_validator(mode="after")

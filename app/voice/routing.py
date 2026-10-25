@@ -1,10 +1,13 @@
 """Call-local routing using audio language evidence, never the previous turn alone."""
 
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from dataclasses import replace
 from time import perf_counter
 
 from app.conversation.locales import normalize_language
+from app.voice.audio import pcm_frames
+from app.voice.codec import pcm_to_ulaw
 from app.voice.stt.base import (
     SpeechToTextProvider,
     STTStream,
@@ -81,6 +84,9 @@ class RoutedSTTProvider:
             and (self.gujarati is self.azure or await self.gujarati.health())
         )
 
+    async def aclose(self) -> None:
+        await _release(self.azure, self.deepgram, self.gujarati)
+
 
 class RoutedTTSProvider:
     def __init__(self, azure: TextToSpeechProvider, elevenlabs: TextToSpeechProvider) -> None:
@@ -101,5 +107,37 @@ class RoutedTTSProvider:
         ):
             yield chunk
 
+    @property
+    def voice_key(self) -> str:
+        return "routed:" + str(getattr(self.elevenlabs, "voice_key", self.elevenlabs.name))
+
+    async def warm_up(self, voice_id: str | None = None, *, language: str | None = None) -> None:
+        warm_up = getattr(self.elevenlabs, "warm_up", None)
+        if warm_up is not None and normalize_language(language or "") != "gu":
+            await warm_up(voice_id, language=language)
+
+    async def synthesize_ulaw(
+        self, text: str, voice_id: str | None = None, *, language: str | None = None
+    ) -> AsyncIterator[bytes]:
+        gujarati = normalize_language(language or "") == "gu"
+        source = None if gujarati else getattr(self.elevenlabs, "synthesize_ulaw", None)
+        if source is not None:
+            async for chunk in source(text, voice_id, language=language):
+                yield chunk
+            return
+        async for frame in pcm_frames(self.synthesize(text, voice_id, language=language)):
+            yield pcm_to_ulaw(frame)
+
     async def health(self) -> bool:
         return await self.azure.health() and await self.elevenlabs.health()
+
+    async def aclose(self) -> None:
+        await _release(self.azure, self.elevenlabs)
+
+
+async def _release(*providers: object) -> None:
+    for provider in providers:
+        release = getattr(provider, "aclose", None)
+        if release is not None:
+            with suppress(Exception):
+                await release()

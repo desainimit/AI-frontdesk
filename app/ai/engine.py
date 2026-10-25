@@ -46,8 +46,9 @@ logger = logging.getLogger(__name__)
 MAX_STEPS = 4
 MAX_TOOL_CALLS = 6
 TURN_SECONDS = 25.0
-# How long the first words wait for the model's safety reading of what was said.
-SAFETY_WAIT_SECONDS = 1.0
+# How long the first words wait for the model's safety reading of what was said. None:
+# the reply starts at once, and an alarm raised later cuts in (see `Say.urgent`).
+SAFETY_WAIT_SECONDS = 0.0
 
 Outcome = Literal[
     "answered", "confirmation", "safety", "handoff", "unavailable", "blocked", "interrupted"
@@ -59,6 +60,8 @@ class Say:
     """The next piece of the reply, complete enough to speak or send."""
 
     text: str
+    # Stop whatever is still being said and say this instead (a safety alarm).
+    urgent: bool = False
 
 
 @dataclass(frozen=True)
@@ -126,12 +129,12 @@ class Engine:
         first_text_ms: int | None = None
         semantic: asyncio.Task[str | None] | None = None
 
-        def say(text: str) -> Say:
+        def say(text: str, *, urgent: bool = False) -> Say:
             nonlocal first_text_ms
             if first_text_ms is None:
                 first_text_ms = int((perf_counter() - started) * 1000)
             said.append(text)
-            return Say(text)
+            return Say(text, urgent)
 
         def done(outcome: Outcome, error: str | None = None) -> Done:
             return Done(
@@ -198,7 +201,7 @@ class Engine:
                         for sentence in splitter.feed(item.text):
                             semantic, alarm = await self._alarm(semantic, started)
                             if alarm is not None:
-                                yield say(alarm)
+                                yield say(alarm, urgent=bool(said))
                                 if (event := handoff()) is not None:
                                     yield event
                                 yield done("safety")
@@ -215,7 +218,7 @@ class Engine:
                 model = completed.model or model
                 semantic, alarm = await self._alarm(semantic, started)
                 if alarm is not None:
-                    yield say(alarm)
+                    yield say(alarm, urgent=bool(said))
                     if (event := handoff()) is not None:
                         yield event
                     yield done("safety")

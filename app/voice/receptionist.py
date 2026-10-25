@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.ai.engine import Done, Engine, Event, Handoff, Say, Working
 from app.ai.session import Session
 from app.ai.usage import record_turn
-from app.ai.wording import spoken
+from app.ai.wording import filler
 from app.audit.events import AuditAction
 from app.calls.service import CallService
 from app.conversation.manager import ConversationStateManager
@@ -25,14 +25,16 @@ from app.safety.messages import transfer_failed_message
 from app.safety.transfer import TransferError, transfer_call
 from app.tickets.service import open_ticket
 from app.voice.metrics import VoiceMetrics
-from app.voice.pipeline import VoicePipeline
+from app.voice.pipeline import Speech, VoicePipeline
 from app.voice.stt.base import TranscriptionResult
 from app.voice.twilio import TwilioCredentials
 
 logger = logging.getLogger(__name__)
 
-# Silence longer than this before the first words is filled with "one moment".
+# Silence longer than this before the first words is filled with a short "let me see".
 FILLER_AFTER_SECONDS = 1.5
+# A lookup that has not answered by now gets the same, unless something was said.
+LOOKUP_FILLER_AFTER_SECONDS = 0.8
 TICKETS = {
     "requested": "Caller asked to speak to someone",
     "emergency": "Possible emergency on a call",
@@ -68,6 +70,7 @@ class CallReceptionist:
         self.pipeline: VoicePipeline | None = None
         # Set once the call has been put through to a person.
         self.transferred = False
+        self._fillers = 0
 
     async def reply(self, result: TranscriptionResult) -> None:
         pipeline = self.pipeline
@@ -82,47 +85,82 @@ class CallReceptionist:
             finally:
                 events.put_nowait(None)
 
+        # Each sentence's audio is made as soon as the sentence is written and played in
+        # order, so the next is ready before the current one ends.
+        queue: asyncio.Queue[tuple[Speech, bool] | None] = asyncio.Queue()
+        heard: list[str] = []
+        prepared: list[Speech] = []
+
+        async def play() -> None:
+            while (item := await queue.get()) is not None:
+                speech, record = item
+                if not await pipeline.play(speech, follow_on=True):
+                    return
+                if record:
+                    heard.append(speech.text)
+
+        async def enqueue(text: str, *, record: bool = True, cache: bool = False) -> None:
+            speech = await pipeline.prepare(text, cache=cache)
+            prepared.append(speech)
+            queue.put_nowait((speech, record))
+
+        async def say_filler() -> None:
+            self._fillers += 1
+            await enqueue(filler(self.state.language, self._fillers), record=False, cache=True)
+
         # The reply is written in the background so the first sentence can be spoken
         # while the next is still on its way.
         producer = asyncio.create_task(produce())
-        heard: list[str] = []
+        player = asyncio.create_task(play())
         handoff: Handoff | None = None
         done: Done | None = None
-        filled = spoke = False
-        fill_at = monotonic() + FILLER_AFTER_SECONDS
+        # When a short "let me check" fills the silence, if nothing has been said by then.
+        # At most one per reply.
+        fill_at: float | None = monotonic() + FILLER_AFTER_SECONDS
         try:
             while True:
                 try:
-                    wait = None if filled or spoke else max(0.05, fill_at - monotonic())
+                    wait = None if fill_at is None else max(0.0, fill_at - monotonic())
                     event = await asyncio.wait_for(events.get(), wait)
                 except TimeoutError:
-                    filled = True
-                    await pipeline.speak(
-                        spoken(self.state.language, "one_moment"), record=False, follow_on=True
-                    )
+                    fill_at = None
+                    await say_filler()
                     continue
                 if event is None:
                     break
                 if isinstance(event, Say):
-                    spoke = True
-                    if await pipeline.speak(event.text, record=False, follow_on=True):
+                    fill_at = None
+                    if event.urgent:
+                        # A safety alarm: whatever is still queued or playing gives way.
+                        player.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await player
+                        for speech in prepared:
+                            speech.cancel()
+                        await pipeline.speak(event.text, record=False)
                         heard.append(event.text)
+                        player = asyncio.create_task(play())
+                        continue
+                    await enqueue(event.text)
                 elif isinstance(event, Working):
-                    if not filled and not spoke:
-                        filled = True
-                        await pipeline.speak(
-                            spoken(self.state.language, "one_moment"), record=False
-                        )
+                    if fill_at is not None:
+                        # Most lookups answer within a moment; only a slow one is filled.
+                        fill_at = min(fill_at, monotonic() + LOOKUP_FILLER_AFTER_SECONDS)
                 elif isinstance(event, Handoff):
                     handoff = event
                 elif isinstance(event, Done):
                     done = event
+            queue.put_nowait(None)
+            await player
         finally:
             # The caller spoke over the reply, or hung up: stop writing it at once.
-            if not producer.done():
-                producer.cancel()
-            with suppress(asyncio.CancelledError, Exception):
-                await producer
+            for task in (producer, player):
+                if not task.done():
+                    task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await task
+            for speech in prepared:
+                speech.cancel()
             if heard:
                 # Only what the caller actually heard counts as having been said.
                 text = " ".join(heard)

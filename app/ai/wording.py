@@ -209,6 +209,32 @@ MESSAGES: dict[str, dict[str, str]] = {
 }
 
 
+# What a receptionist says while looking something up. Several, taken in turn, so the
+# caller does not hear the same line every time.
+FILLERS: dict[str, tuple[str, ...]] = {
+    "en": (
+        "Let me check that.",
+        "One sec.",
+        "Okay, let me see.",
+        "Just a moment.",
+        "Bear with me.",
+    ),
+    "es": ("Déjeme ver.", "Un segundo.", "Un momento.", "Ahora lo miro."),
+    "fr": ("Je regarde.", "Une seconde.", "Un instant.", "Je vérifie."),
+    "de": ("Ich schaue kurz nach.", "Einen Moment.", "Sekunde.", "Ich prüfe das."),
+    "pt": ("Deixe-me ver.", "Um segundo.", "Um momento.", "Vou verificar."),
+    # Hindi first-person verbs are gendered; these lines avoid them.
+    "hi": ("एक सेकंड।", "जी, एक मिनट।", "जी, देखते हैं।"),
+    "hinglish": ("Ek second.", "Ji, ek minute.", "Haan ji, dekhte hain."),
+    "gu": ("એક સેકન્ડ, જોઉં છું.", "જી, એક મિનિટ.", "ચાલો, તપાસું છું."),
+}
+
+
+def filler(language: str, turn: int) -> str:
+    choices = FILLERS.get(language, FILLERS["en"])
+    return choices[turn % len(choices)]
+
+
 def spoken(language: str, key: str, **values: Any) -> str:
     templates = MESSAGES.get(language, MESSAGES["en"])
     # A sentence not yet translated is said in English rather than not at all.

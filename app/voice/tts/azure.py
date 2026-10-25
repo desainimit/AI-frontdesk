@@ -36,13 +36,21 @@ class AzureTTSProvider:
         self.output_format = output_format
         self.timeout_seconds = timeout_seconds
         self._client = client
+        self._owns_client = client is None
 
     @property
     def name(self) -> str:
         return "azure"
 
     def _get_client(self) -> httpx.AsyncClient:
-        return self._client or httpx.AsyncClient(timeout=self.timeout_seconds)
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self.timeout_seconds)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._owns_client and self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     async def synthesize(
         self, text: str, voice_id: str | None = None, *, language: str | None = None
@@ -82,7 +90,6 @@ class AzureTTSProvider:
             f"</speak>"
         )
 
-        owns_client = self._client is None
         client = self._get_client()
         try:
             async with client.stream(
@@ -111,9 +118,6 @@ class AzureTTSProvider:
             raise TTSTimeoutError("Azure Speech TTS timed out") from exc
         except httpx.RequestError as exc:
             raise TTSTransientError("Azure Speech connection error") from exc
-        finally:
-            if owns_client:
-                await client.aclose()
 
     async def health(self) -> bool:
         return bool(self._speech_key.get_secret_value() and self.region)

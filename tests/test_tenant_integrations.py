@@ -40,9 +40,10 @@ def keyring() -> SecretStr:
 
 def test_catalog_accepts_only_allowlisted_configuration() -> None:
     deepgram = spec_for("stt", "deepgram")
-    assert validate_config(deepgram, {}) == {"model": "nova-3", "language": "multi"}
+    assert validate_config(deepgram, {}) == {"model": "flux", "language": "multi"}
     for config in (
-        {"model": "nova-2", "language": "multi"},  # Multilingual needs nova-3.
+        {"model": "nova-2", "language": "multi"},  # Multilingual needs flux or nova-3.
+        {"model": "flux", "language": "gu"},  # Gujarati needs nova-3.
         {"base_url": "https://attacker.example"},
         {"model": "nova-3", "headers": {"X": "y"}},
     ):

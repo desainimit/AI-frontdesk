@@ -65,8 +65,10 @@ from app.voice.factory import (
     tts_from_connection,
     validate_gujarati_voice,
 )
+from app.voice.keyterms import call_keyterms
 from app.voice.metrics import VoiceMetrics
-from app.voice.pipeline import VoicePipeline
+from app.voice.phrases import MemoryPhraseCache, PhraseCache
+from app.voice.pipeline import PhraseStore, VoicePipeline
 from app.voice.processors.interruption import InterruptionConfig
 from app.voice.receptionist import CallReceptionist
 from app.voice.stt.base import SpeechToTextProvider
@@ -422,11 +424,16 @@ class CallProviders:
         settings: Settings,
         speech_locale: Callable[[], str],
         language_policy: LanguagePolicy | None = None,
+        keyterms: tuple[str, ...] = (),
     ) -> SpeechToTextProvider:
         locale = speech_locale if self.multilingual else None
         if self.stt_connection is not None:
-            return stt_from_connection(settings, self.stt_connection, locale, language_policy)
-        provider = app.state.stt_provider or platform_stt(settings, locale, language_policy)
+            return stt_from_connection(
+                settings, self.stt_connection, locale, language_policy, keyterms
+            )
+        provider = app.state.stt_provider or platform_stt(
+            settings, locale, language_policy, keyterms
+        )
         if provider is None:
             raise IntegrationUnavailableError()
         return provider
@@ -482,6 +489,16 @@ async def resolve_call_providers(
         account,
         follows_caller_language(settings, stt_connection),
     )
+
+
+def phrase_cache(app: FastAPI, redis: object, tenant_id: UUID) -> PhraseStore:
+    """Where the audio of repeated phrases is kept: Redis, or this process for local runs."""
+    client = getattr(redis, "client", None)
+    if client is not None:
+        return PhraseCache(client, str(tenant_id))
+    if not isinstance(getattr(app.state, "phrase_cache", None), MemoryPhraseCache):
+        app.state.phrase_cache = MemoryPhraseCache()
+    return app.state.phrase_cache
 
 
 async def run_media(
@@ -556,7 +573,11 @@ async def run_media(
             return LOCALES[base_language(initial_conv_state.language)].speech_locale
 
         stt = providers.speech_to_text(
-            socket.app, settings, speech_locale, configuration.receptionist.languages
+            socket.app,
+            settings,
+            speech_locale,
+            configuration.receptionist.languages,
+            await call_keyterms(service.sessions, tenant_id, configuration),
         )
         conversation_state = initial_conv_state
         initial_conv_state.call_state.stream_sid = stream_sid
@@ -620,12 +641,13 @@ async def run_media(
             conversation_store=conv_store,
             conversation_ttl_seconds=CONVERSATION_TTL_SECONDS,
             multilingual_enabled=multilingual,
+            phrases=phrase_cache(socket.app, redis_dep, tenant_id),
         )
         receptionist.pipeline = pipeline
         previous_sequence = int(message["sequenceNumber"])
         try:
             await pipeline.start()
-            await pipeline.speak(configuration.receptionist.greeting)
+            await pipeline.speak(configuration.receptionist.greeting, cache=True)
             async with asyncio.timeout(configuration.calls.max_duration_minutes * 60):
                 while True:
                     async with asyncio.timeout(IDLE_SECONDS):

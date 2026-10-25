@@ -51,13 +51,21 @@ class AzureSTTProvider:
         self.candidate_languages = candidate_languages
         self.timeout_seconds = timeout_seconds
         self._client = client
+        self._owns_client = client is None
 
     @property
     def name(self) -> str:
         return "azure"
 
     def _get_client(self) -> httpx.AsyncClient:
-        return self._client or httpx.AsyncClient(timeout=self.timeout_seconds)
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self.timeout_seconds)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._owns_client and self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     async def create_stream(self, sample_rate: int = 8000, encoding: str = "linear16") -> STTStream:
         if not self._speech_key.get_secret_value():
@@ -100,7 +108,6 @@ class AzureSTTProvider:
             del headers["Content-Type"]
 
         started = perf_counter()
-        owns_client = self._client is None
         client = self._get_client()
         try:
             if self.candidate_languages:
@@ -128,9 +135,6 @@ class AzureSTTProvider:
             raise STTTimeoutError("Azure Speech STT timed out") from exc
         except httpx.RequestError as exc:
             raise STTTransientError("Azure Speech connection error") from exc
-        finally:
-            if owns_client:
-                await client.aclose()
 
         duration_ms = (perf_counter() - started) * 1000.0
 

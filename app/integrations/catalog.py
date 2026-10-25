@@ -72,13 +72,14 @@ class EmptyConfig(_Config):
 
 
 class DeepgramConfig(_Config):
-    model: Literal["nova-2", "nova-3"] = "nova-3"
+    # Flux also decides when the caller has finished speaking; Nova 3 is needed for Gujarati.
+    model: Literal["flux", "nova-2", "nova-3"] = "flux"
     language: Literal["multi", "en", "hi", "es", "fr", "de", "pt", "gu"] = "multi"
 
     @model_validator(mode="after")
     def multilingual_model(self) -> Self:
-        if self.language == "multi" and self.model != "nova-3":
-            raise ValueError("Multilingual transcription requires nova-3")
+        if self.language == "multi" and self.model == "nova-2":
+            raise ValueError("Multilingual transcription requires flux or nova-3")
         if self.language == "gu" and self.model != "nova-3":
             raise ValueError("Gujarati transcription requires nova-3")
         return self
@@ -96,9 +97,9 @@ class AzureTextToSpeechConfig(_Config):
 
 
 class ElevenLabsConfig(_Config):
-    model_id: Literal["eleven_turbo_v2_5", "eleven_multilingual_v2", "eleven_v3"] = (
-        "eleven_turbo_v2_5"
-    )
+    model_id: Literal[
+        "eleven_flash_v2_5", "eleven_turbo_v2_5", "eleven_multilingual_v2", "eleven_v3"
+    ] = "eleven_flash_v2_5"
     voice_id: str = Field(default="21m00Tcm4TlvDq8ikWAM", pattern=r"^[A-Za-z0-9]{20}$")
 
 
