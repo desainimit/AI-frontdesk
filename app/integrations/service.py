@@ -201,7 +201,13 @@ class IntegrationView(BaseModel):
     account_identifier: str | None
     config: dict[str, Any]
     status: Literal[
-        "not_configured", "saved_unverified", "verifying", "verified", "invalid", "revoked"
+        "not_configured",
+        "saved_unverified",
+        "verifying",
+        "verified",
+        "invalid",
+        "revoked",
+        "using_platform",
     ]
     revision: int
     has_secret: bool
@@ -476,7 +482,7 @@ class IntegrationService:
             ):
                 # The stored credential was checked against this endpoint; disconnect first.
                 raise ConflictError()
-            if rebinding:
+            if rebinding or row.uses_platform_account:
                 row.provider, row.account_identifier = provider, account
                 row.status, row.last_checked_at = "not_configured", None
             row.config = config
@@ -511,7 +517,11 @@ class IntegrationService:
                 if not hmac.compare_digest(replay.fingerprint, fingerprint):
                     raise IdempotencyConflictError()
                 return _view(row, versions)
-            if row.revision != command.revision or row.ownership != "byo":
+            if (
+                row.revision != command.revision
+                or row.ownership != "byo"
+                or row.uses_platform_account
+            ):
                 raise ConflictError()
             number = max((item.version for item in versions), default=0) + 1
             key_id, ciphertext = cipher.encrypt(
@@ -664,6 +674,43 @@ class IntegrationService:
         self._changed(view.tenant_id)
         return view
 
+    async def _erase_credentials(self, session: AsyncSession, row: TenantIntegration) -> None:
+        row.active_version_id = None
+        await session.flush()
+        for item in await self._versions(session, row):
+            item.state = "retired" if item.state != "invalid" else "invalid"
+            item.ciphertext, item.lease_token, item.lease_until = None, None, None
+        for phone in await session.scalars(
+            select(PhoneNumber)
+            .where(PhoneNumber.tenant_id == row.tenant_id, PhoneNumber.integration_id == row.id)
+            .with_for_update()
+        ):
+            phone.is_active = False
+
+    async def use_platform(
+        self, actor: Actor, integration_id: UUID, command: RevisionCommand
+    ) -> IntegrationView:
+        """Explicitly clear a clinic override, retaining references and version history."""
+        if not isinstance(actor, PlatformActor):
+            raise AuthorizationError()
+        async with self._sessions.begin() as session:
+            scope = await self._enter(session, actor, write=True)
+            row = await self._locked(session, scope, integration_id)
+            if row.uses_platform_account and row.revision == command.revision + 1:
+                view = await self._result(session, row)
+            else:
+                if row.revision != command.revision:
+                    raise ConflictError()
+                await self._erase_credentials(session, row)
+                row.status = "using_platform"
+                row.account_identifier, row.last_checked_at = None, None
+                row.config = {}
+                row.revision += 1
+                self._audit(session, scope, "integration_platform_selected", row.id)
+                view = await self._result(session, row)
+        self._changed(view.tenant_id)
+        return view
+
     async def disconnect(
         self, actor: Actor, integration_id: UUID, command: RevisionCommand
     ) -> IntegrationView:
@@ -675,22 +722,9 @@ class IntegrationService:
                 return await self._result(session, row)
             if row.revision != command.revision:
                 raise ConflictError()
-            row.active_version_id = None
+            await self._erase_credentials(session, row)
             row.status = "revoked"
             row.revision += 1
-            await session.flush()
-            for item in await self._versions(session, row):
-                # Erase every stored secret; this does not revoke the key at the provider.
-                item.state = "retired" if item.state != "invalid" else "invalid"
-                item.ciphertext, item.lease_token, item.lease_until = None, None, None
-            for phone in await session.scalars(
-                select(PhoneNumber)
-                .where(
-                    PhoneNumber.tenant_id == scope.tenant_id, PhoneNumber.integration_id == row.id
-                )
-                .with_for_update()
-            ):
-                phone.is_active = False
             self._audit(session, scope, "integration_disconnected", row.id)
             view = await self._result(session, row)
         self._changed(view.tenant_id)

@@ -103,6 +103,7 @@ at a disposable database, never a development one.
 
 - [Runbook: deploying, upgrading, backups, what to watch](docs/runbook.md)
 - [The receptionist: calls, text messages, tickets](docs/assistant.md)
+- [Gujarati conversations and voice setup](docs/gujarati.md)
 - [Sign-in and accounts](docs/sign-in.md)
 - [Workspaces and provider connections](docs/tenant-integrations.md)
 - [Fresh database setup](docs/fresh-install.md)

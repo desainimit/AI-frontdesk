@@ -36,7 +36,7 @@ from app.calls.service import (
     CallView,
 )
 from app.conversation import ConversationStateManager, build_conversation_store
-from app.conversation.locales import LOCALES, base_language
+from app.conversation.locales import LOCALES, LanguagePolicy, base_language
 from app.conversation.state import CallStatus, ConversationState
 from app.conversation.store import ConversationStateStore
 from app.core.database.pages import Page, decode_cursor, page
@@ -63,6 +63,7 @@ from app.voice.factory import (
     platform_tts,
     stt_from_connection,
     tts_from_connection,
+    validate_gujarati_voice,
 )
 from app.voice.metrics import VoiceMetrics
 from app.voice.pipeline import VoicePipeline
@@ -416,19 +417,26 @@ class CallProviders:
     multilingual: bool
 
     def speech_to_text(
-        self, app: FastAPI, settings: Settings, speech_locale: Callable[[], str]
+        self,
+        app: FastAPI,
+        settings: Settings,
+        speech_locale: Callable[[], str],
+        language_policy: LanguagePolicy | None = None,
     ) -> SpeechToTextProvider:
         locale = speech_locale if self.multilingual else None
         if self.stt_connection is not None:
-            return stt_from_connection(settings, self.stt_connection, locale)
-        provider = app.state.stt_provider or platform_stt(settings, locale)
+            return stt_from_connection(settings, self.stt_connection, locale, language_policy)
+        provider = app.state.stt_provider or platform_stt(settings, locale, language_policy)
         if provider is None:
             raise IntegrationUnavailableError()
         return provider
 
 
 async def resolve_call_providers(
-    app: FastAPI, settings: Settings, tenant_id: UUID
+    app: FastAPI,
+    settings: Settings,
+    tenant_id: UUID,
+    language_policy: LanguagePolicy | None = None,
 ) -> CallProviders:
     """Every provider this call needs, checked before the caller hears anything.
 
@@ -440,6 +448,8 @@ async def resolve_call_providers(
         stt_connection = await resolver.active(tenant_id, "stt")
         tts_connection = await resolver.active(tenant_id, "tts")
         llm_connection = await resolver.active(tenant_id, "llm")
+    if language_policy is not None:
+        validate_gujarati_voice(settings, language_policy, stt_connection, tts_connection)
     if stt_connection is None and app.state.stt_provider is None and platform_stt(settings) is None:
         raise IntegrationUnavailableError()
     tts: TextToSpeechProvider | None = (
@@ -524,10 +534,12 @@ async def run_media(
         telemetry = socket.app.state.telemetry
         redis_dep = getattr(getattr(socket.app.state, "resources", None), "redis", None)
         resolver = tenant_resolver(socket.app)
-        providers = await resolve_call_providers(socket.app, settings, tenant_id)
+        configuration = await service.settings(context)
+        providers = await resolve_call_providers(
+            socket.app, settings, tenant_id, configuration.receptionist.languages
+        )
         owned, llm, multilingual = providers.owned, providers.llm, providers.multilingual
         tts = providers.tts
-        configuration = await service.settings(context)
         conv_store = socket.app.state.conversation_store or build_conversation_store(
             settings, redis_dep
         )
@@ -543,7 +555,9 @@ async def run_media(
         def speech_locale() -> str:
             return LOCALES[base_language(initial_conv_state.language)].speech_locale
 
-        stt = providers.speech_to_text(socket.app, settings, speech_locale)
+        stt = providers.speech_to_text(
+            socket.app, settings, speech_locale, configuration.receptionist.languages
+        )
         conversation_state = initial_conv_state
         initial_conv_state.call_state.stream_sid = stream_sid
         await conv_store.save(initial_conv_state, ttl_seconds=CONVERSATION_TTL_SECONDS)
@@ -650,9 +664,12 @@ async def run_media(
         raise
     except TimeoutError:
         status, reason = "disconnected", "stream_timeout"
-    except IntegrationUnavailableError:
+    except IntegrationUnavailableError as error:
         status, reason = "failed", "integration_unavailable"
-        logger.error("call_integration_unavailable", extra={"call_id": str(call_id)})
+        logger.error(
+            "call_integration_unavailable",
+            extra={"call_id": str(call_id), "error_type": type(error).__name__},
+        )
     except (ValueError, KeyError, TypeError, AttributeError, ApplicationError):
         status, reason = "failed", "invalid_stream"
     except Exception:

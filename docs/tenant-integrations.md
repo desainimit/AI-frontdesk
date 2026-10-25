@@ -37,6 +37,7 @@ Authorized members use `/api/v1/...`; an MFA-verified platform administrator act
 | `POST /integrations/{id}/verify` | Check a version against the provider; `activate` (default true) promotes it on success. |
 | `POST /integrations/{id}/activate-version` | Promote a version verified within the last hour. |
 | `POST /integrations/{id}/disconnect` | Erase every stored secret for the connection and stop routing its numbers. |
+| `POST /api/v1/platform/tenants/{tenant_id}/integrations/{id}/use-platform` | Super admin only: clear the clinic override and restore the platform account, including revoked connections. Requires the current `revision`. |
 | `GET` / `POST /integrations/{id}/phone-numbers` | List numbers owned by the connected Twilio account; bind one. |
 | `GET /tenants/current/readiness`, `POST /tenants/current/activate`, `POST /tenants/current/deactivate` | Readiness checks and the live switch (platform: `/readiness`, `/activate`, `/deactivate` under the tenant path). |
 
@@ -60,6 +61,9 @@ Behaviour to rely on:
 - Tenants cannot supply URLs, hosts or headers. Azure's region is a closed list and is fixed while a credential exists.
 - Every mutating call carries the connection's current `revision`; a stale revision returns 409.
 - Disconnecting erases the secrets in our database. It does not revoke the key at the provider; do that in the provider's console.
+- In the platform clinic page, **Use platform account** erases all active, pending and retained credentials, clears the clinic account ID and configuration, and restores platform defaults. The connection ID, version history and audit records remain. Reconnecting the clinic's own account uses the same slot with a newer revision.
+- Apply migration `0010_integration_platform_reset` before running the updated API (`python -m app.setup`). It adds the explicit connection status without expanding database role grants.
+- Switching phone service disables numbers bound to the clinic account. Assign a number owned by the platform account under Platform settings; numbers are never transferred between provider accounts by clearing credentials. Readiness still blocks if the platform connection or an assigned platform number is missing.
 - A phone number is bound only after the provider confirms the connected account owns it. The response gives the two webhook URLs to set on the number in Twilio. Nothing is purchased or reconfigured at the provider.
 
 ## How calls use tenant credentials
@@ -72,6 +76,6 @@ Behaviour to rely on:
 
 ## Not covered here
 
-- Platform-managed (subaccount) connections are modelled (`ownership`) but only tenant-owned credentials can be submitted.
+- Platform-managed subaccounts are not implemented. The `using_platform` status records an explicit reset to the shared platform account. Reconnecting the clinic's own account first updates its configuration, then submits and verifies new credentials.
 - Verification proves a credential is accepted. It does not place a test call; a real-provider canary remains a release step.
 - Tenant-level spend limits and usage attribution are not implemented.

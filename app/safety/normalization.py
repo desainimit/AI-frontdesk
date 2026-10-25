@@ -1,4 +1,4 @@
-"""Normalize speech transcripts without losing Devanagari or Roman Hindi meaning."""
+"""Normalize speech transcripts while preserving Unicode letters and vowel marks."""
 
 import re
 import unicodedata
@@ -13,5 +13,10 @@ def normalize_transcript(text: str) -> str:
     value = re.sub(r"\bwon'?t\b", "will not", value)
     value = re.sub(r"\bisn'?t\b", "is not", value)
     value = re.sub(r"\bcan t\b", "cannot", value)
-    value = re.sub(r"[^\w\s\u0900-\u097f']+", " ", value)
+    value = "".join(
+        char
+        if char.isspace() or char == "'" or unicodedata.category(char)[0] in {"L", "M", "N"}
+        else " "
+        for char in value
+    )
     return " ".join(value.split())[:4000]

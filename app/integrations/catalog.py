@@ -73,12 +73,14 @@ class EmptyConfig(_Config):
 
 class DeepgramConfig(_Config):
     model: Literal["nova-2", "nova-3"] = "nova-3"
-    language: Literal["multi", "en", "hi", "es", "fr", "de", "pt"] = "multi"
+    language: Literal["multi", "en", "hi", "es", "fr", "de", "pt", "gu"] = "multi"
 
     @model_validator(mode="after")
     def multilingual_model(self) -> Self:
         if self.language == "multi" and self.model != "nova-3":
             raise ValueError("Multilingual transcription requires nova-3")
+        if self.language == "gu" and self.model != "nova-3":
+            raise ValueError("Gujarati transcription requires nova-3")
         return self
 
 
@@ -94,8 +96,20 @@ class AzureTextToSpeechConfig(_Config):
 
 
 class ElevenLabsConfig(_Config):
-    model_id: Literal["eleven_turbo_v2_5", "eleven_multilingual_v2"] = "eleven_turbo_v2_5"
+    model_id: Literal["eleven_turbo_v2_5", "eleven_multilingual_v2", "eleven_v3"] = (
+        "eleven_turbo_v2_5"
+    )
     voice_id: str = Field(default="21m00Tcm4TlvDq8ikWAM", pattern=r"^[A-Za-z0-9]{20}$")
+
+
+class RoutedVoiceConfig(ElevenLabsConfig):
+    region: AzureRegion = "eastus"
+
+
+class RoutedRecognitionConfig(_Config):
+    region: AzureRegion = "eastus"
+    gujarati_recognition: Literal["deepgram", "azure_speech"] = "deepgram"
+    language: Literal["en-US", "hi-IN", "gu-IN", "es-ES", "fr-FR", "de-DE", "pt-BR"] = "en-US"
 
 
 class GeminiChatConfig(_Config):
@@ -181,6 +195,26 @@ class AzureSecrets(_Secrets):
         return self
 
 
+class RoutedRecognitionSecrets(AzureSecrets):
+    deepgram_api_key: SecretStr = Field(min_length=16, max_length=256)
+
+    @model_validator(mode="after")
+    def valid_deepgram_key(self) -> Self:
+        if not _printable(self.deepgram_api_key):
+            raise ValueError("Invalid Deepgram key")
+        return self
+
+
+class RoutedVoiceSecrets(AzureSecrets):
+    elevenlabs_api_key: SecretStr = Field(min_length=16, max_length=256)
+
+    @model_validator(mode="after")
+    def valid_elevenlabs_key(self) -> Self:
+        if not _printable(self.elevenlabs_api_key):
+            raise ValueError("Invalid ElevenLabs key")
+        return self
+
+
 def _printable(value: SecretStr) -> bool:
     # Header-safe: no whitespace, control characters or non-ASCII.
     return re.fullmatch(r"[\x21-\x7e]+", value.get_secret_value()) is not None
@@ -201,6 +235,24 @@ class ProviderSpec:
 
 
 _SPECS = (
+    ProviderSpec(
+        "language_router",
+        Purpose.STT,
+        "Automatic: Deepgram + Azure Speech",
+        RoutedRecognitionConfig,
+        RoutedRecognitionSecrets,
+        locked_fields=frozenset({"region"}),
+        suffix_field="speech_key",
+    ),
+    ProviderSpec(
+        "language_router",
+        Purpose.TTS,
+        "Automatic: ElevenLabs + Azure Speech",
+        RoutedVoiceConfig,
+        RoutedVoiceSecrets,
+        locked_fields=frozenset({"region"}),
+        suffix_field="speech_key",
+    ),
     ProviderSpec(
         "twilio",
         Purpose.TELEPHONY,

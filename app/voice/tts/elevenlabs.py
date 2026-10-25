@@ -72,6 +72,8 @@ class ElevenLabsTTSProvider:
 
         if language:
             code = normalize_language(language)
+            if code == "gu" and self.model_id != "eleven_v3":
+                raise TTSPermanentError("Gujarati requires ElevenLabs v3 or Azure Speech voice")
             if code in LOCALES:
                 payload["language_code"] = code
             elif code != "hinglish":

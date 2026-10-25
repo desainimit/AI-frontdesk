@@ -2,20 +2,20 @@
 
 import re
 
-_ACCESS_CODE = re.compile(r"(?<![0-9])[0-9]{8}(?![0-9])")
+_ACCESS_CODE = re.compile(r"(?<!\d)\d{8}(?!\d)")
 _EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
-_PHONE_LIKE = re.compile(r"(?<!\w)\+?[0-9][0-9(). -]{7,}[0-9](?!\w)")
+_PHONE_LIKE = re.compile(r"(?<!\w)\+?\d[\d(). -]{7,}\d(?!\w)")
 _ACCOUNT_IDENTIFIER = re.compile(
     r"(?i)\b(?:account\s*(?:id|number|identifier)|"
     r"identificador\s+de\s+cuenta|num[eé]ro\s+de\s+compte|"
-    r"kontonummer|identificador\s+da\s+conta)\s*(?::|=|is|es|est|ist|é)?\s*"
-    r"[A-Za-z0-9._-]{4,64}"
+    r"kontonummer|identificador\s+da\s+conta|ખાતા(?:નો)?\s*(?:નંબર|ક્રમાંક))"
+    r"\s*(?::|=|is|es|est|ist|é|છે)?\s*[A-Za-z\d._-]{4,64}"
 )
 _DATE_OF_BIRTH = re.compile(
     r"(?i)\b(?:dob|date\s+of\s+birth|fecha\s+de\s+nacimiento|"
-    r"date\s+de\s+naissance|geburtsdatum|data\s+de\s+nascimento)"
-    r"\s*(?::|=|is|es|est|ist|é)?\s*"
-    r"[0-9]{1,4}[-/.][0-9]{1,2}[-/.][0-9]{1,4}"
+    r"date\s+de\s+naissance|geburtsdatum|data\s+de\s+nascimento|જન્મ\s*તારીખ)"
+    r"\s*(?::|=|is|es|est|ist|é|છે)?\s*"
+    r"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}"
 )
 
 

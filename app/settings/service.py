@@ -17,6 +17,8 @@ from app.calls.models import Call
 from app.core.database.pages import decode_cursor, encode_cursor
 from app.core.database.unit_of_work import enter_tenant_scope
 from app.core.errors import NotFoundError, ValidationFailedError
+from app.core.settings import Settings
+from app.integrations.resolver import TenantIntegrationResolver
 from app.settings.models import SettingsChange, TenantSettings
 from app.settings.schemas import (
     SECTION_MODELS,
@@ -29,6 +31,7 @@ from app.settings.schemas import (
 )
 from app.tenants.models import Tenant
 from app.users.models import User
+from app.voice.factory import GujaratiVoiceConfigurationError, validate_gujarati_voice
 
 
 def field_changes(before: JsonValue, after: JsonValue, field: str = "") -> list[FieldChange]:
@@ -45,8 +48,11 @@ def field_changes(before: JsonValue, after: JsonValue, field: str = "") -> list[
 
 
 class SettingsService:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], settings: Settings | None = None
+    ) -> None:
         self._sessions = sessions
+        self._settings = settings
 
     @staticmethod
     def _view(row: TenantSettings) -> SettingsView:
@@ -71,6 +77,16 @@ class SettingsService:
         self, context: RequestContext, section: SettingsSection, value: JsonValue
     ) -> SettingsView:
         require_permission(context, Permission.SETTINGS_UPDATE)
+        stt = tts = None
+        if self._settings is not None and section in {
+            SettingsSection.RECEPTIONIST,
+            SettingsSection.CALLS,
+        }:
+            # Resolve before taking the settings lock: test and small deployments
+            # may have a one-connection pool. Runtime validates the pair again.
+            resolver = TenantIntegrationResolver(self._sessions, self._settings)
+            stt = await resolver.active(context.tenant_id, "stt", fresh=True)
+            tts = await resolver.active(context.tenant_id, "tts", fresh=True)
         async with self._sessions.begin() as session:
             await enter_tenant_scope(session, context)
             row = await session.scalar(
@@ -84,6 +100,19 @@ class SettingsService:
                 saved = SECTION_MODELS[section].model_validate(value).model_dump(mode="json")
             except ValidationError as failure:
                 raise ValidationFailedError.from_pydantic(failure) from None
+            if self._settings is not None and section in {
+                SettingsSection.RECEPTIONIST,
+                SettingsSection.CALLS,
+            }:
+                configuration = ClinicConfiguration.model_validate(
+                    {**row.document, section.value: saved}
+                )
+                policy = configuration.receptionist.languages
+                if configuration.calls.enabled and "gu" in policy.enabled_languages:
+                    try:
+                        validate_gujarati_voice(self._settings, policy, stt, tts)
+                    except GujaratiVoiceConfigurationError as failure:
+                        raise ValidationFailedError(failure.issues) from None
             before = cast(JsonValue, row.document[section.value])
             changes = field_changes(before, cast(JsonValue, saved))
             if not changes:

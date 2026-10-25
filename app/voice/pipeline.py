@@ -231,7 +231,7 @@ class VoicePipeline:
         try:
             speech = (
                 self.tts.synthesize(text, voice_id, language=self.conversation_state.language)
-                if self.multilingual_enabled and self.conversation_state
+                if self.conversation_state
                 else self.tts.synthesize(text, voice_id)
             )
             async for pcm_chunk in pcm_frames(speech):

@@ -662,6 +662,7 @@ async def test_two_twilio_accounts_route_to_two_tenants_over_http(
         catalog = await client.get("/api/v1/integration-providers", headers=headers)
         assert catalog.status_code == 200
         assert {item["provider"] for item in catalog.json()} == {
+            "language_router",
             "twilio",
             "deepgram",
             "azure_speech",

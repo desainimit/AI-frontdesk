@@ -24,7 +24,7 @@ from app.appointments.commands import (
 )
 from app.appointments.service import AppointmentService
 from app.calendar_sync.service import CalendarService
-from app.calls.access import CallPatientAccess, IdentifyPatient
+from app.calls.access import CallPatientAccess, IdentifyPatient, normalize_access_code
 from app.conversation.confirmation import confirmation_answer
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import (
@@ -242,7 +242,11 @@ class AppointmentFlow:
             )
             state.active_flow_state.flow_type = FlowType.APPOINTMENT_BOOKING
             provider, timezone = await self._provider(session, state, provider_id)
-            offer = spoken(state.language, "book_offer", time=when(selected.starts_at, timezone))
+            offer = spoken(
+                state.language,
+                "book_offer",
+                time=when(selected.starts_at, timezone, state.language),
+            )
         else:
             appointment_id = UUID(str(params["appointment_id"]))
             row = await self.appointments.get(request, appointment_id)
@@ -253,7 +257,11 @@ class AppointmentFlow:
             provider, timezone = await self._provider(session, state, provider_id)
             if action == "cancel_appointment":
                 state.active_flow_state.flow_type = FlowType.APPOINTMENT_CANCEL
-                offer = spoken(state.language, "cancel_offer", time=when(row.starts_at, timezone))
+                offer = spoken(
+                    state.language,
+                    "cancel_offer",
+                    time=when(row.starts_at, timezone, state.language),
+                )
             else:
                 change = RescheduleInput.model_validate(payload.model_dump())
                 slots = await self.availability.slots(
@@ -270,8 +278,8 @@ class AppointmentFlow:
                 offer = spoken(
                     state.language,
                     "move_offer",
-                    old=when(row.starts_at, timezone),
-                    new=when(change.starts_at, timezone),
+                    old=when(row.starts_at, timezone, state.language),
+                    new=when(change.starts_at, timezone, state.language),
                 )
         # The actual provider name; nobody is asked to confirm an opaque ID.
         summary = spoken(state.language, "confirm", provider=provider, offer=offer)
@@ -296,7 +304,7 @@ class AppointmentFlow:
         self, session: Session, state: ConversationState, utterance: str
     ) -> Direct | None:
         """Answer without the model: a reception code, or yes/no to a pending question."""
-        code = utterance.strip()
+        code = normalize_access_code(utterance.strip())
         if (
             re.fullmatch(r"[0-9]{8}", code)
             and session.provider_call_id is not None
@@ -362,7 +370,9 @@ class AppointmentFlow:
                 )
                 key = "moved"
             _, timezone = await self._provider(session, state, result.provider_id)
-            message = spoken(state.language, key, time=when(result.starts_at, timezone))
+            message = spoken(
+                state.language, key, time=when(result.starts_at, timezone, state.language)
+            )
         except ApplicationError as error:
             operation.status = "completed"
             confirmation.reset()

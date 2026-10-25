@@ -192,6 +192,21 @@ def _routes(
 router = APIRouter()
 
 
+@router.post(
+    "/api/v1/platform/tenants/{tenant_id}/integrations/{integration_id}/use-platform",
+    tags=["platform"],
+)
+async def use_platform_account(
+    tenant_id: UUID,
+    integration_id: UUID,
+    command: RevisionCommand,
+    context: PlatformIdentity,
+    service: Service,
+) -> IntegrationView:
+    """Erase the clinic override and use the platform account. Super admin only."""
+    return await service.use_platform(PlatformActor(context, tenant_id), integration_id, command)
+
+
 @router.get("/api/v1/integration-providers", tags=["integrations"])
 async def integration_providers(request: Request, context: Context) -> list[ProviderCatalogEntry]:
     """Supported providers and their allowlisted settings. Contains no stored values."""

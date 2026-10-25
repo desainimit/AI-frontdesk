@@ -5,6 +5,13 @@
 from app.conversation.state import SafetyDecision
 
 MESSAGES: dict[str, dict[str, str]] = {
+    "gu": {
+        "emergency": "આ કટોકટીની પરિસ્થિતિ હોઈ શકે છે. અત્યારે જ તમારી સ્થાનિક કટોકટીની સેવાને કૉલ કરો. હું આ કૉલ પર કટોકટીની સારવાર આપી શકતો નથી.",
+        "clarify": "શું તમને અત્યારે શ્વાસ લેવામાં તકલીફ, છાતીમાં દુખાવો કે બીજી કોઈ તાત્કાલિક તકલીફ છે?",
+        "transfer": "હું અત્યારે તમારો કૉલ સ્ટાફના સભ્ય સાથે જોડું છું.",
+        "unavailable": "આ કૉલ પરથી હું તમને સ્ટાફ સાથે જોડી શકતો નથી. કૃપા કરીને સંસ્થાનો સીધો સંપર્ક કરો.",
+        "transfer_failed": "તમારો કૉલ સ્ટાફ સાથે જોડાઈ શક્યો નથી. કૃપા કરીને સંસ્થાનો સીધો સંપર્ક કરો.",
+    },
     "en": {
         "emergency": "This may be an emergency. Call your local emergency services now. I cannot provide emergency care over this call.",
         "clarify": "Are you having trouble breathing, chest pain, or another urgent symptom right now?",

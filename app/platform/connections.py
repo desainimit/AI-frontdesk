@@ -207,7 +207,14 @@ def platform_values(
     }
     for row, secrets in connections:
         config = row.config
-        if row.purpose in {Purpose.GOOGLE_CALENDAR, Purpose.MICROSOFT_CALENDAR}:
+        if row.provider == "language_router":
+            prefix = "stt" if row.purpose == Purpose.STT else "tts"
+            values[f"{prefix}_provider"] = "language_router"
+            values[f"routed_{prefix}_config"] = dict(config)
+            values[f"routed_{prefix}_secrets"] = {
+                name: SecretStr(value) for name, value in secrets.items()
+            }
+        elif row.purpose in {Purpose.GOOGLE_CALENDAR, Purpose.MICROSOFT_CALENDAR}:
             prefix = CALENDAR_APPS[Purpose(row.purpose)]
             values[f"{prefix}_calendar_client_id"] = row.account_identifier or ""
             values[f"{prefix}_calendar_client_secret"] = SecretStr(secrets["client_secret"])
@@ -229,13 +236,18 @@ def platform_values(
                 elevenlabs_voice_id=config["voice_id"],
             )
         elif row.provider == "azure_speech":
-            values["azure_speech_key"] = SecretStr(secrets["speech_key"])
-            values["azure_speech_region"] = config["region"]
             if row.purpose == Purpose.STT:
-                values.update(stt_provider="azure", azure_speech_language=config["language"])
+                values.update(
+                    stt_provider="azure",
+                    azure_stt_key=SecretStr(secrets["speech_key"]),
+                    azure_stt_region=config["region"],
+                    azure_speech_language=config["language"],
+                )
             else:
                 values.update(
                     tts_provider="azure",
+                    azure_tts_key=SecretStr(secrets["speech_key"]),
+                    azure_tts_region=config["region"],
                     azure_speech_voice=config["voice"],
                     azure_hindi_voice=config["hindi_voice"],
                 )

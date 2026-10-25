@@ -31,6 +31,10 @@ PLATFORM_MANAGED = frozenset(
         "twilio_auth_token",
         "stt_provider",
         "tts_provider",
+        "routed_stt_config",
+        "routed_stt_secrets",
+        "routed_tts_config",
+        "routed_tts_secrets",
         "deepgram_api_key",
         "deepgram_model",
         "deepgram_language",
@@ -39,6 +43,10 @@ PLATFORM_MANAGED = frozenset(
         "elevenlabs_voice_id",
         "azure_speech_key",
         "azure_speech_region",
+        "azure_stt_key",
+        "azure_stt_region",
+        "azure_tts_key",
+        "azure_tts_region",
         "azure_speech_language",
         "azure_speech_voice",
         "azure_hindi_voice",
@@ -124,8 +132,12 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: SecretStr = SecretStr("")
     telephony_public_base_url: str = ""
-    stt_provider: Literal["deepgram", "azure"] = "deepgram"
-    tts_provider: Literal["elevenlabs", "azure"] = "elevenlabs"
+    stt_provider: Literal["deepgram", "azure", "language_router"] = "deepgram"
+    tts_provider: Literal["elevenlabs", "azure", "language_router"] = "elevenlabs"
+    routed_stt_config: dict[str, Any] = Field(default_factory=dict)
+    routed_stt_secrets: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
+    routed_tts_config: dict[str, Any] = Field(default_factory=dict)
+    routed_tts_secrets: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
 
     # Deepgram STT
     deepgram_api_key: SecretStr = SecretStr("")
@@ -141,6 +153,11 @@ class Settings(BaseSettings):
     # Azure Speech Services (STT & TTS)
     azure_speech_key: SecretStr = SecretStr("")
     azure_speech_region: str = "eastus"
+    # Independently saved platform connections must never share credentials.
+    azure_stt_key: SecretStr = Field(default=SecretStr(""), repr=False)
+    azure_stt_region: str = "eastus"
+    azure_tts_key: SecretStr = Field(default=SecretStr(""), repr=False)
+    azure_tts_region: str = "eastus"
     azure_speech_language: str = "en-US"
     azure_speech_voice: str = "en-US-JennyNeural"
     azure_hindi_voice: str = "hi-IN-SwaraNeural"

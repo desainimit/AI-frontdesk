@@ -82,6 +82,20 @@ class HttpProviderVerifier:
         config: Mapping[str, Any],
         secrets: Mapping[str, str],
     ) -> Verification:
+        if provider == "language_router":
+            if purpose not in {Purpose.STT, Purpose.TTS}:
+                return Verification("invalid", "unsupported_provider")
+            other = "deepgram" if purpose == Purpose.STT else "elevenlabs"
+            if not secrets.get("speech_key") or not secrets.get(f"{other}_api_key"):
+                return Verification("invalid", "credentials_rejected")
+            azure = await self.verify(
+                purpose, "azure_speech", None, config, {"speech_key": secrets["speech_key"]}
+            )
+            if azure.outcome != "verified":
+                return azure
+            return await self.verify(
+                purpose, other, None, config, {"api_key": secrets[f"{other}_api_key"]}
+            )
         try:
             async with self._client() as client:
                 if provider == "twilio":

@@ -6,6 +6,7 @@ import unicodedata
 from app.conversation.locales import base_language
 
 _AFFIRMATIVE = {
+    "gu": {"હા", "હાં", "જી હા", "જી હાં", "હા કરો", "હા બુક કરો", "પુષ્ટિ કરું છું"},
     "en": {
         "yes",
         "yeah",
@@ -46,6 +47,7 @@ _AFFIRMATIVE = {
     },
 }
 _NEGATIVE = {
+    "gu": {"ના", "નહીં", "નહિ", "નથી", "રદ", "રદ્દ", "રોકો", "બદલો"},
     "en": {"no", "nope", "not", "dont", "never", "cancel", "stop", "nah", "change"},
     "es": {"no", "cancelar", "cancela", "pare"},
     "fr": {"non", "pas", "annuler", "annulez", "arrêtez"},
@@ -64,7 +66,7 @@ def confirmation_answer(text: str, language: str = "en") -> bool | None:
     code = base_language(language)
     # English acknowledgments are also common in multilingual calls. A complete
     # affirmative is still required; extra words never authorize a mutation.
-    negative = _NEGATIVE.get(code, set()) | _NEGATIVE["en"] | _NEGATIVE["hi"]
+    negative = _NEGATIVE.get(code, set()) | _NEGATIVE["en"] | _NEGATIVE["hi"] | _NEGATIVE["gu"]
     if any(word in negative for word in cleaned.split()):
         return False
     positive = _AFFIRMATIVE.get(code, set()) | _AFFIRMATIVE["en"]

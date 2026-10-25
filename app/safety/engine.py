@@ -58,9 +58,7 @@ class SafetyEngine:
         decision, reason, source = rule.decision, rule.reason, "rule"
         # The runtime has already replaced the code with a fixed marker before
         # safety classification; an access-code-only turn needs no semantic call.
-        access_code = (
-            re.fullmatch(r"\s*(?:[0-9]{8}|\[call access code\])\s*", utterance) is not None
-        )
+        access_code = re.fullmatch(r"\s*(?:\d{8}|\[call access code\])\s*", utterance) is not None
         if (
             semantic
             and self.classifier is not None

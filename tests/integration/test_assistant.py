@@ -2,12 +2,16 @@
 
 from uuid import uuid4
 
+import pytest
+
 from app.ai.llm.base import ChatRequest, LLMUnavailableError, ToolCall, ToolResult
 from app.ai.models import AiTurn
 from app.appointments.models import Appointment
 from app.messaging.service import ConversationService, InboundTexts, StaffText, TextAssistant
 from app.messaging.test_chat import TestChat
 from app.notifications.models import OutboundMessage
+from app.settings.schemas import SettingsSection
+from app.settings.service import SettingsService
 from app.tickets.service import NewTicket, TicketService, TicketText, UpdateTicket
 from tests.fake_llm import Step
 from tests.integration.clinic import PATIENT_NUMBER, Clinic
@@ -27,6 +31,58 @@ def book_first_offered(request: ChatRequest) -> Step:
             {"provider_id": slot["provider_id"], "starts_at": slot["starts_at"]},
         )
     ]
+
+
+@pytest.mark.parametrize("answer,books", [("હા", True), ("ના", False), ("હા પણ કાલે", False)])
+async def test_gujarati_booking_requires_current_explicit_confirmation(
+    tenancy: TenancyFixture, answer: str, books: bool
+) -> None:
+    clinic = await Clinic(tenancy).open()
+    settings = SettingsService(clinic.sessions, tenancy.settings)
+    before = (await settings.get(clinic.owner)).settings
+    await settings.save(
+        clinic.owner,
+        SettingsSection.CALLS,
+        {
+            **before.calls.model_dump(mode="json"),
+            "enabled": False,
+        },
+    )
+    await settings.save(
+        clinic.owner,
+        SettingsSection.RECEPTIONIST,
+        {
+            **before.receptionist.model_dump(mode="json"),
+            "languages": {
+                "default_language": "en",
+                "enabled_languages": ["en", "gu"],
+                "auto_detect": True,
+            },
+        },
+    )
+    runtime, model = clinic.runtime(
+        clinic.availability(), book_first_offered, "કૃપા કરીને નવો સમય જણાવો."
+    )
+    assistant = TextAssistant(runtime)
+    thread = await clinic.text("મારે ડૉક્ટરની મુલાકાત બુક કરાવવી છે")
+    await assistant.answer(clinic.tenant_id, thread)
+    proposal = (await clinic.rows(OutboundMessage))[-1].body
+    assert "પુષ્ટિ કરવા માટે હા કહો" in proposal
+    assert "Dr. Rao" in proposal and "AM" not in proposal and "PM" not in proposal
+    assert await clinic.rows(Appointment) == []
+    await clinic.text(answer)
+    await assistant.answer(clinic.tenant_id, thread)
+    appointments = await clinic.rows(Appointment)
+    assert len(appointments) == int(books)
+    if books:
+        assert appointments[0].patient_id == clinic.patient_id
+        replies = [row.body for row in await clinic.rows(OutboundMessage) if row.kind == "reply"]
+        assert any("બુક થઈ ગઈ છે" in body for body in replies)
+        assert len(model.requests) == 2
+    else:
+        assert not any("બુક થઈ ગઈ છે" in row.body for row in await clinic.rows(OutboundMessage))
+    other = ConversationService(clinic.sessions)
+    assert await other.list(tenancy.context(tenancy.b), 10, 0) == []
 
 
 async def test_a_patient_books_by_text_and_staff_take_the_thread_over(

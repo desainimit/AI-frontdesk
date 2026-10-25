@@ -6,7 +6,7 @@ import secrets
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -37,9 +37,19 @@ class PatientAccessCode(BaseModel):
     expires_at: datetime
 
 
+def normalize_access_code(value: str) -> str:
+    """Gujarati decimal digits denote the same code; length and syntax stay strict."""
+    return value.translate(str.maketrans("૦૧૨૩૪૫૬૭૮૯", "0123456789"))
+
+
 class IdentifyPatient(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     access_code: str = Field(pattern=r"^[0-9]{8}$")
+
+    @field_validator("access_code", mode="before")
+    @classmethod
+    def canonical_code(cls, value: object) -> object:
+        return normalize_access_code(value) if isinstance(value, str) else value
 
 
 async def active_call(session: AsyncSession, context: CallContext, *, lock: bool = False) -> Call:

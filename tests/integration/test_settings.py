@@ -37,6 +37,132 @@ from tests.integration.test_tenancy import tenancy as tenancy
 from tests.integration.workspaces import add_member, member_role
 
 
+async def test_gujarati_settings_round_trip_and_tenant_isolation(tenancy: TenancyFixture) -> None:
+    settings = tenancy.settings.model_copy(
+        update={"stt_provider": "azure", "tts_provider": "azure"}
+    )
+    service = SettingsService(tenancy.database.session_factory, settings)
+    owner = tenancy.context(tenancy.a)
+    before = (await service.get(owner)).settings.receptionist.model_dump(mode="json")
+    saved = await service.save(
+        owner,
+        SettingsSection.RECEPTIONIST,
+        {
+            **before,
+            "greeting": "નમસ્તે. હું કેવી રીતે મદદ કરી શકું?",
+            "languages": {
+                "default_language": "en",
+                "enabled_languages": ["en", "es", "fr", "de", "pt", "hi", "guj"],
+                "auto_detect": True,
+            },
+        },
+    )
+    assert saved.settings.receptionist.languages.default_language == "en"
+    assert saved.settings.receptionist.languages.auto_detect
+    assert "gu" in saved.settings.receptionist.languages.enabled_languages
+    assert (await service.get(owner)).settings.receptionist == saved.settings.receptionist
+    other = await service.get(tenancy.context(tenancy.b))
+    assert other.version == 1 and other.settings.receptionist.languages.default_language == "en"
+
+
+async def test_http_rejects_incompatible_gujarati_voice_without_saving(
+    tenancy: TenancyFixture,
+) -> None:
+    app = create_app(tenancy.settings, redis_factory=lambda _: FakeDependency(), rate_limits=False)
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=tenancy.a.headers
+        ) as client,
+    ):
+        before = (await client.get("/api/v1/settings")).json()
+        receptionist = before["settings"]["receptionist"]
+        rejected = await client.put(
+            "/api/v1/settings/receptionist",
+            json={
+                **receptionist,
+                "languages": {
+                    "default_language": "gu",
+                    "enabled_languages": ["gu"],
+                    "auto_detect": False,
+                },
+            },
+        )
+        assert rejected.status_code == 422
+        field = rejected.json()["error"]["fields"][0]
+        assert field["field"] == "speech_connections.tts" and "Azure Speech" in field["message"]
+        after = (await client.get("/api/v1/settings")).json()
+        assert after["version"] == before["version"]
+        assert after["settings"]["receptionist"] == receptionist
+
+
+async def test_http_saves_gujarati_with_english_main_and_switching_on(
+    tenancy: TenancyFixture,
+) -> None:
+    config = tenancy.settings.model_copy(update={"stt_provider": "azure", "tts_provider": "azure"})
+    app = create_app(config, redis_factory=lambda _: FakeDependency(), rate_limits=False)
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=tenancy.a.headers
+        ) as client,
+    ):
+        before = (await client.get("/api/v1/settings")).json()
+        languages = {
+            "default_language": "en",
+            "enabled_languages": ["en", "es", "fr", "de", "pt", "hi", "gu"],
+            "auto_detect": True,
+        }
+        saved = await client.put(
+            "/api/v1/settings/receptionist",
+            json={
+                **before["settings"]["receptionist"],
+                "languages": languages,
+            },
+        )
+        assert saved.status_code == 200
+        after = (await client.get("/api/v1/settings")).json()
+        assert after["settings"]["receptionist"]["languages"] == languages
+        assert (
+            after["settings"]["receptionist"]["greeting"]
+            == before["settings"]["receptionist"]["greeting"]
+        )
+        assert after["version"] == before["version"] + 1
+
+
+async def test_gujarati_text_settings_can_save_with_voice_disabled(
+    tenancy: TenancyFixture,
+) -> None:
+    service = SettingsService(tenancy.database.session_factory, tenancy.settings)
+    owner = tenancy.context(tenancy.a)
+    before = (await service.get(owner)).settings
+    await service.save(
+        owner,
+        SettingsSection.CALLS,
+        {
+            **before.calls.model_dump(mode="json"),
+            "enabled": False,
+        },
+    )
+    await service.save(
+        owner,
+        SettingsSection.RECEPTIONIST,
+        {
+            **before.receptionist.model_dump(mode="json"),
+            "languages": {
+                "default_language": "gu",
+                "enabled_languages": ["gu"],
+                "auto_detect": False,
+            },
+        },
+    )
+    with pytest.raises(ValidationFailedError):
+        await service.save(owner, SettingsSection.CALLS, before.calls.model_dump(mode="json"))
+    after = await service.get(owner)
+    assert not after.settings.calls.enabled
+    assert after.settings.receptionist.languages.default_language == "gu"
+
+
 async def test_a_new_clinic_starts_with_working_settings(tenancy: TenancyFixture) -> None:
     view = await SettingsService(tenancy.database.session_factory).get(tenancy.context(tenancy.a))
     settings = view.settings

@@ -42,7 +42,8 @@ class TenantIntegration(TenantRecord):
         CheckConstraint("slot = 'primary'", name="slot_allowed"),
         CheckConstraint("ownership IN ('byo', 'platform')", name="ownership_allowed"),
         CheckConstraint(
-            "status IN ('not_configured', 'saved_unverified', 'verified', 'invalid', 'revoked')",
+            "status IN ('not_configured', 'saved_unverified', 'verified', 'invalid', 'revoked', "
+            "'using_platform')",
             name="status_allowed",
         ),
         CheckConstraint("revision >= 1", name="positive_revision"),
@@ -60,6 +61,10 @@ class TenantIntegration(TenantRecord):
     revision: Mapped[int] = mapped_column(default=1)
     active_version_id: Mapped[UUID | None]
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def uses_platform_account(self) -> bool:
+        return self.status == "using_platform" and self.active_version_id is None
 
 
 class CredentialVersion(IdentityMixin, Base):

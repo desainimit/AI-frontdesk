@@ -38,11 +38,14 @@ async def get_settings(context: Context, database: DatabaseDependency) -> Settin
 async def save_settings(
     section: SettingsSection,
     value: Annotated[JsonValue, Body()],
+    request: Request,
     context: Context,
     database: DatabaseDependency,
 ) -> SettingsView:
     """Save one section. It takes effect at once; calls already in progress are not changed."""
-    return await SettingsService(database.session_factory).save(context, section, value)
+    return await SettingsService(database.session_factory, request.app.state.settings).save(
+        context, section, value
+    )
 
 
 @router.get("/settings/history")

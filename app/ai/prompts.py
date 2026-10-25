@@ -78,6 +78,13 @@ def system_prompt(session: Session, state: ConversationState) -> str:
         "if_you_do_not_know_say": settings.receptionist.unknown_answer,
     }
     style = {"voice": VOICE, "sms": TEXT, "test": TEXT + " " + TEST}[session.channel]
+    if state.language == "gu":
+        style += (
+            " Reply in natural Gujarati using Gujarati script. Preserve patient and provider "
+            "names, access codes and appointment facts. Understand Gujarati digits as well as "
+            "ASCII digits. Ask for clarification when a spoken date, time or number is ambiguous; "
+            "never guess a booking time."
+        )
     return "\n\n".join(
         (
             POLICY,

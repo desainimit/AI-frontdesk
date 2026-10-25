@@ -14,6 +14,7 @@ _LINGUA_LANGUAGES = (
     Language.GERMAN,
     Language.PORTUGUESE,
     Language.HINDI,
+    Language.GUJARATI,
 )
 
 

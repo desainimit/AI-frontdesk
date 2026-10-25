@@ -28,6 +28,11 @@ from app.rbac.models import RolePermission
 from app.settings.store import load_settings
 from app.tenants.models import Tenant
 from app.users.models import User
+from app.voice.factory import (
+    GujaratiVoiceConfigurationError,
+    SpeechProfile,
+    validate_gujarati_voice,
+)
 
 
 class NotReadyError(ApplicationError):
@@ -76,6 +81,7 @@ class TenantReadinessService:
             for row in await session.scalars(
                 select(TenantIntegration).where(TenantIntegration.tenant_id == tenant_id)
             )
+            if not row.uses_platform_account
         }
 
         def connection(
@@ -146,6 +152,8 @@ class TenantReadinessService:
         if row is not None:
             # A number proven against another account must not route to this connection.
             number = number.where(PhoneNumber.integration_id == row.id)
+        else:
+            number = number.where(PhoneNumber.integration_id.is_(None))
         checks.append(
             _ready("phone_number")
             if await session.scalar(number.limit(1))
@@ -192,7 +200,26 @@ class TenantReadinessService:
                     next_action="Connect an embeddings provider to enable knowledge.",
                 )
             )
-        if (await load_settings(session, tenant_id)).calls.transfer_number is None:
+        configuration = await load_settings(session, tenant_id)
+        if configuration.calls.enabled:
+            stt = integrations.get((Purpose.STT, "primary"))
+            tts = integrations.get((Purpose.TTS, "primary"))
+            try:
+                validate_gujarati_voice(
+                    settings,
+                    configuration.receptionist.languages,
+                    SpeechProfile(stt.provider, stt.config) if stt is not None else None,
+                    SpeechProfile(tts.provider, tts.config) if tts is not None else None,
+                )
+            except GujaratiVoiceConfigurationError as failure:
+                checks.append(
+                    _blocking(
+                        "speech_languages",
+                        failure.public_message,
+                        "Update the speech connections before activating calls.",
+                    )
+                )
+        if configuration.calls.transfer_number is None:
             checks.append(
                 ReadinessCheck(
                     key="transfer_destination",
@@ -268,6 +295,14 @@ class TenantReadinessService:
 
 
 def _stt_key(settings: Settings) -> bool:
+    if settings.stt_provider == "language_router":
+        return all(
+            name in settings.routed_stt_secrets
+            and bool(settings.routed_stt_secrets[name].get_secret_value())
+            for name in ("speech_key", "deepgram_api_key")
+        )
+    if settings.stt_provider == "azure" and settings.azure_stt_key.get_secret_value():
+        return True
     key = (
         settings.deepgram_api_key
         if settings.stt_provider == "deepgram"
@@ -277,6 +312,14 @@ def _stt_key(settings: Settings) -> bool:
 
 
 def _tts_key(settings: Settings) -> bool:
+    if settings.tts_provider == "language_router":
+        return all(
+            name in settings.routed_tts_secrets
+            and bool(settings.routed_tts_secrets[name].get_secret_value())
+            for name in ("speech_key", "elevenlabs_api_key")
+        )
+    if settings.tts_provider == "azure" and settings.azure_tts_key.get_secret_value():
+        return True
     key = (
         settings.elevenlabs_api_key
         if settings.tts_provider == "elevenlabs"
