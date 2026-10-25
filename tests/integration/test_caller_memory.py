@@ -4,8 +4,11 @@ database identity."""
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from sqlalchemy import update
+
 from app.ai.memory import CallerHistory
 from app.ai.session import Session
+from app.calls.models import Call
 from app.calls.service import CallService
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import IdentifierType
@@ -39,6 +42,19 @@ async def test_history_of_a_trusted_caller(tenancy: TenancyFixture) -> None:
             )
         )
     now = await calls.receive(clinic.number, "CA" + uuid4().hex, uuid4(), caller=PATIENT_NUMBER)
+    # The call is in progress, and reception's code tied it to the patient: its own
+    # database identity reads the history.
+    await calls.start(now, "MZ" + uuid4().hex)
+    async with tenancy.admin.begin() as database:
+        await set_tenant_scope(database, clinic.tenant_id)
+        await database.execute(
+            update(Call)
+            .where(Call.id == now.call_id)
+            .values(
+                verified_patient_id=clinic.patient_id,
+                verification_expires_at=datetime.now(UTC) + timedelta(minutes=10),
+            )
+        )
     configuration = (await SettingsService(clinic.sessions).get(clinic.owner)).settings
     session = Session(
         clinic.tenant_id,
