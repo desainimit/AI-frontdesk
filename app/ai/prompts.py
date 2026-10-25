@@ -8,6 +8,7 @@ from app.ai.llm.base import AssistantTurn, Turn, UserTurn
 from app.ai.memory import records_trusted
 from app.ai.session import Session
 from app.conversation.state import ConversationState
+from app.safety import handover
 
 # Turns shown word for word; older ones reach the model as a summary.
 HISTORY_TURNS = 40
@@ -19,7 +20,9 @@ What you may do
 - Book, move and cancel appointments through the appointment tools.
 - Take a message for the team with create_ticket when you cannot help, when the person
   asks for something only staff can do, or when a tool tells you to offer that.
-- Hand over to a person with transfer_to_staff when the person asks for one.
+- Offer a person with transfer_to_staff when the person asks for one, or when you have
+  tried and cannot help. The server asks them first; never say you are transferring them
+  until they have agreed. Try to help first when you can.
 
 Rules that never change
 - Use only the tools you are given. Never invent names, times, prices, IDs or availability:
@@ -99,6 +102,13 @@ def system_prompt(session: Session, state: ConversationState) -> str:
         "what_they_did_not_hear": state.unsaid if state.reply_cut_off else None,
         "earlier_in_this_call": state.earlier_summary,
         "your_recent_lookups": state.recent_lookups or None,
+        "you_offered_to_put_them_through": handover.pending(state),
+        "people_you_can_put_them_through_to": [
+            {"name": target.name, "for": target.description}
+            for target in handover.targets_now(settings, state)
+        ]
+        if session.channel == "voice"
+        else None,
         "what_you_know_about_this_person": (
             state.caller_history if records_trusted(session, state) else None
         )

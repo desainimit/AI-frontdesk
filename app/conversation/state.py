@@ -331,6 +331,16 @@ class SafetyState(BaseModel):
     transfer_attempted: bool = False
     transfer_confirmed: bool = False
     event_recorded: bool = False
+    # A transfer (or a message for the team) was offered; the caller has not answered yet.
+    transfer_offered: bool = False
+    offered_turn: int = 0
+    transfer_target: str | None = Field(default=None, max_length=60)
+    # How often the caller asked for a person: the second time, they are put through.
+    human_asked: int = Field(default=0, ge=0)
+    # What the caller needs, for the ticket and for whoever picks up.
+    handoff_note: str | None = Field(default=None, max_length=500)
+    # Nobody picked up the transfer and the call came back to the receptionist.
+    transfer_returned: bool = False
 
 
 class AppointmentOperation(BaseModel):

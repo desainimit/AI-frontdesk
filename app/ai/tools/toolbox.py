@@ -35,6 +35,8 @@ from app.knowledge.service import KnowledgeService
 from app.knowledge.storage import build_storage
 from app.locations.models import Location
 from app.providers.models import Provider
+from app.safety import handover
+from app.safety.handover_messages import handover_message
 from app.tickets.service import open_ticket
 
 
@@ -47,6 +49,8 @@ class TicketInput(ToolInput):
 class TransferInput(ToolInput):
     model_config = ConfigDict(extra="forbid", strict=True)
     reason: str = Field(default="", max_length=200)
+    # One of the names the server listed as people the caller can be put through to.
+    target: str = Field(default="", max_length=60)
 
 
 class Listing(BaseModel):
@@ -167,12 +171,31 @@ def build_tools(
             )
             return Outcome(status="message_taken", items=[{"ticket_number": row.number}])
 
-    async def transfer(session: Session, state: ConversationState, _: BaseModel) -> BaseModel:
+    async def transfer(session: Session, state: ConversationState, payload: BaseModel) -> BaseModel:
         safety = state.safety_state
-        # On the phone with a number to send the call to, the caller is put through.
-        # Otherwise the team is told and gets back to the person.
-        live = session.channel == "voice" and session.configuration.calls.transfer_number
-        safety.decision = SafetyDecision.TRANSFER if live else SafetyDecision.ESCALATE
+        wanted = payload if isinstance(payload, TransferInput) else TransferInput()
+        if session.channel == "voice":
+            # On a call the caller is asked first. Called again in a later turn, after
+            # the offer, it means they agreed.
+            targets = handover.targets_now(session.configuration, state)
+            target = handover.choose(targets, wanted.target)
+            if handover.pending(state) and state.utterance_count > safety.offered_turn:
+                if target is not None:
+                    safety.transfer_target = target.name
+                handover.agree(state, can_transfer=target is not None)
+                safety.source = "assistant"
+                return Outcome(status="handing_over")
+            handover.offer(state, target, wanted.reason or state.last_caller_utterance)
+            if target is None:
+                return Outcome(
+                    status="offered", say=handover_message(state.language, "offer_message")
+                )
+            return Outcome(
+                status="offered",
+                say=handover_message(state.language, "offer", target=target.name),
+            )
+        # By text, the team is told and gets back to the person.
+        safety.decision = SafetyDecision.ESCALATE
         safety.reason, safety.source = "human_requested", "assistant"
         safety.triggered_at = datetime.now(UTC)
         return Outcome(status="handing_over")
@@ -263,7 +286,10 @@ def build_tools(
         ),
         Tool(
             "transfer_to_staff",
-            "The person asks for a human being. Hands the conversation to the team.",
+            "Offer to put the person through to the clinic team, or to one of the people "
+            "listed as reachable, by name. Use it when they ask for a person, or when you "
+            "have tried and cannot help with what they need. The server asks them first; "
+            "call it again only once they have agreed.",
             TransferInput,
             transfer,
         ),

@@ -38,7 +38,7 @@ from app.calls.service import (
 )
 from app.conversation import ConversationStateManager, build_conversation_store
 from app.conversation.locales import LOCALES, LanguagePolicy, base_language
-from app.conversation.state import CallStatus, ConversationState
+from app.conversation.state import CallStatus, ConversationState, SafetyDecision
 from app.conversation.store import ConversationStateStore
 from app.core.database.pages import Page, decode_cursor, page
 from app.core.database.rls import set_tenant_scope
@@ -56,6 +56,8 @@ from app.messaging.service import InboundTexts
 from app.postcall.schemas import PostCallInput
 from app.safety.classifier import LLMSafetyClassifier
 from app.safety.engine import SafetyEngine
+from app.safety.handover_messages import handover_message
+from app.safety.transfer import whisper_twiml
 from app.tickets.service import open_ticket
 from app.voice.circuit import CircuitRegistry
 from app.voice.factory import (
@@ -376,6 +378,91 @@ async def stream_status(
     return Response(status_code=204)
 
 
+def whisper_line(state: ConversationState | None) -> str:
+    """What staff hear when they pick up a transferred call, before it is put through."""
+    if state is None:
+        return "A caller from the receptionist. Connecting now."
+    safety = state.safety_state
+    for_whom = f" for {safety.transfer_target}" if safety.transfer_target else ""
+    note = (safety.handoff_note or state.last_caller_utterance or "").strip()
+    # The staff greeting is in English; a request in another script is in the ticket.
+    about = (
+        f" They said: {note[:160]}."
+        if note and note.isascii()
+        else " Their request is in the ticket."
+    )
+    return f"A caller from the receptionist{for_whom}.{about} Connecting now."
+
+
+def conversation_store_for(app: FastAPI, settings: Settings) -> ConversationStateStore:
+    redis = getattr(getattr(app.state, "resources", None), "redis", None)
+    return app.state.conversation_store or build_conversation_store(settings, redis)
+
+
+@router.post("/webhooks/v1/twilio/{tenant_id}/{call_id}/whisper", response_class=Response)
+async def transfer_whisper(
+    tenant_id: UUID, call_id: UUID, request: Request, database: DatabaseDependency
+) -> Response:
+    """Played to the staff member who answers a transfer; the caller hears ringing."""
+    params = await read_form(request)
+    service = CallService(database.session_factory)
+    await authenticate_form(
+        request, params, await call_candidates(request.app, service, tenant_id, call_id)
+    )
+    settings: Settings = request.app.state.settings
+    state = await conversation_store_for(request.app, settings).get(tenant_id, call_id)
+    return Response(
+        whisper_twiml(whisper_line(state)),
+        media_type="application/xml",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/webhooks/v1/twilio/{tenant_id}/{call_id}/transfer-result", response_class=Response)
+async def transfer_result(
+    tenant_id: UUID, call_id: UUID, request: Request, database: DatabaseDependency
+) -> Response:
+    """How a transfer ended. Answered: the call is over. Not answered: the caller comes
+    back to the receptionist, which already left the request with the team."""
+    params = await read_form(request)
+    service = CallService(database.session_factory)
+    credentials = await authenticate_form(
+        request, params, await call_candidates(request.app, service, tenant_id, call_id)
+    )
+    settings: Settings = request.app.state.settings
+    status = params.get("DialCallStatus", "")
+    headers = {"Cache-Control": "no-store"}
+    if status == "completed":
+        return Response(
+            '<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+            media_type="application/xml",
+            headers=headers,
+        )
+    store = conversation_store_for(request.app, settings)
+    state = await store.get(tenant_id, call_id)
+    if (
+        state is None
+        or not state.safety_state.transfer_confirmed
+        or (state.safety_state.transfer_returned)
+    ):
+        return Response(
+            whisper_twiml(
+                "Sorry, nobody could take your call. The team has your request and will "
+                "call you back. Goodbye."
+            ).replace("</Response>", "<Hangup /></Response>"),
+            media_type="application/xml",
+            headers=headers,
+        )
+    state.safety_state.transfer_returned = True
+    await store.save(state, CONVERSATION_TTL_SECONDS)
+    context = CallContext(tenant_id, call_id, params["CallSid"], UUID(request.state.request_id))
+    return Response(
+        twiml(settings, context, credentials, resume=True),
+        media_type="application/xml",
+        headers=headers,
+    )
+
+
 @router.post("/webhooks/v1/twilio/status", status_code=204)
 async def call_status(request: Request, database: DatabaseDependency) -> Response:
     params = await read_form(request)
@@ -519,6 +606,7 @@ async def run_media(
     conversation_state: ConversationState | None = None
     conversation_store: ConversationStateStore | None = None
     received = sent = 0
+    resuming = False
     call_summary: str | None = None
     status, reason = "disconnected", "socket_disconnected"
     try:
@@ -548,7 +636,11 @@ async def run_media(
                 )
             ):
                 raise ValueError("Invalid stream binding")
-            caller_number = await service.start(candidate, stream_sid)
+            # A transfer nobody answered comes back as a second stream on the same call.
+            resuming = start.get("customParameters", {}).get("resume") == "1"
+            caller_number = await (service.resume if resuming else service.start)(
+                candidate, stream_sid
+            )
             context = candidate
         telemetry = socket.app.state.telemetry
         redis_dep = getattr(getattr(socket.app.state, "resources", None), "redis", None)
@@ -563,13 +655,20 @@ async def run_media(
             settings, redis_dep
         )
         conversation_store = conv_store
-        initial_conv_state = ConversationStateManager.create_initial_state(
+        returned = await conv_store.get(tenant_id, call_id) if resuming else None
+        initial_conv_state = returned or ConversationStateManager.create_initial_state(
             call_id=call_id,
             tenant_id=tenant_id,
             telephony_call_id=sid,
             caller_phone=caller_number,
             language_policy=configuration.receptionist.languages,
         )
+        if returned is not None:
+            # Staff did not pick up: the receptionist carries on with the same call.
+            returned.call_state.status = CallStatus.IN_PROGRESS
+            returned.call_state.ended_at = None
+            returned.safety_state.decision = SafetyDecision.CONTINUE
+            returned.active_flow_state.reset()
 
         def speech_locale() -> str:
             return LOCALES[base_language(initial_conv_state.language)].speech_locale
@@ -601,7 +700,8 @@ async def run_media(
                 LLMSafetyClassifier(providers.light_llm or llm)
                 if settings.safety_semantic_enabled
                 else None,
-                transfer_available=configuration.calls.transfer_number is not None,
+                transfer_available=bool(configuration.calls.transfer_targets),
+                ask_first=True,
             ),
             identity,
             CallerHistory(service.sessions),
@@ -658,7 +758,10 @@ async def run_media(
         previous_sequence = int(message["sequenceNumber"])
         try:
             await pipeline.start()
-            await pipeline.speak(configuration.receptionist.greeting, cache=True)
+            if returned is not None:
+                await pipeline.speak(handover_message(returned.language, "no_answer"))
+            else:
+                await pipeline.speak(configuration.receptionist.greeting, cache=True)
             async with asyncio.timeout(configuration.calls.max_duration_minutes * 60):
                 while True:
                     async with asyncio.timeout(IDLE_SECONDS):

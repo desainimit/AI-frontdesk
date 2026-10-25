@@ -25,6 +25,7 @@ from app.conversation.store import ConversationStateStore
 from app.core.database.rls import set_tenant_scope
 from app.core.errors import ApplicationError
 from app.core.settings import Settings
+from app.safety import handover
 from app.safety.messages import transfer_failed_message
 from app.safety.transfer import TransferError, transfer_call
 from app.tickets.service import open_ticket
@@ -311,22 +312,46 @@ class CallReceptionist:
                 await self._audit(AuditAction.EMERGENCY_DETECTED)
                 await self._ticket("emergency", priority="urgent")
             return
-        number = self.session.configuration.calls.transfer_number
+        if handoff.reason == "unavailable":
+            # The reply could not be finished; the team calls the person back.
+            await self._ticket("unavailable")
+            return
         if safety.transfer_attempted:
             return
+        # The caller has agreed by now (see app.safety.handover).
+        targets = (
+            handover.targets_now(self.session.configuration, self.state)
+            if safety.decision == SafetyDecision.TRANSFER
+            else []
+        )
+        target = handover.choose(targets, safety.transfer_target)
         safety.transfer_attempted = True
         await self._audit(AuditAction.HUMAN_TRANSFER_REQUESTED)
         # A ticket either way: if the transfer fails, or nobody picks up, the request
         # is still waiting for the team.
         await self._ticket(handoff.reason)
-        if number is None:
+        if target is None:
+            # A message for the team was taken; the conversation carries on.
             self.metrics.record_human_transfer("unavailable")
+            self._carry_on()
             return
+        safety.transfer_target = target.name
+        hooks = (
+            f"{self.settings.telephony_public_base_url}/webhooks/v1/twilio/"
+            f"{self.session.tenant_id}/{self.session.conversation_id}"
+        )
         try:
-            await transfer_call(self.settings, self.session.call, number, credentials=self.account)
+            await transfer_call(
+                self.settings,
+                self.session.call,
+                target.number,
+                credentials=self.account,
+                whisper_url=hooks + "/whisper",
+                action_url=hooks + "/transfer-result",
+            )
         except TransferError:
             self.metrics.record_human_transfer("failed")
-            safety.decision = SafetyDecision.ESCALATE
+            self._carry_on()
             await pipeline.speak(transfer_failed_message(self.state.language))
             await self._audit(AuditAction.HUMAN_TRANSFER_FAILED)
             return
@@ -334,6 +359,16 @@ class CallReceptionist:
         self.transferred = True
         self.metrics.record_human_transfer("redirected")
         await self._audit(AuditAction.HUMAN_TRANSFER_REDIRECTED)
+        with suppress(Exception):
+            # Read back if staff do not pick up and the call returns here.
+            await self.store.save(self.state, self.store_ttl_seconds)
+
+    def _carry_on(self) -> None:
+        """Nobody could be put through: the team has the request, the call goes on."""
+        safety = self.state.safety_state
+        safety.decision = SafetyDecision.CONTINUE
+        safety.transfer_offered = False
+        self.state.active_flow_state.reset()
 
     async def _audit(self, action: AuditAction) -> None:
         try:
@@ -353,7 +388,11 @@ class CallReceptionist:
                     self.session.tenant_id,
                     source="call",
                     subject=TICKETS[reason],
-                    description=(self.state.last_caller_utterance or "")[:500],
+                    description=(
+                        self.state.safety_state.handoff_note
+                        or self.state.last_caller_utterance
+                        or ""
+                    )[:500],
                     priority=priority,
                     patient_id=identity.patient_id if identity.is_verified else None,
                     contact=self.session.contact,

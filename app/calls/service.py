@@ -55,6 +55,10 @@ class CallBinding:
     credential_version_id: UUID | None
 
 
+# A transfer rings for 20 seconds; a call that ended longer ago than this cannot come back.
+RESUME_WITHIN = timedelta(minutes=3)
+
+
 def audit(session: AsyncSession, context: CallContext, action: str) -> None:
     session.add(
         AuditEvent(
@@ -200,6 +204,30 @@ class CallService:
             call.stream_sid = stream_sid
             call.started_at = datetime.now(UTC)
             audit(session, context, "call_started")
+            return call.caller_number
+
+    async def resume(self, context: CallContext, stream_sid: str) -> str | None:
+        """Reconnect a call whose transfer nobody answered. Only a call that ended a
+        moment ago can come back; it is open again until it ends for good."""
+        async with self.sessions.begin() as session:
+            await verify_runtime_role(session)
+            await set_tenant_scope(session, context.tenant_id)
+            await self._active(session, context.tenant_id)
+            call = await self._locked(session, context)
+            phone = await session.get(PhoneNumber, call.phone_number_id)
+            if (
+                call.status != "completed"
+                or call.ended_at is None
+                or datetime.now(UTC) - call.ended_at > RESUME_WITHIN
+                or phone is None
+                or not phone.is_active
+            ):
+                raise AuthorizationError()
+            call.status = "active"
+            call.stream_sid = stream_sid
+            call.ended_at = None
+            call.end_reason = None
+            audit(session, context, "call_resumed")
             return call.caller_number
 
     async def _locked(self, session: AsyncSession, context: CallContext) -> Call:

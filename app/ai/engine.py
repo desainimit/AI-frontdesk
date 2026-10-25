@@ -41,7 +41,9 @@ from app.conversation.manager import ConversationStateManager
 from app.conversation.redaction import redact_verification_secrets
 from app.conversation.state import ConversationState, SafetyDecision
 from app.core.errors import ApplicationError
+from app.safety import handover
 from app.safety.engine import SafetyEngine
+from app.safety.handover_messages import handover_message
 
 logger = logging.getLogger(__name__)
 
@@ -169,10 +171,33 @@ class Engine:
             if not utterance.strip() or len(utterance) > 4000:
                 raise ToolValidationError("Invalid utterance size")
             words = redact_verification_secrets(utterance)
+            if self.safety.ask_first:
+                # On a call: who can take it right now (opening hours, on-call lines).
+                self.safety.transfer_available = bool(
+                    handover.targets_now(session.configuration, state)
+                )
+                # 0. The answer to "shall I put you through?".
+                if handover.pending(state):
+                    answer = handover.consent(words, state.language)
+                    if answer is True:
+                        handover.agree(state, can_transfer=self.safety.transfer_available)
+                        yield say(self._handoff_line(state))
+                        yield Handoff("requested")
+                        yield done("handoff")
+                        return
+                    if answer is False:
+                        handover.withdraw(state)
+                        yield say(handover_message(state.language, "declined"))
+                        yield done("answered")
+                        return
+                elif state.safety_state.transfer_offered:
+                    handover.withdraw(state)
             # 1. The instant safety rules. They need no model and nothing outranks them.
             fixed = await self.safety.evaluate(state, words, semantic=False)
             if fixed is not None:
                 yield say(fixed)
+                if self._offer_after_emergency(state):
+                    yield say(handover_message(state.language, "after_emergency"))
                 if (event := handoff()) is not None:
                     yield event
                 yield done("safety")
@@ -275,7 +300,7 @@ class Engine:
                     turns.append(ToolResult(call.id, call.name, result))
                     if (event := handoff()) is not None:
                         # The tool asked for a person.
-                        yield say(self.safety.message(state))
+                        yield say(self._handoff_line(state))
                         yield event
                         yield done("handoff")
                         return
@@ -295,7 +320,10 @@ class Engine:
             yield done("blocked", "not_authorized")
         except (LLMBlockedError, LLMInvalidResponseError) as error:
             # Nothing usable came back. Say so and offer a person; do not guess.
-            yield say(spoken(state.language, "could_not_answer"))
+            if self.safety.ask_first:
+                yield say(self._offer_help(state, "could_not_answer"))
+            else:
+                yield say(spoken(state.language, "could_not_answer"))
             yield done("blocked", error.code)
         except LLMInterruptedError as error:
             # Part of the reply was already delivered; it is never said twice.
@@ -307,6 +335,11 @@ class Engine:
                 "assistant_turn_unavailable",
                 extra={"conversation_id": str(session.conversation_id), "error_type": code},
             )
+            if self.safety.ask_first and not state.safety_state.transfer_attempted:
+                # On a call, the caller decides: put through, or a message for the team.
+                yield say(self._offer_help(state, "trouble"))
+                yield done("unavailable", code)
+                return
             yield say(
                 spoken(
                     state.language,
@@ -318,6 +351,35 @@ class Engine:
         finally:
             if semantic is not None and not semantic.done():
                 semantic.cancel()
+
+    def _handoff_line(self, state: ConversationState) -> str:
+        if not self.safety.ask_first:
+            return self.safety.message(state)
+        decision = state.safety_state.decision
+        key = "connecting" if decision == SafetyDecision.TRANSFER else "message_taken"
+        return handover_message(state.language, key)
+
+    def _offer_help(self, state: ConversationState, reason: str) -> str:
+        """Something went wrong on this side: offer a person, or a message for the team."""
+        handover.offer(state, None, state.last_caller_utterance)
+        available = self.safety.transfer_available
+        if reason == "could_not_answer" and not available:
+            return spoken(state.language, "could_not_answer")
+        return handover_message(state.language, "trouble_offer" if available else "trouble_message")
+
+    def _offer_after_emergency(self, state: ConversationState) -> bool:
+        """After the emergency script, once, the caller may also be put through."""
+        safety = state.safety_state
+        if not (
+            self.safety.ask_first
+            and self.safety.transfer_available
+            and safety.decision == SafetyDecision.EMERGENCY_PROTOCOL
+            and not safety.event_recorded
+            and not safety.transfer_offered
+        ):
+            return False
+        handover.offer(state, None, "Possible emergency")
+        return True
 
     @staticmethod
     async def _alarm(

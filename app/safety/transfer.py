@@ -17,16 +17,33 @@ class TransferError(RuntimeError):
     pass
 
 
-def transfer_twiml(number: str) -> str:
+def transfer_twiml(
+    number: str, *, whisper_url: str | None = None, action_url: str | None = None
+) -> str:
+    """Ring the staff number. With `whisper_url`, whoever answers first hears who is
+    calling and why (the caller hears ringing meanwhile); with `action_url`, a call
+    nobody answers comes back to that address instead of ending."""
     if not re.fullmatch(r"\+[1-9][0-9]{7,14}", number):
         raise ValueError("Invalid transfer destination")
     root = Element("Response")
-    dial = SubElement(root, "Dial", {"timeout": "20"})
-    SubElement(dial, "Number").text = number
+    dial = {"timeout": "20", "answerOnBridge": "true"}
+    if action_url:
+        dial |= {"action": action_url, "method": "POST"}
+    target = SubElement(root, "Dial", dial)
     SubElement(
-        root, "Say"
-    ).text = "We could not connect you to staff. Please contact the business directly."
-    SubElement(root, "Hangup")
+        target, "Number", {"url": whisper_url, "method": "POST"} if whisper_url else {}
+    ).text = number
+    if not action_url:
+        SubElement(
+            root, "Say"
+        ).text = "We could not connect you to staff. Please contact the business directly."
+        SubElement(root, "Hangup")
+    return tostring(root, encoding="unicode")
+
+
+def whisper_twiml(line: str) -> str:
+    root = Element("Response")
+    SubElement(root, "Say").text = line
     return tostring(root, encoding="unicode")
 
 
@@ -37,6 +54,8 @@ async def transfer_call(
     *,
     client: httpx.AsyncClient | None = None,
     credentials: "TwilioCredentials | None" = None,
+    whisper_url: str | None = None,
+    action_url: str | None = None,
 ) -> None:
     from app.voice.twilio import TwilioCredentials
 
@@ -46,7 +65,7 @@ async def transfer_call(
         r"AC[0-9a-fA-F]{32}", account.account_sid
     ):
         raise ValueError("Invalid provider call identifier")
-    twiml = transfer_twiml(number)
+    twiml = transfer_twiml(number, whisper_url=whisper_url, action_url=action_url)
     url = (
         "https://api.twilio.com/2010-04-01/Accounts/"
         f"{account.account_sid}/Calls/{context.provider_call_id}.json"

@@ -219,13 +219,13 @@ class TenantReadinessService:
                         "Update the speech connections before activating calls.",
                     )
                 )
-        if configuration.calls.transfer_number is None:
+        if not configuration.calls.transfer_targets:
             checks.append(
                 ReadinessCheck(
                     key="transfer_destination",
                     status="optional",
                     reason="Callers cannot be transferred to staff.",
-                    next_action="Add a transfer number in Settings, AI receptionist.",
+                    next_action="Add a transfer number in Settings, Calls.",
                 )
             )
         return checks

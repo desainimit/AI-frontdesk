@@ -7,7 +7,9 @@ from datetime import UTC, datetime
 
 from app.ai.wording import spoken
 from app.conversation.state import ConversationState, FlowType, SafetyDecision
+from app.safety import handover
 from app.safety.classifier import SafetyClassifier
+from app.safety.handover_messages import handover_message
 from app.safety.messages import safety_message
 from app.safety.rules import deterministic_rule
 
@@ -21,10 +23,14 @@ class SafetyEngine:
         *,
         transfer_available: bool = False,
         classifier_timeout_seconds: float = 2.0,
+        ask_first: bool = False,
     ) -> None:
         self.classifier = classifier
         self.transfer_available = transfer_available
         self.classifier_timeout_seconds = classifier_timeout_seconds
+        # On a call, a request for a person is answered with an offer, and the caller is
+        # put through once they agree. By text, the team takes over at once.
+        self.ask_first = ask_first
 
     def message(self, state: ConversationState) -> str:
         """The fixed sentence for the decision already in force."""
@@ -109,13 +115,15 @@ class SafetyEngine:
                 logger.warning(
                     "safety_classifier_unavailable", extra={"call_id": str(state.call_id)}
                 )
-        if decision == SafetyDecision.TRANSFER and not self.transfer_available:
-            decision = SafetyDecision.ESCALATE
         if rule.context_hint != "none":
             safety.context_hint = rule.context_hint
             safety.context_turn = state.utterance_count
         elif context_hint == "none":
             safety.context_hint = "none"
+        if decision == SafetyDecision.TRANSFER and self.ask_first:
+            return self._asked_for_person(state)
+        if decision == SafetyDecision.TRANSFER and not self.transfer_available:
+            decision = SafetyDecision.ESCALATE
         if decision == SafetyDecision.CONTINUE:
             safety.decision = decision
             safety.reason = None
@@ -137,6 +145,22 @@ class SafetyEngine:
         elif decision in {SafetyDecision.TRANSFER, SafetyDecision.ESCALATE}:
             state.active_flow_state.flow_type = FlowType.HUMAN_TRANSFER
         return safety_message(state.language, decision, transfer_available=self.transfer_available)
+
+    def _asked_for_person(self, state: ConversationState) -> str:
+        """Offer once; asked again, or already offered, put them through."""
+        safety = state.safety_state
+        safety.human_asked += 1
+        if safety.human_asked > 1 or handover.pending(state):
+            decision = handover.agree(state, can_transfer=self.transfer_available)
+            safety.reason, safety.source = "human_requested", "caller"
+            if decision == SafetyDecision.TRANSFER:
+                state.active_flow_state.flow_type = FlowType.HUMAN_TRANSFER
+                return handover_message(state.language, "connecting")
+            return handover_message(state.language, "message_taken")
+        handover.offer(state, None, state.last_caller_utterance)
+        return handover_message(
+            state.language, "offer_first" if self.transfer_available else "offer_message"
+        )
 
     async def semantic_check(self, state: ConversationState, utterance: str) -> str | None:
         """The model's own reading of the same words, run beside the reply.

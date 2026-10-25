@@ -4,7 +4,7 @@ import re
 from datetime import date, datetime, time
 from enum import StrEnum
 from itertools import pairwise
-from typing import Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -98,11 +98,46 @@ class ReceptionistSettings(Section):
         return frozenset(tools)
 
 
+class TransferTarget(Section):
+    """Somewhere a caller can be put through to: the front desk, billing, an on-call line."""
+
+    name: str = Field(min_length=1, max_length=60, pattern=r"^[^\n{}<>]*$")
+    number: str = Field(pattern=r"^\+[1-9][0-9]{7,14}$")
+    # What callers should be put through here for; the receptionist chooses by this.
+    description: str = Field(default="", max_length=200, pattern=r"^[^\n{}<>]*$")
+    # "open": only while the clinic is open; "closed": only outside opening hours, as for
+    # an on-call line; "always": either.
+    when: Literal["always", "open", "closed"] = "always"
+
+
 class CallSettings(Section):
     enabled: bool = True
     max_duration_minutes: int = Field(default=20, ge=1, le=60)
-    # Where a caller who asks for a person is sent; empty means no transfer.
-    transfer_number: str | None = Field(default=None, pattern=r"^\+[1-9][0-9]{7,14}$")
+    # Where a caller who asks for a person can be put through, first one by default;
+    # empty means no transfers. The receptionist always asks the caller first.
+    transfer_targets: list[TransferTarget] = Field(
+        default_factory=list[TransferTarget], max_length=10
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def single_number(cls, value: object) -> object:
+        # Settings saved before several targets existed had one number.
+        if not isinstance(value, dict):
+            return value
+        data = cast(dict[str, Any], value).copy()
+        if "transfer_number" in data:
+            number = data.pop("transfer_number")
+            if number and not data.get("transfer_targets"):
+                data["transfer_targets"] = [{"name": "the front desk", "number": number}]
+        return data
+
+    @model_validator(mode="after")
+    def distinct_names(self) -> "CallSettings":
+        names = [target.name.casefold() for target in self.transfer_targets]
+        if len(set(names)) != len(names):
+            raise ValueError("Each transfer target needs its own name")
+        return self
 
 
 class SchedulingSettings(Section):
@@ -185,6 +220,17 @@ class ClinicConfiguration(Section):
     notifications: NotificationSettings
     privacy: PrivacySettings
     tickets: TicketSettings
+
+    def transfer_targets_now(self, instant: datetime) -> list[TransferTarget]:
+        """Where a caller can be put through at this moment, the default first."""
+        is_open = self.is_open(instant)
+        if not is_open and self.hours.after_hours != "transfer":
+            return []
+        return [
+            target
+            for target in self.calls.transfer_targets
+            if target.when == "always" or (target.when == "open") == is_open
+        ]
 
     def is_open(self, instant: datetime) -> bool:
         if instant.tzinfo is None:

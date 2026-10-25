@@ -143,8 +143,14 @@ def stream_token_valid(
 
 
 def twiml(
-    settings: Settings, context: CallContext, credentials: TwilioCredentials | None = None
+    settings: Settings,
+    context: CallContext,
+    credentials: TwilioCredentials | None = None,
+    *,
+    resume: bool = False,
 ) -> str:
+    """Connect the call to the receptionist. `resume` brings back a call whose transfer
+    nobody answered."""
     root = Element("Response")
     connect = SubElement(root, "Connect")
     path = f"/webhooks/v1/twilio/{context.tenant_id}/{context.call_id}"
@@ -164,6 +170,8 @@ def twiml(
         "Parameter",
         {"name": "token", "value": stream_token(settings, context, credentials)},
     )
+    if resume:
+        SubElement(stream, "Parameter", {"name": "resume", "value": "1"})
     SubElement(root, "Hangup")
     return tostring(root, encoding="unicode")
 
