@@ -15,10 +15,7 @@ from app.voice.tts.base import (
     TTSTimeoutError,
     TTSTransientError,
 )
-from app.voice.tts.elevenlabs_stream import ElevenLabsSocket
 
-# Models ElevenLabs serves over its multi-context WebSocket; Eleven v3 is not one of them.
-SOCKET_MODELS = frozenset({"eleven_flash_v2_5", "eleven_turbo_v2_5", "eleven_multilingual_v2"})
 # A little less stable than the default sounds livelier and less read-out.
 VOICE_SETTINGS = {"stability": 0.45, "similarity_boost": 0.75}
 
@@ -26,8 +23,8 @@ VOICE_SETTINGS = {"stability": 0.45, "similarity_boost": 0.75}
 class ElevenLabsTTSProvider:
     """Production ElevenLabs streaming TTS provider.
 
-    One instance serves one call: its HTTP client and its socket are opened once, reused
-    for every sentence, and closed with the call.
+    One instance serves one call: its HTTP client is opened once, reused for every
+    sentence, and closed with the call.
     """
 
     def __init__(
@@ -49,9 +46,6 @@ class ElevenLabsTTSProvider:
         self.timeout_seconds = timeout_seconds
         self._client = client
         self._owns_client = client is None
-        self._socket: ElevenLabsSocket | None = None
-        self._socket_key: tuple[str, str | None] | None = None
-        self._retired: list[ElevenLabsSocket] = []
 
     @property
     def name(self) -> str:
@@ -85,41 +79,12 @@ class ElevenLabsTTSProvider:
             raise TTSPermanentError("Unsupported speech language")
         return None
 
-    def _speech_socket(self, voice_id: str | None, language: str | None) -> ElevenLabsSocket:
-        key = (voice_id or self.default_voice_id, self._language_code(language))
-        if self._socket is None or self._socket_key != key:
-            if self._socket is not None:
-                # A language switch needs a new connection; the old one closes with the call.
-                self._retired.append(self._socket)
-            self._socket = ElevenLabsSocket(
-                api_key=self._secret(),
-                voice_id=key[0],
-                model_id=self.model_id,
-                language_code=key[1],
-                voice_settings=VOICE_SETTINGS,
-                base_url=self.base_url,
-                timeout_seconds=self.timeout_seconds,
-            )
-            self._socket_key = key
-        return self._socket
-
     async def warm_up(self, voice_id: str | None = None, *, language: str | None = None) -> None:
-        """Open the connection before the first words are needed."""
-        if self.model_id in SOCKET_MODELS:
-            await self._speech_socket(voice_id, language).connect()
-
-    async def synthesize_ulaw(
-        self, text: str, voice_id: str | None = None, *, language: str | None = None
-    ) -> AsyncIterator[bytes]:
-        """µ-law 8 kHz audio, the format Twilio plays, so nothing is converted."""
-        if not text.strip():
-            return
-        if self.model_id in SOCKET_MODELS:
-            async for chunk in self._speech_socket(voice_id, language).speak(text):
-                yield chunk
-            return
-        async for chunk in self._http(text, voice_id, language, "ulaw_8000"):
-            yield chunk
+        """Open the connection before the first words are needed (a free request)."""
+        with suppress(httpx.HTTPError, TTSError):
+            await self._get_client().get(
+                f"{self.base_url}/v1/models", headers={"xi-api-key": self._secret()}, timeout=3.0
+            )
 
     async def synthesize(
         self, text: str, voice_id: str | None = None, *, language: str | None = None
@@ -196,11 +161,6 @@ class ElevenLabsTTSProvider:
             return False
 
     async def aclose(self) -> None:
-        sockets = [*self._retired, *([self._socket] if self._socket else [])]
-        self._socket, self._retired = None, []
-        for socket in sockets:
-            with suppress(TTSError, OSError):
-                await socket.close()
         if self._owns_client and self._client is not None:
             await self._client.aclose()
             self._client = None

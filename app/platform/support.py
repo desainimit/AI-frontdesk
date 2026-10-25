@@ -78,6 +78,7 @@ SUPPORT_ROUTES: dict[tuple[str, str], Permission | None] = {
     ("GET", "/api/v1/calls/{call_id}"): Permission.CALL_READ,
     ("POST", "/api/v1/calls/{call_id}/patient-access"): Permission.PATIENT_WRITE,
     ("GET", "/api/v1/calls/{call_id}/post-call"): Permission.CALL_READ,
+    ("GET", "/api/v1/calls/{call_id}/transcript"): Permission.CALL_READ,
     ("GET", "/api/v1/tickets"): Permission.CALL_READ,
     ("GET", "/api/v1/tickets/counts"): Permission.CALL_READ,
     ("POST", "/api/v1/tickets"): Permission.FOLLOW_UP_MANAGE,

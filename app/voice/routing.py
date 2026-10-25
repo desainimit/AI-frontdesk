@@ -6,8 +6,6 @@ from dataclasses import replace
 from time import perf_counter
 
 from app.conversation.locales import normalize_language
-from app.voice.audio import pcm_frames
-from app.voice.codec import pcm_to_ulaw
 from app.voice.stt.base import (
     SpeechToTextProvider,
     STTStream,
@@ -115,18 +113,6 @@ class RoutedTTSProvider:
         warm_up = getattr(self.elevenlabs, "warm_up", None)
         if warm_up is not None and normalize_language(language or "") != "gu":
             await warm_up(voice_id, language=language)
-
-    async def synthesize_ulaw(
-        self, text: str, voice_id: str | None = None, *, language: str | None = None
-    ) -> AsyncIterator[bytes]:
-        gujarati = normalize_language(language or "") == "gu"
-        source = None if gujarati else getattr(self.elevenlabs, "synthesize_ulaw", None)
-        if source is not None:
-            async for chunk in source(text, voice_id, language=language):
-                yield chunk
-            return
-        async for frame in pcm_frames(self.synthesize(text, voice_id, language=language)):
-            yield pcm_to_ulaw(frame)
 
     async def health(self) -> bool:
         return await self.azure.health() and await self.elevenlabs.health()

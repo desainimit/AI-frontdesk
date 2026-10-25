@@ -32,6 +32,7 @@ from app.tickets.service import open_ticket
 from app.voice.metrics import VoiceMetrics
 from app.voice.pipeline import Speech, VoicePipeline
 from app.voice.stt.base import TranscriptionResult
+from app.voice.tts.base import TTSError
 from app.voice.twilio import TwilioCredentials
 
 logger = logging.getLogger(__name__)
@@ -172,7 +173,13 @@ class CallReceptionist:
 
         async def play() -> None:
             while (speech := await queue.get()) is not None:
-                if not await pipeline.play(speech, follow_on=True):
+                try:
+                    if not await pipeline.play(speech, follow_on=True):
+                        return
+                except TTSError as error:
+                    # The speech service failed on this sentence. The call goes on: the
+                    # caller can say it again, and the next reply may get through.
+                    logger.warning("call_speech_failed", extra={"error_type": error.code})
                     return
 
         async def enqueue(text: str, *, record: bool = True, cache: bool = False) -> None:

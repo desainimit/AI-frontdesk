@@ -79,7 +79,7 @@ from app.voice.pipeline import PhraseStore, VoicePipeline
 from app.voice.processors.interruption import InterruptionConfig
 from app.voice.receptionist import CallReceptionist
 from app.voice.stt.base import SpeechToTextProvider
-from app.voice.tts.base import TextToSpeechProvider
+from app.voice.tts.base import TextToSpeechProvider, TTSError
 from app.voice.twilio import (
     TwilioCredentials,
     decode_audio,
@@ -780,15 +780,22 @@ async def run_media(
         previous_sequence = int(message["sequenceNumber"])
         try:
             await pipeline.start()
-            if returned is not None:
-                voice_metrics.record_human_transfer("no_answer")
-                await pipeline.speak(handover_message(returned.language, "no_answer"))
-            else:
-                await pipeline.speak(configuration.receptionist.greeting, cache=True)
-                if not opened_while_open:
-                    await pipeline.speak(
-                        spoken(initial_conv_state.language, "closed_now"), cache=True
-                    )
+            try:
+                if returned is not None:
+                    voice_metrics.record_human_transfer("no_answer")
+                    await pipeline.speak(handover_message(returned.language, "no_answer"))
+                else:
+                    await pipeline.speak(configuration.receptionist.greeting, cache=True)
+                    if not opened_while_open:
+                        await pipeline.speak(
+                            spoken(initial_conv_state.language, "closed_now"), cache=True
+                        )
+            except TTSError as error:
+                # Without a greeting the caller can still speak and be answered.
+                logger.warning(
+                    "call_greeting_failed",
+                    extra={"call_id": str(call_id), "error_type": error.code},
+                )
             async with asyncio.timeout(configuration.calls.max_duration_minutes * 60):
                 while True:
                     async with asyncio.timeout(IDLE_SECONDS):
@@ -841,9 +848,17 @@ async def run_media(
         )
     except (ValueError, KeyError, TypeError, AttributeError, ApplicationError):
         status, reason = "failed", "invalid_stream"
-    except Exception:
+    except Exception as error:
         status, reason = "failed", "pipeline_error"
-        logger.error("call_pipeline_failed", extra={"call_id": str(call_id)})
+        # The kind of failure only; never its message, which may carry what was said.
+        logger.error(
+            "call_pipeline_failed",
+            extra={
+                "call_id": str(call_id),
+                "error_type": type(error).__name__,
+                "error_code": getattr(error, "code", None),
+            },
+        )
     finally:
         for model in owned:
             with suppress(Exception):

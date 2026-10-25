@@ -2,12 +2,11 @@
 possible. Everything runs against stand-ins; no speech service is called."""
 
 import asyncio
-import base64
 import json
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs
 from uuid import uuid4
 
 import pytest
@@ -23,8 +22,6 @@ from app.voice.receptionist import CallReceptionist
 from app.voice.stt.base import STTPermanentError, TranscriptionResult
 from app.voice.stt.deepgram import DeepgramSTTProvider
 from app.voice.stt.flux import FluxLiveStream
-from app.voice.tts.base import TTSRateLimitError
-from app.voice.tts.elevenlabs_stream import ElevenLabsSocket
 from tests.voice_sim import Line, SilentSTT, TimedTTS
 
 SENTENCES = (
@@ -187,6 +184,25 @@ async def test_a_slow_lookup_gets_one_short_filler_that_is_not_remembered(monkey
 
 
 @pytest.mark.asyncio
+async def test_a_speech_failure_does_not_end_the_call(monkeypatch: Any) -> None:
+    monkeypatch.setattr("app.voice.receptionist.record_turn", AsyncMock())
+    line, tts = Line(), TimedTTS(first_byte=0.0, fail_on="broken")
+    receptionist = receptionist_for(
+        ScriptedEngine([(0.05, Say("This sentence is broken.")), (0.0, Done("answered", ""))])
+    )
+    pipeline = await started_pipeline(line, tts)
+    receptionist.pipeline = pipeline
+    try:
+        # Before, the error escaped the reply and the call was dropped.
+        await receptionist.reply(TranscriptionResult("Hello?", True))
+        receptionist.engine = ScriptedEngine([(0.05, Say("Sorry, how can I help?"))])  # type: ignore[assignment]
+        await receptionist.reply(TranscriptionResult("Hello?", True))
+    finally:
+        await pipeline.close()
+    assert receptionist.state.transcript_turns[-1].text == "Sorry, how can I help?"
+
+
+@pytest.mark.asyncio
 async def test_a_quick_lookup_gets_no_filler() -> None:
     line, tts = Line(), TimedTTS(first_byte=0.0)
     receptionist = receptionist_for(
@@ -296,86 +312,3 @@ def test_flux_query_follows_the_clinic_languages_and_names() -> None:
         query(DeepgramSTTProvider(key, model="flux", language="gu"))
     path, nova = query(DeepgramSTTProvider(key, model="nova-3", language="gu", keyterms=("Lotus",)))
     assert path == "/v1/listen" and nova["endpointing"] == ["500"] and nova["keyterm"] == ["Lotus"]
-
-
-# --- ElevenLabs socket -----------------------------------------------------------
-
-
-class ElevenLabsServer:
-    """Answers each flushed context with two audio chunks and a final message."""
-
-    def __init__(self, *, fail: str | None = None, hold: bool = False) -> None:
-        self.fail = fail
-        self.hold = hold
-        self.url = ""
-        self.socket = FakeSocket()
-        original = self.socket.send
-
-        async def send(message: str | bytes) -> None:
-            await original(message)
-            data = json.loads(message)
-            if not data.get("flush") or self.hold:
-                return
-            context = data["context_id"]
-            if self.fail:
-                self.socket.incoming.put_nowait(json.dumps({"error": self.fail}))
-                return
-            for chunk in (b"\x01" * 160, b"\x02" * 80):
-                self.socket.incoming.put_nowait(
-                    json.dumps({"audio": base64.b64encode(chunk).decode(), "contextId": context})
-                )
-            self.socket.incoming.put_nowait(json.dumps({"isFinal": True, "contextId": context}))
-
-        self.socket.send = send  # type: ignore[method-assign]
-
-    async def connect(self, url: str, **_: Any) -> FakeSocket:
-        self.url = url
-        return self.socket
-
-
-def eleven(server: ElevenLabsServer) -> ElevenLabsSocket:
-    return ElevenLabsSocket(
-        api_key="el",
-        voice_id="voice1234567890abcdef",
-        model_id="eleven_flash_v2_5",
-        language_code="hi",
-        voice_settings={"stability": 0.5},
-        timeout_seconds=1,
-        connector=server.connect,
-    )
-
-
-@pytest.mark.asyncio
-async def test_elevenlabs_socket_streams_each_sentence_as_ulaw() -> None:
-    server = ElevenLabsServer()
-    socket = eleven(server)
-    first = b"".join([chunk async for chunk in socket.speak("Hello there.")])
-    second = b"".join([chunk async for chunk in socket.speak("How can I help?")])
-    await socket.close()
-    assert first == second == b"\x01" * 160 + b"\x02" * 80
-    params = parse_qs(urlsplit(server.url).query)
-    assert params["output_format"] == ["ulaw_8000"] and params["model_id"] == ["eleven_flash_v2_5"]
-    assert params["language_code"] == ["hi"] and params["auto_mode"] == ["true"]
-    texts = [json.loads(item) for item in server.socket.sent]
-    assert {"text": "Hello there. ", "context_id": texts[1]["context_id"], "flush": True} in texts
-    assert texts[-1] == {"close_socket": True}
-
-
-@pytest.mark.asyncio
-async def test_elevenlabs_context_is_closed_when_the_caller_talks_over_it() -> None:
-    server = ElevenLabsServer()
-    socket = eleven(server)
-    speech = socket.speak("This sentence is cut short.")
-    assert await anext(speech)
-    await speech.aclose()
-    sent = [json.loads(item) for item in server.socket.sent]
-    assert sent[-1].get("close_context") is True
-    await socket.close()
-
-
-@pytest.mark.asyncio
-async def test_elevenlabs_errors_reach_the_sentence() -> None:
-    socket = eleven(ElevenLabsServer(fail="Too many concurrent requests (rate limit)"))
-    with pytest.raises(TTSRateLimitError):
-        _ = [chunk async for chunk in socket.speak("Hello.")]
-    await socket.close()

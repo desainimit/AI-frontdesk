@@ -8,32 +8,37 @@ from time import monotonic
 from typing import Any
 
 from app.voice.stt.base import STTStream, TranscriptionResult
+from app.voice.tts.base import TTSTimeoutError
 
 
 class TimedTTS:
-    """µ-law speech that starts after `first_byte` seconds, like a real service."""
+    """Speech (PCM16, 8 kHz) that starts after `first_byte` seconds, like a real service."""
 
     name = "timed"
 
-    def __init__(self, *, first_byte: float = 0.2, seconds_per_char: float = 0.02) -> None:
+    def __init__(
+        self,
+        *,
+        first_byte: float = 0.2,
+        seconds_per_char: float = 0.02,
+        fail_on: str | None = None,
+    ) -> None:
         self.first_byte = first_byte
         self.seconds_per_char = seconds_per_char
+        # Text whose synthesis fails, as a provider outage would.
+        self.fail_on = fail_on
         self.requests: list[str] = []
-
-    async def synthesize_ulaw(
-        self, text: str, voice_id: str | None = None, *, language: str | None = None
-    ) -> AsyncIterator[bytes]:
-        self.requests.append(text)
-        await asyncio.sleep(self.first_byte)
-        frames = max(1, int(len(text) * self.seconds_per_char / 0.02))
-        for _ in range(frames):
-            yield b"\xff" * 160
 
     async def synthesize(
         self, text: str, voice_id: str | None = None, *, language: str | None = None
     ) -> AsyncIterator[bytes]:
-        raise AssertionError("µ-law is used directly")
-        yield b""  # pragma: no cover
+        self.requests.append(text)
+        await asyncio.sleep(self.first_byte)
+        if self.fail_on is not None and self.fail_on in text:
+            raise TTSTimeoutError("Speech service timed out")
+        frames = max(1, int(len(text) * self.seconds_per_char / 0.02))
+        for _ in range(frames):
+            yield bytes(320)
 
     async def health(self) -> bool:
         return True
