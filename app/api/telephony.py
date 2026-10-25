@@ -589,11 +589,10 @@ async def resolve_call_providers(
 async def caller_name(
     receptionist: CallReceptionist, identity: ContactIdentity, history: CallerHistory
 ) -> str | None:
-    """The first name to greet a caller by: only when the clinic trusts a matching number
-    and remembers callers. Never holds the greeting up for long."""
+    """The first name to greet a returning caller by, when their number belongs to one
+    patient and the clinic remembers callers. Never holds the greeting up for long."""
     session, state = receptionist.session, receptionist.state
-    privacy = session.configuration.privacy
-    if not (session.contact and privacy.known_number_can_manage and privacy.remember_callers):
+    if not (session.contact and session.configuration.privacy.remember_callers):
         return None
     try:
         async with asyncio.timeout(1.5):
@@ -603,7 +602,8 @@ async def caller_name(
     except (TimeoutError, SQLAlchemyError, ApplicationError):
         logger.warning("caller_name_unavailable", extra={"call_id": str(session.conversation_id)})
         return None
-    return name.split()[0] if name and name.split() else None
+    state.caller_name = name or ""
+    return name
 
 
 def needs_call_back(

@@ -250,8 +250,9 @@ def build_tools(
         ),
         Tool(
             "register_patient",
-            "Add the person as a new patient under the number they are using. Only after a "
-            "tool answered identity_required and they told you their full name.",
+            "Add the person as a new patient under the number they are using, so the clinic "
+            "knows them next time. Once they have told you their name, when person_is_known "
+            "is false.",
             RegisterInput,
             flow.register,
         ),

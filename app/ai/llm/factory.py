@@ -16,6 +16,11 @@ LIGHT_MODELS = {"gemini": "gemini-3.5-flash-lite", "openrouter": "google/gemini-
 # On a call every second of thinking is a second of silence, so voice turns think as
 # little as the model allows and go to the quickest endpoint.
 VOICE_REASONING = "minimal"
+# Replies on a call come from the light model too. Measured on the real call prompt
+# (2026-10-26): Flash still thought ~250 tokens at "minimal" and took 4.6 s to its
+# first output; Flash-Lite thought none and spoke in 1.5 to 2 s, in every language the
+# clinic offers, for a third of the price. Text conversations keep the main model.
+VOICE_MODELS = LIGHT_MODELS
 
 
 def _provider(
@@ -51,7 +56,10 @@ def build_llm_provider(
     settings: Settings, *, light: bool = False, voice: bool = False
 ) -> LLMProvider:
     """The platform's own model account, as a platform administrator configured it."""
-    model = LIGHT_MODELS[settings.llm_provider] if light else settings.llm_model
+    if light or voice:
+        model = (VOICE_MODELS if voice else LIGHT_MODELS)[settings.llm_provider]
+    else:
+        model = settings.llm_model
     return _provider(settings.llm_provider, settings.platform_llm_key, model, voice=voice)
 
 
@@ -64,5 +72,8 @@ def llm_from_connection(
     voice: bool = False,
 ) -> LLMProvider:
     """One tenant's own model connection."""
-    model = LIGHT_MODELS[provider] if light else str(config["model"])
+    if light or voice:
+        model = (VOICE_MODELS if voice else LIGHT_MODELS)[provider]
+    else:
+        model = str(config["model"])
     return _provider(provider, api_key, model, config.get("thinking_level", "low"), voice=voice)

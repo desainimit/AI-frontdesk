@@ -76,6 +76,11 @@ async def summarize_earlier(
     )
 
 
+def first_name(name: str) -> str | None:
+    words = name.split()
+    return words[0] if words else None
+
+
 def records_trusted(session: Session, state: ConversationState) -> bool:
     """Whether the person's own records may be talked about.
 
@@ -97,17 +102,22 @@ class CallerHistory:
         self._sessions = sessions
 
     async def name(self, session: Session, state: ConversationState) -> str | None:
-        """The trusted caller's name on file, to greet them by."""
+        """The first name on file for the patient this number belongs to, to greet them by.
+
+        Only the name: unlike their records it says nothing about their care, and a
+        receptionist who knows the number says "Hi Nimit" too. Off with remember_callers.
+        """
         patient_id = state.identity_state.patient_id
-        if patient_id is None or not records_trusted(session, state):
+        if patient_id is None or not session.configuration.privacy.remember_callers:
             return None
         async with self._sessions.begin() as database:
             await enter_tenant_scope(database, session.request(state))
-            return await database.scalar(
+            name = await database.scalar(
                 select(Patient.display_name).where(
                     Patient.tenant_id == session.tenant_id, Patient.id == patient_id
                 )
             )
+        return first_name(name or "")
 
     async def load(self, session: Session, state: ConversationState) -> str:
         """A few lines about this person's last calls and coming appointments; empty

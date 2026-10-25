@@ -414,6 +414,8 @@ class ConversationState(BaseModel):
     recent_lookups: list[str] = Field(default_factory=list[str], max_length=3)
     # Earlier calls and coming appointments of a trusted caller; kept for this call only.
     caller_history: str | None = Field(default=None, max_length=4000, exclude=True)
+    # The first name to call them by: on file, or as they gave it. "" when none.
+    caller_name: str | None = Field(default=None, max_length=120, exclude=True)
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

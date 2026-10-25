@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.ai.identity import ContactIdentity
+from app.ai.memory import first_name
 from app.ai.session import AssistantAuthorizationError, Session
 from app.ai.speech_time import spoken_when
 from app.ai.wording import spoken
@@ -164,6 +165,7 @@ class AppointmentFlow:
         if not await self.identity.register(session, state, command.full_name):
             # No number to file the person under, such as a withheld caller ID.
             return Outcome(status="cannot_register", next="offer_to_take_a_message")
+        state.caller_name = first_name(command.full_name) or ""
         return Outcome(status="registered")
 
     async def slots(
@@ -175,8 +177,15 @@ class AppointmentFlow:
         slots = await self.availability.slots(
             session.request(state), command.provider_id, query, command.service_id
         )
+        timezone = session.configuration.clinic.timezone
         items = [
-            dict(provider_id=str(command.provider_id), **slot.model_dump(mode="json"))
+            {
+                "provider_id": str(command.provider_id),
+                # Said for the model, which got the clock wrong converting it itself
+                # (6:15 pm as "पौने छह", a quarter to six).
+                "when": said(session, slot.starts_at, timezone, state.language),
+                **slot.model_dump(mode="json"),
+            }
             for slot in slots[:20]
         ]
         state.active_flow_state.offered_slots = items

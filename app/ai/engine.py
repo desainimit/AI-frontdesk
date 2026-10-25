@@ -30,6 +30,7 @@ from app.ai.llm.base import (
     ToolResult,
     Turn,
     Usage,
+    UserTurn,
 )
 from app.ai.memory import CallerHistory, records_trusted
 from app.ai.prompts import history, system_prompt
@@ -40,6 +41,7 @@ from app.ai.tools.registry import ToolRegistry, ToolValidationError
 from app.ai.wording import spoken
 from app.conversation.confirmation import confirmation_answer
 from app.conversation.manager import ConversationStateManager
+from app.conversation.promises import promises_a_lookup
 from app.conversation.redaction import redact_verification_secrets
 from app.conversation.state import ConversationState, SafetyDecision
 from app.core.errors import ApplicationError
@@ -57,6 +59,11 @@ TURN_SECONDS = 25.0
 # How long the first words wait for the model's safety reading of what was said. None:
 # the reply starts at once, and an alarm raised later cuts in (see `Say.urgent`).
 SAFETY_WAIT_SECONDS = 0.0
+# Not the caller: the server reminding the model of a lookup it said it would make.
+KEEP_PROMISE = (
+    "(Server note, not the caller.) You told the caller you would check. Make that "
+    "lookup now with a tool, without saying anything first."
+)
 
 Outcome = Literal[
     "answered", "confirmation", "safety", "handoff", "unavailable", "blocked", "interrupted"
@@ -219,6 +226,16 @@ class Engine:
                     logger.warning("assistant_recognition_failed")
             if (
                 self.history is not None
+                and state.caller_name is None
+                and state.identity_state.is_verified
+            ):
+                try:
+                    state.caller_name = await self.history.name(session, state) or ""
+                except (ApplicationError, SQLAlchemyError):
+                    logger.warning("assistant_name_unavailable")
+                    state.caller_name = ""
+            if (
+                self.history is not None
                 and state.caller_history is None
                 and records_trusted(session, state)
             ):
@@ -240,25 +257,34 @@ class Engine:
             turns: list[Turn] = history(state, words)
             specs = self.registry.specs(session)
             system = system_prompt(session, state)
+            reminded = False
             while steps < MAX_STEPS:
                 if perf_counter() - started > TURN_SECONDS:
                     raise TimeoutError
                 steps += 1
                 splitter = SentenceSplitter()
                 completed: Completed | None = None
-                async for item in self.model.stream(ChatRequest(system, tuple(turns), specs)):
-                    if isinstance(item, TextDelta):
-                        for sentence in splitter.feed(item.text):
-                            semantic, alarm = await self._alarm(semantic, started)
-                            if alarm is not None:
-                                yield say(alarm, urgent=bool(said))
-                                if (event := handoff()) is not None:
-                                    yield event
-                                yield done("safety")
-                                return
-                            yield say(sentence)
-                    else:
-                        completed = item
+                try:
+                    async for item in self.model.stream(ChatRequest(system, tuple(turns), specs)):
+                        if isinstance(item, TextDelta):
+                            for sentence in splitter.feed(item.text):
+                                semantic, alarm = await self._alarm(semantic, started)
+                                if alarm is not None:
+                                    yield say(alarm, urgent=bool(said))
+                                    if (event := handoff()) is not None:
+                                        yield event
+                                    yield done("safety")
+                                    return
+                                yield say(sentence)
+                        else:
+                            completed = item
+                except LLMInvalidResponseError:
+                    if not reminded:
+                        raise
+                    # Reminded of a lookup, it had nothing to look up: what it
+                    # already said stands.
+                    yield done("answered")
+                    return
                 if completed is None:
                     raise LLMInvalidResponseError("LLM returned no usable response")
                 usage = Usage(
@@ -277,6 +303,20 @@ class Engine:
                 if rest:
                     yield say(rest)
                 calls = completed.turn.tool_calls
+                if (
+                    not calls
+                    and not tools
+                    and not reminded
+                    and steps < MAX_STEPS
+                    and promises_a_lookup(completed.turn.text)
+                    # A question back ("...may I have your name?") waits for the caller.
+                    and not completed.turn.text.rstrip().endswith("?")
+                ):
+                    # It said "let me check" and stopped: the caller would hear
+                    # silence. Have it make the lookup it promised.
+                    reminded = True
+                    turns += [completed.turn, UserTurn(KEEP_PROMISE)]
+                    continue
                 if not calls:
                     yield done("answered")
                     return
