@@ -2,7 +2,6 @@
 
 - Earlier in this call: once a call runs past what the model is shown word for word,
   the quicker model keeps a short running summary of the older part, in the background.
-- At the end of the call: the same model writes the call summary staff read.
 - Earlier calls: a caller whose identity is trusted gets a few lines about their last
   calls and their coming appointments, so they are not asked everything again.
 """
@@ -71,17 +70,6 @@ async def summarize_earlier(
         "details they gave (names, dates, times, numbers), what was offered, agreed or "
         "promised. Under 120 words.",
         {"summary_so_far": previous or "", "more_of_the_call": _transcript(turns)},
-    )
-
-
-async def summarize_call(llm: LLMProvider, turns: list[TranscriptTurn]) -> str:
-    """The summary staff read on the call page, and the next call is reminded of."""
-    return await _summary(
-        llm,
-        "Summarize this phone call to a clinic for the clinic's staff. Say why the person "
-        "called, what was done (looked up, booked, moved, cancelled, passed to the team) and "
-        "anything still open that staff should follow up. Under 80 words.",
-        {"call": _transcript(turns)},
     )
 
 

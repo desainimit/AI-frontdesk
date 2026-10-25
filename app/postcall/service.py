@@ -11,10 +11,16 @@ from app.audit.repository import AuditRepository
 from app.audit.service import AuditService
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
+from app.calls.models import Call
 from app.core.database.rls import set_tenant_scope, verify_runtime_role
 from app.core.errors import NotFoundError
-from app.postcall.models import PostCallReport
-from app.postcall.schemas import DailyCallAnalytics, PostCallReportView
+from app.postcall.models import CallTranscript, PostCallReport
+from app.postcall.schemas import (
+    DailyCallAnalytics,
+    PostCallInput,
+    PostCallReportView,
+    TranscriptLine,
+)
 
 
 class PostCallQueryService:
@@ -45,6 +51,31 @@ class PostCallQueryService:
                 context, AuditAction.POST_CALL_REPORT_VIEWED, "post_call_report", report.id
             )
             return PostCallReportView.model_validate(report)
+
+    async def transcript(self, context: RequestContext, call_id: UUID) -> list[TranscriptLine]:
+        """What was said on a finished call, turn by turn. Empty once the clinic's
+        retention period has removed it, or when nothing was said."""
+        require_permission(context, Permission.CALL_READ)
+        async with self.sessions.begin() as session:
+            await self._scope(session, context)
+            known = await session.scalar(
+                select(Call.id).where(Call.tenant_id == context.tenant_id, Call.id == call_id)
+            )
+            if known is None:
+                raise NotFoundError()
+            row = await session.scalar(
+                select(CallTranscript).where(
+                    CallTranscript.tenant_id == context.tenant_id,
+                    CallTranscript.call_id == call_id,
+                )
+            )
+            if row is None:
+                return []
+            AuditService(AuditRepository(session, context)).record(
+                context, AuditAction.CALL_TRANSCRIPT_VIEWED, "call_transcript", row.id
+            )
+            snapshot = PostCallInput.model_validate(row.snapshot)
+            return [TranscriptLine(speaker=turn.speaker, text=turn.text) for turn in snapshot.turns]
 
     async def analytics(
         self, context: RequestContext, start: date, end: date

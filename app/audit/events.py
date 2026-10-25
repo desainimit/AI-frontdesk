@@ -8,6 +8,7 @@ class AuditAction(StrEnum):
     HUMAN_TRANSFER_REDIRECTED = "human_transfer_redirected"
     HUMAN_TRANSFER_FAILED = "human_transfer_failed"
     POST_CALL_REPORT_VIEWED = "post_call_report_viewed"
+    CALL_TRANSCRIPT_VIEWED = "call_transcript_viewed"
     FOLLOW_UP_ACKNOWLEDGED = "follow_up_acknowledged"
     DOCUMENT_UPLOADED = "document_uploaded"
     DOCUMENT_APPROVED = "document_approved"

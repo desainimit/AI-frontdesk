@@ -628,7 +628,6 @@ async def run_media(
     received = sent = 0
     resuming = False
     configuration: ClinicConfiguration | None = None
-    call_summary: str | None = None
     status, reason = "disconnected", "socket_disconnected"
     try:
         async with asyncio.timeout(10):
@@ -827,8 +826,6 @@ async def run_media(
             received = pipeline.received_frames
             sent = pipeline.sent_frames
             await pipeline.close()
-            # Written while the model connection is still open; closed below.
-            call_summary = await receptionist.call_summary()
     except WebSocketDisconnect:
         pass
     except asyncio.CancelledError:
@@ -867,7 +864,7 @@ async def run_media(
             post_call_input = None
             if conversation_state is not None:
                 try:
-                    post_call_input = PostCallInput.capture(conversation_state, call_summary)
+                    post_call_input = PostCallInput.capture(conversation_state)
                 except ValueError:
                     logger.error("post_call_snapshot_rejected", extra={"call_id": str(call_id)})
             try:
@@ -899,9 +896,7 @@ async def run_media(
                             tenant_id,
                             source="call",
                             subject="Call back: rang while the clinic was closed",
-                            description=(
-                                call_summary or conversation_state.last_caller_utterance or ""
-                            )[:500],
+                            description=(conversation_state.last_caller_utterance or "")[:500],
                             priority="normal",
                             contact=caller_number,
                             call_id=call_id,

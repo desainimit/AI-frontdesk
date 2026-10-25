@@ -45,10 +45,10 @@ def test_a_long_call_is_kept_and_only_the_last_80_turns_are_saved() -> None:
     for number in range(150):
         state.append_transcript_turn("caller" if number % 2 else "agent", f"Turn {number}")
     assert len(state.transcript_turns) == 150 and state.turns_appended == 150
-    snapshot = PostCallInput.capture(state, "Asked to move Monday's visit; moved to Tuesday.")
+    snapshot = PostCallInput.capture(state)
     assert len(snapshot.turns) == 80 and snapshot.turns[-1].text == "Turn 149"
-    analysis = analyze_post_call("completed", snapshot)
-    assert analysis.summary == "Asked to move Monday's visit; moved to Tuesday."
+    # No model writes a summary: the call is shown as its conversation.
+    assert analyze_post_call("completed", snapshot).turn_count == 80
 
 
 def test_lookups_are_remembered_briefly() -> None:
@@ -122,13 +122,3 @@ async def test_turns_out_of_view_are_summarized_in_the_background() -> None:
     payload = summarizer.requests[0].messages[-1].content
     assert "Turn 11" in payload and "Turn 12" not in payload
     assert "Asha wants Dr. Rao on Monday." in system_prompt(session_for(), state)
-
-
-@pytest.mark.asyncio
-async def test_the_call_summary_is_written_by_the_model_or_left_to_the_rules() -> None:
-    receptionist = receptionist_for(ScriptedEngine([]))
-    receptionist.state.append_transcript_turn("caller", "Can I move my visit?")
-    receptionist.state.append_transcript_turn("agent", "Sure, I've moved it to Tuesday.")
-    assert await receptionist.call_summary() is None
-    receptionist.summarizer = Summarizer()  # type: ignore[assignment]
-    assert await receptionist.call_summary() == "Asha wants Dr. Rao on Monday."

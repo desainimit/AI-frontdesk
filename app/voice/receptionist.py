@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.engine import Done, Engine, Event, Handoff, Say, Working
 from app.ai.llm.base import LLMProvider
-from app.ai.memory import summarize_call, summarize_earlier
+from app.ai.memory import summarize_earlier
 from app.ai.prompts import HISTORY_TURNS
 from app.ai.session import Session
 from app.ai.usage import record_turn
@@ -86,7 +86,7 @@ class CallReceptionist:
         self._unsaid: list[str] = []
         # The last turn was too unclear to answer and the caller was asked to repeat it.
         self._asked_again = False
-        # The quicker model: the running summary of a long call, and the call summary.
+        # The quicker model: the running summary of a long call.
         self.summarizer = summarizer
         self._summarizing: asyncio.Task[None] | None = None
         # The receptionist ended the call after saying goodbye.
@@ -303,21 +303,6 @@ class CallReceptionist:
             return
         self.state.earlier_summary = summary[:2000]
         self.state.summarized_through = through
-
-    async def call_summary(self) -> str | None:
-        """The summary staff read once the call is over, written by the quicker model."""
-        if self._summarizing is not None and not self._summarizing.done():
-            self._summarizing.cancel()
-        turns = self.state.transcript_turns[-80:]
-        if self.summarizer is None or len(turns) < 2:
-            return None
-        try:
-            async with asyncio.timeout(SUMMARY_SECONDS):
-                return await summarize_call(self.summarizer, turns)
-        except Exception:
-            # The rule-based summary is used instead.
-            logger.warning("call_summary_failed")
-            return None
 
     def _remember(
         self, items: list[tuple[Speech, bool]], finished: bool, stopped_at: float | None
