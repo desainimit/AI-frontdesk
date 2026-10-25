@@ -75,6 +75,8 @@ class Say:
 @dataclass(frozen=True)
 class Working:
     tool: str
+    # What the lookup is for (the doctor, the day), so the call can say so aloud.
+    arguments: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 @dataclass(frozen=True)
@@ -283,7 +285,7 @@ class Engine:
                 turns.append(completed.turn)
                 proposals = [call for call in calls if call.name in MUTATION_TOOLS]
                 for call in calls:
-                    yield Working(call.name)
+                    yield Working(call.name, call.arguments or {})
                     result: dict[str, Any]
                     try:
                         if proposals and (len(calls) > 1):

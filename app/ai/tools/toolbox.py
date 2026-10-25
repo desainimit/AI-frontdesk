@@ -208,7 +208,7 @@ def build_tools(
             # A question to the caller is still open; it is answered first.
             return Outcome(status="not_now", next="answer_the_open_question_first")
         state.end_requested = True
-        return Outcome(status="ending", next="say_a_short_warm_goodbye")
+        return Outcome(status="ending", next="say_a_warm_goodbye_with_a_kind_wish")
 
     def propose(action: Any) -> Any:
         async def handler(

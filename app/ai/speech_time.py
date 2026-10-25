@@ -30,15 +30,8 @@ _GU_HOURS = ("બાર", "એક", "બે", "ત્રણ", "ચાર", "પ�
 _WEEKDAYS = {
     "en": ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
     "hi": ("सोमवार", "मंगलवार", "बुधवार", "गुरुवार", "शुक्रवार", "शनिवार", "रविवार"),
-    "hinglish": (
-        "Somvaar",
-        "Mangalvaar",
-        "Budhvaar",
-        "Guruvaar",
-        "Shukravaar",
-        "Shanivaar",
-        "Ravivaar",
-    ),
+    # Hinglish speakers say "Friday ko", not "Shukravaar ko".
+    "hinglish": ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
     "gu": ("સોમવાર", "મંગળવાર", "બુધવાર", "ગુરુવાર", "શુક્રવાર", "શનિવાર", "રવિવાર"),
     "es": ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"),
     "fr": ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"),
@@ -255,6 +248,30 @@ _GU_WORDS = {
     "two_half": "અઢી",
     "minutes": "{} વાગીને {} મિનિટે",
 }
+
+
+def spoken_day(instant: datetime, timezone: str, language: str, now: datetime | None = None) -> str:
+    """Just the day, as it fits mid-sentence: "on Friday", "शुक्रवार को", "કાલે"."""
+    zone = ZoneInfo(timezone)
+    local = instant.astimezone(zone)
+    today = (now or datetime.now(zone)).astimezone(zone).date()
+    code = normalize_language(language)
+    if code not in _WEEKDAYS:
+        code = "en"
+    day = _day(local, today, code)
+    if (local.date() - today).days < 2:
+        return day
+    if code == "hi":
+        return f"{day} को"
+    if code == "hinglish":
+        return f"{day} ko"
+    if code == "gu":
+        return f"{_WEEKDAYS['gu'][local.weekday()]}ે"
+    if code == "de" and not day.startswith("am "):
+        return f"am {day}"
+    if code == "pt":
+        return f"para {day}"
+    return day
 
 
 def spoken_when(

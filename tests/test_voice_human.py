@@ -194,3 +194,26 @@ async def test_calls_think_little_and_take_the_quickest_endpoint() -> None:
     await client.aclose()
     assert sent[0]["provider"]["sort"] == "price" and sent[0]["reasoning"]["effort"] == "low"
     assert sent[1]["provider"]["sort"] == "latency" and sent[1]["reasoning"]["effort"] == "minimal"
+
+
+def test_no_bare_one_second_and_goodbyes_carry_a_wish() -> None:
+    from app.ai.wording import FILLERS, MESSAGES
+
+    waits = (
+        "second",
+        "sec.",
+        "minute",
+        "सेकंड",
+        "मिनट",
+        "સેકન્ડ",
+        "મિનિટ",
+        "segundo",
+        "seconde",
+        "sekunde",
+        "moment",
+    )
+    for language, lines in FILLERS.items():
+        for line in lines:
+            assert not any(word in line.lower() for word in waits), (language, line)
+    assert "lovely day" in MESSAGES["en"]["goodbye_silent"]
+    assert "दिन शुभ हो" in MESSAGES["hi"]["goodbye_silent"]

@@ -31,6 +31,7 @@ from app.safety.messages import transfer_failed_message
 from app.safety.transfer import TransferError, hang_up, transfer_call
 from app.tickets.service import open_ticket
 from app.voice.metrics import VoiceMetrics
+from app.voice.narration import narration
 from app.voice.pipeline import Speech, VoicePipeline
 from app.voice.stt.base import TranscriptionResult
 from app.voice.tts.base import TTSError
@@ -38,10 +39,9 @@ from app.voice.twilio import TwilioCredentials
 
 logger = logging.getLogger(__name__)
 
-# Silence longer than this before the first words is filled with a short "let me see".
-FILLER_AFTER_SECONDS = 1.5
-# A lookup that has not answered by now gets the same, unless something was said.
-LOOKUP_FILLER_AFTER_SECONDS = 0.8
+# A pause before answering is normal; only one longer than this gets a soft
+# acknowledgement. A lookup is narrated as it starts instead (see app.voice.narration).
+FILLER_AFTER_SECONDS = 3.0
 # Recognition this unsure of what was said is asked for again, not answered.
 UNCLEAR_BELOW = 0.5
 # Turns out of the model's view are summarized in batches of this many.
@@ -84,6 +84,8 @@ class CallReceptionist:
         # Set once the call has been put through to a person.
         self.transferred = False
         self._fillers = 0
+        # Lookup narrations and fillers already said on this call; none is said twice.
+        self._said_lines: set[str] = set()
         # What a noise interrupted, said once the caller turns out to have said nothing.
         self._unsaid: list[str] = []
         # The last turn was too unclear to answer and the caller was asked to repeat it.
@@ -197,7 +199,10 @@ class CallReceptionist:
 
         async def say_filler() -> None:
             self._fillers += 1
-            await enqueue(filler(self.state.language, self._fillers), record=False, cache=True)
+            line = filler(self.state.language, self._fillers)
+            if line not in self._said_lines:
+                self._said_lines.add(line)
+                await enqueue(line, record=False, cache=True)
 
         # The reply is written in the background so the first sentence can be spoken
         # while the next is still on its way.
@@ -208,6 +213,7 @@ class CallReceptionist:
         # When a short "let me check" fills the silence, if nothing has been said by then.
         # At most one per reply.
         fill_at: float | None = monotonic() + FILLER_AFTER_SECONDS if fillers else None
+        narrated = False
         try:
             while True:
                 try:
@@ -238,9 +244,19 @@ class CallReceptionist:
                         continue
                     await enqueue(event.text)
                 elif isinstance(event, Working):
-                    if fill_at is not None:
-                        # Most lookups answer within a moment; only a slow one is filled.
-                        fill_at = min(fill_at, monotonic() + LOOKUP_FILLER_AFTER_SECONDS)
+                    if not narrated and not any(record for _, record in items):
+                        # Nothing said yet: say what is being looked up, as a person would.
+                        line = narration(
+                            event.tool,
+                            event.arguments,
+                            self.state.language,
+                            directory=self.session.directory,
+                            timezone=self.session.configuration.clinic.timezone,
+                            used=self._said_lines,
+                        )
+                        if line is not None:
+                            narrated, fill_at = True, None
+                            await enqueue(line, record=False)
                 elif isinstance(event, Handoff):
                     handoff = event
                 elif isinstance(event, Done):

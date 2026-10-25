@@ -4,10 +4,12 @@ possible. Everything runs against stand-ins; no speech service is called."""
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import parse_qs
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import SecretStr
@@ -160,27 +162,40 @@ async def test_reply_plays_without_gaps_and_remembers_what_was_said() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_slow_lookup_gets_one_short_filler_that_is_not_remembered(monkeypatch: Any) -> None:
+async def test_a_lookup_is_said_aloud_like_a_person_thinking(monkeypatch: Any) -> None:
     monkeypatch.setattr("app.voice.receptionist.record_turn", AsyncMock())
     line, tts = Line(), TimedTTS(first_byte=0.0)
+    friday = (datetime.now(ZoneInfo("Asia/Kolkata")) + timedelta(days=4)).isoformat()
+    lookup = {"provider_id": "p1", "starts_at": friday}
     receptionist = receptionist_for(
         ScriptedEngine(
             [
-                (0.05, Working("check_availability")),
-                (1.2, Say("Monday at ten thirty is free.")),
+                (0.05, Working("check_availability", lookup)),
+                (0.6, Say("Monday at ten thirty is free.")),
                 (0.0, Done("answered", "Monday at ten thirty is free.")),
             ]
         )
     )
+    receptionist.session = MagicMock(
+        directory={"doctors": [{"id": "p1", "name": "Dr. Rao"}]},
+        configuration=MagicMock(clinic=MagicMock(timezone="Asia/Kolkata")),
+    )
     pipeline = await started_pipeline(line, tts)
     receptionist.pipeline = pipeline
     try:
-        await receptionist.reply(TranscriptionResult("Is Monday free?", True))
+        await receptionist.reply(TranscriptionResult("Is Friday free?", True))
+        # The same lookup again: it is said differently the second time.
+        receptionist.engine = ScriptedEngine(  # type: ignore[assignment]
+            [(0.05, Working("check_availability", lookup)), (0.3, Say("Ten is free too."))]
+        )
+        await receptionist.reply(TranscriptionResult("And Friday later?", True))
     finally:
         await pipeline.close()
-    assert len(tts.requests) == 2 and tts.requests[1] == "Monday at ten thirty is free."
-    assert tts.requests[0] != tts.requests[1]
-    assert receptionist.state.transcript_turns[-1].text == "Monday at ten thirty is free."
+    first, _, second, _ = tts.requests
+    assert first.startswith("Let me see what Doctor Rao has on ")  # said as it starts
+    assert second != first and "one sec" not in (first + second).lower()
+    # Thinking aloud is not part of the reply that is remembered.
+    assert receptionist.state.transcript_turns[-1].text == "Ten is free too."
 
 
 @pytest.mark.asyncio
@@ -203,19 +218,16 @@ async def test_a_speech_failure_does_not_end_the_call(monkeypatch: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_quick_lookup_gets_no_filler() -> None:
+async def test_a_short_pause_before_answering_is_not_filled() -> None:
     line, tts = Line(), TimedTTS(first_byte=0.0)
-    receptionist = receptionist_for(
-        ScriptedEngine(
-            [(0.05, Working("list_services")), (0.3, Say("We do cleanings and fillings."))]
-        )
-    )
+    receptionist = receptionist_for(ScriptedEngine([(1.8, Say("We do cleanings and fillings."))]))
     pipeline = await started_pipeline(line, tts)
     receptionist.pipeline = pipeline
     try:
         await receptionist.reply(TranscriptionResult("What do you offer?", True))
     finally:
         await pipeline.close()
+    # Nearly two seconds of thinking is a normal pause: no "one second" before it.
     assert tts.requests == ["We do cleanings and fillings."]
 
 
