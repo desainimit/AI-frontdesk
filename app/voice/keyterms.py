@@ -1,11 +1,13 @@
-"""Names a caller is likely to say, so speech recognition hears them right.
+"""The clinic's doctors, services and locations, read once when a call starts.
 
-Clinic, provider, service and location names are unusual words that general speech
-models often get wrong ("Dr. Mehta" heard as "doctor matter"). Deepgram is told them
-at the start of the call.
+Two uses: speech recognition is told the names so it hears them right ("Dr. Mehta"
+heard as "doctor matter"), and the model is given the list with ids so it can check a
+doctor's diary at once instead of first looking up who works there.
 """
 
 import logging
+from dataclasses import dataclass, field
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -21,36 +23,72 @@ logger = logging.getLogger(__name__)
 
 MAX_TERMS = 100
 MAX_TERM_LENGTH = 60
+MAX_LISTED = 40
 
 
-async def call_keyterms(
+@dataclass(frozen=True)
+class ClinicDirectory:
+    clinic: str
+    providers: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    services: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    locations: list[str] = field(default_factory=list[str])
+
+    @property
+    def keyterms(self) -> tuple[str, ...]:
+        """Names a caller is likely to say, for speech recognition."""
+        names = [
+            self.clinic,
+            *(str(item["name"]) for item in self.providers),
+            *(str(item["name"]) for item in self.services),
+            *self.locations,
+        ]
+        clean = (" ".join(name.split()) for name in names if name)
+        unique = dict.fromkeys(name for name in clean if 1 < len(name) <= MAX_TERM_LENGTH)
+        return tuple(unique)[:MAX_TERMS]
+
+    @property
+    def for_model(self) -> dict[str, Any]:
+        """Doctors and services with their ids, so the model can book without a lookup."""
+        return {"doctors": self.providers, "services": self.services}
+
+
+async def clinic_directory(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: UUID,
     configuration: ClinicConfiguration,
-) -> tuple[str, ...]:
-    terms = [configuration.clinic.name]
+) -> ClinicDirectory:
     try:
         async with sessions.begin() as session:
             await set_tenant_scope(session, tenant_id)
-            providers = await session.scalars(
-                select(Provider.display_name)
+            providers = await session.execute(
+                select(Provider.id, Provider.display_name, Provider.specialty)
                 .where(Provider.tenant_id == tenant_id, Provider.is_active.is_(True))
-                .limit(40)
+                .order_by(Provider.display_name)
+                .limit(MAX_LISTED)
             )
-            terms.extend(providers)
-            services = await session.scalars(
-                select(Service.name)
+            services = await session.execute(
+                select(Service.id, Service.name, Service.duration_minutes)
                 .where(Service.tenant_id == tenant_id, Service.is_active.is_(True))
-                .limit(40)
+                .order_by(Service.name)
+                .limit(MAX_LISTED)
             )
-            terms.extend(services)
             locations = await session.scalars(
                 select(Location.name).where(Location.tenant_id == tenant_id).limit(10)
             )
-            terms.extend(locations)
+            return ClinicDirectory(
+                configuration.clinic.name,
+                [
+                    {"id": str(row.id), "name": row.display_name, "specialty": row.specialty or ""}
+                    for row in providers
+                ],
+                [
+                    {"id": str(row.id), "name": row.name, "minutes": row.duration_minutes}
+                    for row in services
+                ],
+                list(locations),
+            )
     except Exception:
-        # Optional: recognition still works without them, only less well on names.
-        logger.warning("call_keyterms_unavailable", extra={"tenant_id": str(tenant_id)})
-    clean = (" ".join(term.split()) for term in terms if term)
-    unique = dict.fromkeys(term for term in clean if 1 < len(term) <= MAX_TERM_LENGTH)
-    return tuple(unique)[:MAX_TERMS]
+        # Optional: the model can still look them up, and recognition still works,
+        # only less well on names.
+        logger.warning("clinic_directory_unavailable", extra={"tenant_id": str(tenant_id)})
+        return ClinicDirectory(configuration.clinic.name)

@@ -1,81 +1,341 @@
-"""Exact localized consent phrases; these do not detect the caller's language."""
+"""Whether a reply to "shall I book it?" is a yes, a no, or neither.
 
-import re
+People rarely answer with a bare "yes": they say "haan, kar do", "uh-huh, go ahead",
+"yes please, that works", or "हां कर दो, कोई बात नहीं" (where "नहीं" is part of "no
+problem", not a refusal). A reply counts as yes only when every word in it is a word
+of agreement or a filler around one; any refusal or change ("no", "मत करो", "change
+it", "another time") makes it a no; anything else ("yes but tomorrow") is neither,
+and the caller is asked again or the quicker model reads it. Extra content never
+authorizes a change by itself.
+"""
+
 import unicodedata
 
-from app.conversation.locales import base_language
+# Said as agreement although they contain a word of refusal.
+_AGREEMENT_IDIOMS = (
+    "कोई बात नहीं",
+    "कोई बात नही",
+    "कोई दिक्कत नहीं",
+    "कोई प्रॉब्लम नहीं",
+    "koi baat nahi",
+    "koi baat nahin",
+    "koi dikkat nahi",
+    "koi problem nahi",
+    "no problem",
+    "no worries",
+    "not a problem",
+    "why not",
+    "કોઈ વાંધો નહીં",
+    "કોઈ વાંધો નહિ",
+    "no hay problema",
+    "pas de problème",
+    "pas de souci",
+    "kein problem",
+    "sem problema",
+)
+_AGREE = {
+    # English
+    "yes",
+    "yeah",
+    "yep",
+    "yup",
+    "ya",
+    "yah",
+    "sure",
+    "ok",
+    "okay",
+    "alright",
+    "right",
+    "correct",
+    "perfect",
+    "great",
+    "fine",
+    "good",
+    "absolutely",
+    "definitely",
+    "certainly",
+    "proceed",
+    "confirm",
+    "confirmed",
+    "done",
+    "uh-huh",
+    "uhhuh",
+    "mhm",
+    "mm-hmm",
+    "mmhmm",
+    "works",
+    "sounds",
+    "go",
+    "ahead",
+    # Hindi and Hinglish
+    "हाँ",
+    "हां",
+    "हा",
+    "जी",
+    "जीहाँ",
+    "बिल्कुल",
+    "बिलकुल",
+    "ज़रूर",
+    "जरूर",
+    "ठीक",
+    "चलेगा",
+    "करो",
+    "कीजिए",
+    "कीजिये",
+    "करिए",
+    "कर",
+    "दो",
+    "दीजिए",
+    "दीजिये",
+    "बुक",
+    "हम्म",
+    "haan",
+    "han",
+    "haa",
+    "ha",
+    "haanji",
+    "ji",
+    "jee",
+    "bilkul",
+    "zaroor",
+    "jaroor",
+    "theek",
+    "thik",
+    "chalega",
+    "karo",
+    "kar",
+    "kardo",
+    "do",
+    "dijiye",
+    "dijie",
+    "kijiye",
+    "hmm",
+    # Gujarati
+    "હા",
+    "હાં",
+    "જી",
+    "ચાલશે",
+    "બરાબર",
+    "કરો",
+    "કરી",
+    "દો",
+    "દેજો",
+    "બુક",
+    "પુષ્ટિ",
+    "કરું",
+    "છું",
+    # Spanish, French, German, Portuguese
+    "sí",
+    "si",
+    "claro",
+    "vale",
+    "perfecto",
+    "confirmo",
+    "confirmar",
+    "oui",
+    "daccord",
+    "parfait",
+    "confirme",
+    "confirmez",
+    "ja",
+    "klar",
+    "genau",
+    "gerne",
+    "bestätigen",
+    "einverstanden",
+    "sim",
+    "pode",
+    "certo",
+}
+# Words that may stand around a yes without changing it.
+_FILLER = {
+    "hi",
+    "hello",
+    "sir",
+    "madam",
+    "maam",
+    "please",
+    "plz",
+    "it",
+    "that",
+    "this",
+    "for",
+    "me",
+    "my",
+    "the",
+    "a",
+    "so",
+    "then",
+    "just",
+    "now",
+    "book",
+    "booking",
+    "appointment",
+    "thanks",
+    "thank",
+    "you",
+    "is",
+    "be",
+    "will",
+    "would",
+    "oh",
+    "um",
+    "uh",
+    "well",
+    "वह",
+    "वो",
+    "मुझे",
+    "मेरा",
+    "मेरी",
+    "चाहिए",
+    "अपॉइंटमेंट",
+    "बुकिंग",
+    "है",
+    "हैं",
+    "ना",
+    "शुक्रिया",
+    "धन्यवाद",
+    "तो",
+    "अभी",
+    "वाला",
+    "वाली",
+    "wo",
+    "woh",
+    "vo",
+    "mujhe",
+    "mera",
+    "meri",
+    "chahiye",
+    "hai",
+    "na",
+    "toh",
+    "to",
+    "abhi",
+    "wala",
+    "wali",
+    "shukriya",
+    "dhanyavaad",
+    "dhanyawad",
+    "મારી",
+    "મારે",
+    "મને",
+    "છે",
+    "તો",
+    "આભાર",
+    "por",
+    "favor",
+    "gracias",
+    "la",
+    "cita",
+    "merci",
+    "sil",
+    "vous",
+    "plaît",
+    "plait",
+    "bitte",
+    "danke",
+    "obrigado",
+    "obrigada",
+}
+# A refusal or a change, in any language a caller may mix in.
+_REFUSE = {
+    "no",
+    "nope",
+    "nah",
+    "not",
+    "dont",
+    "don't",
+    "never",
+    "cancel",
+    "stop",
+    "wait",
+    "hold",
+    "change",
+    "different",
+    "another",
+    "other",
+    "later",
+    "instead",
+    "नहीं",
+    "नही",
+    "मत",
+    "रुको",
+    "रुकिए",
+    "रद्द",
+    "बदलो",
+    "बदल",
+    "दूसरा",
+    "दूसरी",
+    "nahi",
+    "nahin",
+    "mat",
+    "ruko",
+    "rukiye",
+    "radd",
+    "badlo",
+    "badal",
+    "dusra",
+    "doosra",
+    "ના",
+    "નહીં",
+    "નહિ",
+    "નથી",
+    "રદ",
+    "રદ્દ",
+    "રોકો",
+    "બદલો",
+    "બીજો",
+    "બીજી",
+    "cancelar",
+    "cancela",
+    "pare",
+    "otro",
+    "otra",
+    "non",
+    "pas",
+    "annuler",
+    "annulez",
+    "arrêtez",
+    "autre",
+    "nein",
+    "nicht",
+    "abbrechen",
+    "stopp",
+    "anderen",
+    "não",
+    "nao",
+    "cancele",
+    "outro",
+    "outra",
+}
+# "na" ends a Hindi request politely ("kar do na"); anywhere else it is a refusal.
+_SOFT_NO = {"ना", "na", "ના"}
 
-_AFFIRMATIVE = {
-    "gu": {"હા", "હાં", "જી હા", "જી હાં", "હા કરો", "હા બુક કરો", "પુષ્ટિ કરું છું"},
-    "en": {
-        "yes",
-        "yeah",
-        "yep",
-        "sure",
-        "book it",
-        "confirm",
-        "please do",
-        "ok",
-        "okay",
-        "proceed",
-    },
-    "es": {"sí", "si", "sí por favor", "si por favor", "confirmo", "confirmar"},
-    "fr": {
-        "oui",
-        "oui merci",
-        "oui sil vous plaît",
-        "je confirme",
-        "confirmez",
-        "daccord",
-    },
-    "de": {"ja", "ja bitte", "bestätigen", "ich bestätige", "einverstanden"},
-    "pt": {"sim", "sim por favor", "confirmo", "confirmar", "pode confirmar"},
-    "hi": {
-        "हाँ",
-        "हां",
-        "जी हाँ",
-        "जी हां",
-        "जी",
-        "haan",
-        "ha",
-        "sahi hai",
-        "theek hai",
-        "karo",
-        "kar dijiye",
-        "bilkul",
-        "zaroor",
-    },
-}
-_NEGATIVE = {
-    "gu": {"ના", "નહીં", "નહિ", "નથી", "રદ", "રદ્દ", "રોકો", "બદલો"},
-    "en": {"no", "nope", "not", "dont", "never", "cancel", "stop", "nah", "change"},
-    "es": {"no", "cancelar", "cancela", "pare"},
-    "fr": {"non", "pas", "annuler", "annulez", "arrêtez"},
-    "de": {"nein", "nicht", "abbrechen", "stopp"},
-    "pt": {"não", "nao", "cancelar", "cancele", "pare"},
-    "hi": {"नहीं", "नही", "मत", "रद्द", "nahi", "mat", "badlo"},
-}
+
+def _words(text: str) -> list[str]:
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    for idiom in _AGREEMENT_IDIOMS:
+        normalized = normalized.replace(idiom, " ok ")
+    cleaned = "".join(" " if c in ',;:!?¡¿।."' else c for c in normalized)
+    return [word.strip("'\u2019") for word in cleaned.split() if word.strip("'\u2019")]
 
 
 def confirmation_answer(text: str, language: str = "en") -> bool | None:
-    # Preserve combining marks (including Hindi vowel signs) and accents.
-    normalized = unicodedata.normalize("NFKC", text).casefold()
-    cleaned = " ".join(
-        "".join(" " if c in ",;:!?¡¿।" else c for c in normalized if c not in ".'\u2019\"").split()
-    )
-    code = base_language(language)
-    # English acknowledgments are also common in multilingual calls. A complete
-    # affirmative is still required; extra words never authorize a mutation.
-    negative = _NEGATIVE.get(code, set()) | _NEGATIVE["en"] | _NEGATIVE["hi"] | _NEGATIVE["gu"]
-    if any(word in negative for word in cleaned.split()):
-        return False
-    positive = _AFFIRMATIVE.get(code, set()) | _AFFIRMATIVE["en"]
-    if cleaned in positive:
-        return True
-    if re.fullmatch(
-        r"(?:yes|yeah|okay|ok)[ ]+(?:please[ ]+)?"
-        r"(?:book (?:it|that)|confirm|proceed)(?: please)?",
-        cleaned,
-    ):
+    """True for a clear yes, False for a no or a change, None when it is neither.
+
+    `language` is accepted for callers' clarity; callers mix languages, so every
+    language's words count.
+    """
+    words = _words(text)
+    if not words:
+        return None
+    for index, word in enumerate(words):
+        if word in _REFUSE:
+            return False
+        if word in _SOFT_NO and index < len(words) - 1 and words[index + 1] not in {"ok"}:
+            return False
+    if not any(word in _AGREE for word in words):
+        return None
+    if all(word in _AGREE or word in _FILLER for word in words):
         return True
     return None

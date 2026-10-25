@@ -1,7 +1,7 @@
 """Who the assistant is talking to, on which channel, for which clinic."""
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from app.auth.context import ActorType, RequestContext
@@ -29,6 +29,8 @@ class Session:
     provider_call_id: str | None = None
     # The other person's phone number, when the channel tells us.
     contact: str | None = None
+    # The clinic's doctors and services with their ids, read as the call started.
+    directory: dict[str, Any] | None = None
 
     @property
     def call(self) -> CallContext:

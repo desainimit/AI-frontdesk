@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.ai.catalog import MUTATION_TOOLS
+from app.ai.consent import ConsentReader
 from app.ai.identity import ContactIdentity
 from app.ai.llm.base import (
     ChatRequest,
@@ -37,6 +38,7 @@ from app.ai.session import AssistantAuthorizationError, Session
 from app.ai.tools.appointments import AppointmentFlow
 from app.ai.tools.registry import ToolRegistry, ToolValidationError
 from app.ai.wording import spoken
+from app.conversation.confirmation import confirmation_answer
 from app.conversation.manager import ConversationStateManager
 from app.conversation.redaction import redact_verification_secrets
 from app.conversation.state import ConversationState, SafetyDecision
@@ -117,6 +119,7 @@ class Engine:
         safety: SafetyEngine,
         identity: ContactIdentity,
         history: CallerHistory | None = None,
+        consent: ConsentReader | None = None,
     ) -> None:
         self.model = model
         self.registry = registry
@@ -125,6 +128,8 @@ class Engine:
         self.identity = identity
         # Earlier calls and coming appointments, for a caller whose identity is trusted.
         self.history = history
+        # Reads a yes/no the rules could not, while a question to the caller is open.
+        self.consent = consent
 
     async def run(
         self, session: Session, state: ConversationState, utterance: str
@@ -171,6 +176,7 @@ class Engine:
             if not utterance.strip() or len(utterance) > 4000:
                 raise ToolValidationError("Invalid utterance size")
             words = redact_verification_secrets(utterance)
+            answer = await self._answer(state, words)
             if self.safety.ask_first:
                 # On a call: who can take it right now (opening hours, on-call lines).
                 self.safety.transfer_available = bool(
@@ -178,14 +184,14 @@ class Engine:
                 )
                 # 0. The answer to "shall I put you through?".
                 if handover.pending(state):
-                    answer = handover.consent(words, state.language)
-                    if answer is True:
+                    agreed = handover.consent(words, answer)
+                    if agreed is True:
                         handover.agree(state, can_transfer=self.safety.transfer_available)
                         yield say(self._handoff_line(state))
                         yield Handoff("requested")
                         yield done("handoff")
                         return
-                    if answer is False:
+                    if agreed is False:
                         handover.withdraw(state)
                         yield say(handover_message(state.language, "declined"))
                         yield done("answered")
@@ -220,7 +226,7 @@ class Engine:
                     logger.warning("assistant_history_unavailable")
                     state.caller_history = ""
             # 3. What the server answers itself: a code, or yes/no to its own question.
-            direct = await self.flow.before_turn(session, state, utterance)
+            direct = await self.flow.before_turn(session, state, utterance, answer)
             if direct is not None:
                 tools.append(direct.tool)
                 yield say(direct.response)
@@ -351,6 +357,17 @@ class Engine:
         finally:
             if semantic is not None and not semantic.done():
                 semantic.cancel()
+
+    async def _answer(self, state: ConversationState, words: str) -> bool | None:
+        """The reply read as yes or no, when the caller was asked something."""
+        operation = state.appointment_operation
+        booking = operation is not None and operation.status == "proposed"
+        if not booking and not (self.safety.ask_first and handover.pending(state)):
+            return None
+        answer = confirmation_answer(words, state.language)
+        if answer is None and self.consent is not None:
+            answer = await self.consent.read(state.last_agent_response or "", words)
+        return answer
 
     def _handoff_line(self, state: ConversationState) -> str:
         if not self.safety.ask_first:

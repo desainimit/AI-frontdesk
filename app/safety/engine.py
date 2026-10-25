@@ -94,6 +94,9 @@ class SafetyEngine:
                     signal.kind == "human"
                     and signal.confidence >= 0.85
                     and decision != SafetyDecision.TRANSFER
+                    # On a call the model offers a person itself when asked; the second
+                    # opinion misread "can you repeat that?" as a request for one.
+                    and not self.ask_first
                 ):
                     decision, reason, source = (
                         SafetyDecision.TRANSFER,

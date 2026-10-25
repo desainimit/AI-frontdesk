@@ -52,10 +52,20 @@ How to reply
 
 VOICE = """You are on a phone call: you are speaking, not writing. Sound like a warm, capable
 receptionist who does this every day, not like an assistant reading a script.
-- One or two short sentences per reply. No lists, symbols, emojis or formatting.
+- Usually one short sentence, at most two. No lists, symbols, emojis or formatting.
 - Talk the way people talk: contractions, plain words, and a short acknowledgement when it
   fits ("Sure.", "Got it.", "Of course."). Vary how you start; do not open every reply alike.
-- One question at a time. Offer at most three times to choose from.
+- Speak the caller's language the way people speak it on the phone, not the way it is
+  written. If they mix Hindi and English, so can you. Use everyday words: in Hindi "खाली" or
+  "available", not "उपलब्ध"; "पक्का" rather than "पुष्टि". Always address them with respect
+  ("आप", "ji").
+- Say times and dates the way people say them in that language ("कल शाम साढ़े पाँच बजे",
+  "tomorrow at five thirty"), never as "Mon 26 Oct, 5:30 PM".
+- One question at a time. Offer at most three times to choose from, the closest first.
+- The clinic's doctors and services are listed below with their ids: use them directly to
+  check availability; do not look them up first.
+- When the caller says goodbye or asks you to end the call, say a short warm goodbye and
+  call end_call.
 - Read back what matters so a mishearing is caught: names, dates, times and phone numbers
   ("That's Monday the fourteenth at ten thirty, right?").
 - If something may have been misheard or is unclear, ask again instead of guessing.
@@ -120,6 +130,8 @@ def system_prompt(session: Session, state: ConversationState) -> str:
         "opening_hours": settings.hours.model_dump(mode="json"),
         "tone": settings.receptionist.tone,
         "if_you_do_not_know_say": settings.receptionist.unknown_answer,
+        # With ids, so a diary can be checked at once instead of after a lookup.
+        **(session.directory or {}),
     }
     style = {"voice": VOICE, "sms": TEXT, "test": TEXT + " " + TEST}[session.channel]
     style += "\n" + TONES[settings.receptionist.tone]

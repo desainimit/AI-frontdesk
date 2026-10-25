@@ -30,7 +30,7 @@ from app.ai.llm.base import (
 from app.ai.llm.schema import wire_schema
 
 DEFAULT_MODEL = "gemini-3.8-flash"
-ThinkingLevel = Literal["low", "medium", "high"]
+ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 
 _BLOCKED = frozenset(
     {

@@ -14,6 +14,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.ai.identity import ContactIdentity
 from app.ai.session import AssistantAuthorizationError, Session
+from app.ai.speech_time import spoken_when
 from app.ai.wording import spoken
 from app.appointments.availability import AvailabilityService
 from app.appointments.commands import (
@@ -77,6 +78,13 @@ class CancelInput(ToolInput):
 
 class RescheduleInput(CancelInput):
     starts_at: AwareDatetime
+
+
+def said(session: Session, instant: datetime, timezone: str, language: str) -> str:
+    """An appointment time as a receptionist says it on a call; as written in a text."""
+    if session.channel == "voice":
+        return spoken_when(instant, timezone, language)
+    return when(instant, timezone, language)
 
 
 class Outcome(BaseModel):
@@ -245,7 +253,8 @@ class AppointmentFlow:
             offer = spoken(
                 state.language,
                 "book_offer",
-                time=when(selected.starts_at, timezone, state.language),
+                time=said(session, selected.starts_at, timezone, state.language),
+                provider=provider,
             )
         else:
             appointment_id = UUID(str(params["appointment_id"]))
@@ -260,7 +269,8 @@ class AppointmentFlow:
                 offer = spoken(
                     state.language,
                     "cancel_offer",
-                    time=when(row.starts_at, timezone, state.language),
+                    time=said(session, row.starts_at, timezone, state.language),
+                    provider=provider,
                 )
             else:
                 change = RescheduleInput.model_validate(payload.model_dump())
@@ -278,8 +288,9 @@ class AppointmentFlow:
                 offer = spoken(
                     state.language,
                     "move_offer",
-                    old=when(row.starts_at, timezone, state.language),
-                    new=when(change.starts_at, timezone, state.language),
+                    old=said(session, row.starts_at, timezone, state.language),
+                    new=said(session, change.starts_at, timezone, state.language),
+                    provider=provider,
                 )
         # The actual provider name; nobody is asked to confirm an opaque ID.
         summary = spoken(state.language, "confirm", provider=provider, offer=offer)
@@ -289,6 +300,8 @@ class AppointmentFlow:
         state.confirmation_state.request(
             action, params, summary, state.confirmation_timeout_seconds
         )
+        # The newest question is the one the caller answers.
+        state.safety_state.transfer_offered = False
         state.active_flow_state.transition(FlowStep.AWAITING_CONFIRMATION)
         state.active_intent = action
         return Outcome(status="confirmation_required", say=summary)
@@ -301,9 +314,19 @@ class AppointmentFlow:
             return name, await tx.schedule.timezone(provider_id) or "UTC"
 
     async def before_turn(
-        self, session: Session, state: ConversationState, utterance: str
+        self,
+        session: Session,
+        state: ConversationState,
+        utterance: str,
+        answer: bool | None = None,
     ) -> Direct | None:
-        """Answer without the model: a reception code, or yes/no to a pending question."""
+        """Answer without the model: a reception code, or yes/no to a pending question.
+
+        `answer` is the reply already read as yes or no (by the rules, or the quicker
+        model when the rules could not tell); without it the rules read it here.
+        """
+        if answer is None:
+            answer = confirmation_answer(utterance, state.language)
         code = normalize_access_code(utterance.strip())
         if (
             re.fullmatch(r"[0-9]{8}", code)
@@ -338,12 +361,12 @@ class AppointmentFlow:
                 and confirmation.action == operation.action
                 and confirmation.action_params == operation.params
             )
-            if not valid or confirmation_answer(utterance, state.language) is not True:
+            if not valid or answer is not True:
                 # Revisions and interruptions discard the old proposal, even after a previous yes.
                 state.appointment_operation = None
                 confirmation.reset()
                 state.active_flow_state.transition(FlowStep.COLLECTING_DETAILS)
-                if confirmation_answer(utterance, state.language) is False:
+                if answer is False:
                     return Direct(spoken(state.language, "discarded"), operation.action)
                 return None
             operation.status = "executing"
@@ -371,7 +394,7 @@ class AppointmentFlow:
                 key = "moved"
             _, timezone = await self._provider(session, state, result.provider_id)
             message = spoken(
-                state.language, key, time=when(result.starts_at, timezone, state.language)
+                state.language, key, time=said(session, result.starts_at, timezone, state.language)
             )
         except ApplicationError as error:
             operation.status = "completed"

@@ -19,6 +19,7 @@ from app.ai.usage import record_turn
 from app.ai.wording import filler, spoken
 from app.audit.events import AuditAction
 from app.calls.service import CallService
+from app.conversation.backchannel import is_closing
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConversationState, SafetyDecision, TranscriptTurn
 from app.conversation.store import ConversationStateStore
@@ -102,6 +103,13 @@ class CallReceptionist:
             return
         self._unsaid = []
         self._turn_started = monotonic()
+        if self.state.end_requested:
+            if is_closing(result.text, self.state.language):
+                # "Bye", "thank you", "you can cut it" after the goodbye: end the call.
+                await self._end_call("goodbye")
+                return
+            # They are not done after all.
+            self.state.end_requested = False
         if result.confidence < UNCLEAR_BELOW and not self._asked_again:
             # Probably misheard: ask once rather than answer the wrong thing. A second
             # unclear answer goes to the model, which can still ask in its own words.

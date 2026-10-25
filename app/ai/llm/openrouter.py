@@ -102,6 +102,7 @@ class OpenRouterLLMProvider:
         *,
         reasoning_effort: ReasoningEffort | None = "low",
         http_client: httpx.AsyncClient | None = None,
+        fastest: bool = False,
     ) -> None:
         if not api_key.get_secret_value():
             raise LLMCredentialsError("LLM credentials are not configured")
@@ -110,13 +111,15 @@ class OpenRouterLLMProvider:
         self.model = model or DEFAULT_MODEL
         self._max_output_tokens = max_output_tokens
         self._effort = reasoning_effort
+        # On a call the quickest endpoint matters more than the cheapest.
+        self._routing = ROUTING | {"sort": "latency"} if fastest else ROUTING
 
     def _body(self) -> dict[str, Any]:
         body: dict[str, Any] = {
             "model": self.model,
             # Reasoning is billed as output and counts against this limit.
             "max_tokens": self._max_output_tokens,
-            "provider": ROUTING,
+            "provider": self._routing,
         }
         if self._effort:
             body["reasoning"] = {"effort": self._effort}

@@ -85,6 +85,80 @@ def _words(text: str) -> list[str]:
     return [word.strip(edges) for word in cleaned.split() if word.strip(edges)]
 
 
+# Said to end a call: "bye", "thank you", "you can cut the call", "rakh do".
+_CLOSING = {
+    "bye",
+    "byebye",
+    "bye-bye",
+    "goodbye",
+    "thanks",
+    "thank",
+    "cut",
+    "hang",
+    "disconnect",
+    "namaste",
+    "namaskar",
+    "dhanyavaad",
+    "dhanyawad",
+    "shukriya",
+    "rakh",
+    "rakho",
+    "band",
+    "नमस्ते",
+    "नमस्कार",
+    "धन्यवाद",
+    "शुक्रिया",
+    "रख",
+    "रखो",
+    "बंद",
+    "बाय",
+    "कट",
+    "આવજો",
+    "આભાર",
+    "બાય",
+    "ok",
+    "okay",
+    "theek",
+    "ठीक",
+    "alright",
+    "fine",
+}
+# The caller is not done after all.
+_CARRY_ON = {
+    "wait",
+    "one",
+    "more",
+    "also",
+    "but",
+    "question",
+    "sorry",
+    "ruko",
+    "rukiye",
+    "aur",
+    "ek",
+    "रुको",
+    "रुकिए",
+    "और",
+    "एक",
+    "लेकिन",
+    "પણ",
+    "રાહ",
+    "બીજું",
+}
+MAX_CLOSING_WORDS = 6
+
+
+def is_closing(text: str, language: str = "en") -> bool:
+    """A reply after the receptionist's goodbye that still ends the call: a thank-you,
+    a bye, "you can cut it", or a short sound the recognizer half-heard."""
+    words = _words(text)
+    if not words or "?" in text or any(word in _CARRY_ON for word in words):
+        return False
+    if any(word in _CLOSING for word in words):
+        return True
+    return is_backchannel(text, language) or len(words) <= 2
+
+
 def is_backchannel(text: str, language: str = "en") -> bool:
     words = _words(text)
     if not words or len(words) > MAX_WORDS:

@@ -21,6 +21,7 @@ from fastapi import (
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.ai.catalog import VOICE_TOOLS
+from app.ai.consent import ConsentReader
 from app.ai.engine import Engine
 from app.ai.llm.base import LLMProvider
 from app.ai.llm.factory import build_llm_provider, llm_from_connection
@@ -72,7 +73,7 @@ from app.voice.factory import (
     tts_from_connection,
     validate_gujarati_voice,
 )
-from app.voice.keyterms import call_keyterms
+from app.voice.keyterms import clinic_directory
 from app.voice.metrics import VoiceMetrics
 from app.voice.phrases import MemoryPhraseCache, PhraseCache
 from app.voice.pipeline import PhraseStore, VoicePipeline
@@ -564,11 +565,12 @@ async def resolve_call_providers(
     account = "platform"
     if llm_connection is not None:
         key, config = llm_connection.secret("api_key"), dict(llm_connection.config)
-        llm = llm_from_connection(llm_connection.provider, key, config)
-        light = llm_from_connection(llm_connection.provider, key, config, light=True)
+        llm = llm_from_connection(llm_connection.provider, key, config, voice=True)
+        light = llm_from_connection(llm_connection.provider, key, config, light=True, voice=True)
         owned, account = (llm, light), str(llm_connection.integration_id)
     elif llm is None and settings.platform_llm_key.get_secret_value():
-        llm, light = build_llm_provider(settings), build_llm_provider(settings, light=True)
+        llm = build_llm_provider(settings, voice=True)
+        light = build_llm_provider(settings, light=True, voice=True)
         owned = (llm, light)
     if llm is None:
         raise IntegrationUnavailableError()
@@ -667,6 +669,7 @@ async def run_media(
         resolver = tenant_resolver(socket.app)
         configuration = await service.settings(context)
         opened_while_open = configuration.is_open(datetime.now(UTC))
+        directory = await clinic_directory(service.sessions, tenant_id, configuration)
         providers = await resolve_call_providers(
             socket.app, settings, tenant_id, configuration.receptionist.languages
         )
@@ -699,7 +702,7 @@ async def run_media(
             settings,
             speech_locale,
             configuration.receptionist.languages,
-            await call_keyterms(service.sessions, tenant_id, configuration),
+            directory.keyterms,
         )
         conversation_state = initial_conv_state
         initial_conv_state.call_state.stream_sid = stream_sid
@@ -726,6 +729,7 @@ async def run_media(
             ),
             identity,
             CallerHistory(service.sessions),
+            ConsentReader(providers.light_llm or llm),
         )
         receptionist = CallReceptionist(
             engine=engine,
@@ -738,6 +742,7 @@ async def run_media(
                 configuration.receptionist.allowed_tools | VOICE_TOOLS,
                 provider_call_id=sid,
                 contact=caller_number,
+                directory=directory.for_model,
             ),
             state=initial_conv_state,
             store=conv_store,

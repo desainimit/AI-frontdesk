@@ -10,7 +10,6 @@ else leaves the offer open for two more turns, for the model to follow up.
 import re
 from datetime import UTC, datetime
 
-from app.conversation.confirmation import confirmation_answer
 from app.conversation.state import ConversationState, SafetyDecision
 from app.safety.rules import HUMAN_REQUEST
 from app.settings.schemas import ClinicConfiguration, TransferTarget
@@ -50,6 +49,10 @@ def choose(targets: list[TransferTarget], wanted: str | None) -> TransferTarget 
 
 
 def offer(state: ConversationState, target: TransferTarget | None, note: str | None) -> None:
+    # The newest question is the one the caller answers: a booking that was waiting for
+    # a yes is dropped, and the model proposes it again if they still want it.
+    state.appointment_operation = None
+    state.confirmation_state.reset()
     safety = state.safety_state
     safety.transfer_offered = True
     safety.offered_turn = state.utterance_count
@@ -67,11 +70,12 @@ def withdraw(state: ConversationState) -> None:
     state.safety_state.transfer_offered = False
 
 
-def consent(utterance: str, language: str) -> bool | None:
-    """Yes, no, or neither, to "shall I put you through?"."""
+def consent(utterance: str, answer: bool | None) -> bool | None:
+    """Yes, no, or neither, to "shall I put you through?". `answer` is the general reading
+    of the reply as yes or no."""
     if _AGREE.search(utterance) or HUMAN_REQUEST.search(utterance):
         return True
-    return confirmation_answer(utterance, language)
+    return answer
 
 
 def agree(state: ConversationState, *, can_transfer: bool) -> SafetyDecision:

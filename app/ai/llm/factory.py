@@ -13,7 +13,16 @@ MAX_OUTPUT_TOKENS = 2048
 LIGHT_MODELS = {"gemini": "gemini-3.5-flash-lite", "openrouter": "google/gemini-3.5-flash-lite"}
 
 
-def _provider(name: str, api_key: SecretStr, model: str, reasoning: Any = "low") -> LLMProvider:
+# On a call every second of thinking is a second of silence, so voice turns think as
+# little as the model allows and go to the quickest endpoint.
+VOICE_REASONING = "minimal"
+
+
+def _provider(
+    name: str, api_key: SecretStr, model: str, reasoning: Any = "low", *, voice: bool = False
+) -> LLMProvider:
+    if voice:
+        reasoning = VOICE_REASONING
     if name == "gemini":
         from app.ai.llm.gemini import GeminiLLMProvider
 
@@ -33,19 +42,27 @@ def _provider(name: str, api_key: SecretStr, model: str, reasoning: Any = "low")
             TIMEOUT_SECONDS,
             MAX_OUTPUT_TOKENS,
             reasoning_effort=reasoning,
+            fastest=voice,
         )
     raise ValueError("Unsupported LLM provider")
 
 
-def build_llm_provider(settings: Settings, *, light: bool = False) -> LLMProvider:
+def build_llm_provider(
+    settings: Settings, *, light: bool = False, voice: bool = False
+) -> LLMProvider:
     """The platform's own model account, as a platform administrator configured it."""
     model = LIGHT_MODELS[settings.llm_provider] if light else settings.llm_model
-    return _provider(settings.llm_provider, settings.platform_llm_key, model)
+    return _provider(settings.llm_provider, settings.platform_llm_key, model, voice=voice)
 
 
 def llm_from_connection(
-    provider: str, api_key: SecretStr, config: dict[str, Any], *, light: bool = False
+    provider: str,
+    api_key: SecretStr,
+    config: dict[str, Any],
+    *,
+    light: bool = False,
+    voice: bool = False,
 ) -> LLMProvider:
     """One tenant's own model connection."""
     model = LIGHT_MODELS[provider] if light else str(config["model"])
-    return _provider(provider, api_key, model, config.get("thinking_level", "low"))
+    return _provider(provider, api_key, model, config.get("thinking_level", "low"), voice=voice)

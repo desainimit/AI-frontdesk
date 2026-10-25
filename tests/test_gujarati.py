@@ -274,8 +274,12 @@ def test_gujarati_messages_are_complete_and_preserve_placeholders() -> None:
         expected = {name for _, name, _, _ in Formatter().parse(MESSAGES["en"][key]) if name}
         actual = {name for _, name, _, _ in Formatter().parse(template) if name}
         assert actual == expected
-        assert any("\u0a80" <= char <= "\u0aff" for char in template)
-    assert "ડૉક્ટર શાહ" in spoken("gu", "confirm", provider="ડૉક્ટર શાહ", offer="સમય ૧૦:૩૦")
+        # A line that is only a placeholder ("{offer}") carries no words of its own.
+        words = "".join(text for text, *_ in Formatter().parse(template)).strip()
+        assert not words or any("\u0a80" <= char <= "\u0aff" for char in template)
+    # The doctor is named inside the question itself, not read out on its own.
+    offer = spoken("gu", "book_offer", provider="ડૉક્ટર શાહ", time="સવારે સાડા દસ વાગ્યે")
+    assert "ડૉક્ટર શાહ" in offer and spoken("gu", "confirm", offer=offer) == offer
 
 
 def test_normalization_preserves_vowels_and_gujarati_digits() -> None:
