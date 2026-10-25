@@ -11,13 +11,16 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.engine import Done, Engine, Event, Handoff, Say, Working
+from app.ai.llm.base import LLMProvider
+from app.ai.memory import summarize_call, summarize_earlier
+from app.ai.prompts import HISTORY_TURNS
 from app.ai.session import Session
 from app.ai.usage import record_turn
 from app.ai.wording import filler, spoken
 from app.audit.events import AuditAction
 from app.calls.service import CallService
 from app.conversation.manager import ConversationStateManager
-from app.conversation.state import ConversationState, SafetyDecision
+from app.conversation.state import ConversationState, SafetyDecision, TranscriptTurn
 from app.conversation.store import ConversationStateStore
 from app.core.database.rls import set_tenant_scope
 from app.core.errors import ApplicationError
@@ -38,6 +41,9 @@ FILLER_AFTER_SECONDS = 1.5
 LOOKUP_FILLER_AFTER_SECONDS = 0.8
 # Recognition this unsure of what was said is asked for again, not answered.
 UNCLEAR_BELOW = 0.5
+# Turns out of the model's view are summarized in batches of this many.
+SUMMARY_EVERY_TURNS = 10
+SUMMARY_SECONDS = 8.0
 TICKETS = {
     "requested": "Caller asked to speak to someone",
     "emergency": "Possible emergency on a call",
@@ -59,6 +65,7 @@ class CallReceptionist:
         settings: Settings,
         account: TwilioCredentials,
         metrics: VoiceMetrics,
+        summarizer: LLMProvider | None = None,
     ) -> None:
         self.engine = engine
         self.session = session
@@ -78,6 +85,9 @@ class CallReceptionist:
         self._unsaid: list[str] = []
         # The last turn was too unclear to answer and the caller was asked to repeat it.
         self._asked_again = False
+        # The quicker model: the running summary of a long call, and the call summary.
+        self.summarizer = summarizer
+        self._summarizing: asyncio.Task[None] | None = None
 
     async def reply(self, result: TranscriptionResult) -> None:
         if self.pipeline is None or not result.is_final or not result.text.strip():
@@ -206,8 +216,54 @@ class CallReceptionist:
             if done is not None:
                 self.metrics.record_llm_latency(float(done.total_ms), done.model or "model")
                 await record_turn(self.sessions, self.session, done)
+            self._keep_summary()
         if handoff is not None:
             await self._hand_over(pipeline, handoff)
+
+    def _keep_summary(self) -> None:
+        """Summarize, in the background, turns that have moved out of the model's view."""
+        state = self.state
+        hidden_until = state.turns_appended - HISTORY_TURNS
+        if (
+            self.summarizer is None
+            or hidden_until - state.summarized_through < SUMMARY_EVERY_TURNS
+            or (self._summarizing is not None and not self._summarizing.done())
+        ):
+            return
+        first_kept = state.turns_appended - len(state.transcript_turns)
+        start = max(state.summarized_through, first_kept) - first_kept
+        turns = state.transcript_turns[start : hidden_until - first_kept]
+        self._summarizing = asyncio.create_task(self._summarize(turns, hidden_until))
+
+    async def _summarize(self, turns: list[TranscriptTurn], through: int) -> None:
+        if self.summarizer is None or not turns:
+            return
+        try:
+            async with asyncio.timeout(SUMMARY_SECONDS):
+                summary = await summarize_earlier(
+                    self.summarizer, self.state.earlier_summary, turns
+                )
+        except Exception:
+            # The model still has the recent turns; the summary is tried again later.
+            logger.warning("call_summary_update_failed")
+            return
+        self.state.earlier_summary = summary[:2000]
+        self.state.summarized_through = through
+
+    async def call_summary(self) -> str | None:
+        """The summary staff read once the call is over, written by the quicker model."""
+        if self._summarizing is not None and not self._summarizing.done():
+            self._summarizing.cancel()
+        turns = self.state.transcript_turns[-80:]
+        if self.summarizer is None or len(turns) < 2:
+            return None
+        try:
+            async with asyncio.timeout(SUMMARY_SECONDS):
+                return await summarize_call(self.summarizer, turns)
+        except Exception:
+            # The rule-based summary is used instead.
+            logger.warning("call_summary_failed")
+            return None
 
     def _remember(
         self, items: list[tuple[Speech, bool]], finished: bool, stopped_at: float | None

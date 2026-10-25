@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -7,7 +8,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.conversation.locales import LanguagePolicy, base_language, normalize_language
-from app.conversation.redaction import redact_transcript
+from app.conversation.redaction import redact_transcript, redact_verification_secrets
+
+# What one call keeps word for word; the saved transcript is the last 80 turns of it.
+MAX_TURNS = 200
+MAX_TRANSCRIPT_BYTES = 64_000
 
 
 class SupportedLanguage(StrEnum):
@@ -341,8 +346,12 @@ class TranscriptTurn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     speaker: Literal["caller", "agent"]
-    text: str = Field(min_length=1, max_length=400)
+    text: str = Field(min_length=1, max_length=1000)
     language: str = Field(min_length=2, max_length=24)
+    # What the model is shown: the caller's own email or phone number left in, so it can
+    # use them during the call. Only verification secrets are hidden. Never stored: the
+    # saved transcript has only `text`.
+    model_text: str | None = Field(default=None, max_length=1000, exclude=True)
 
 
 def _empty_transcript_turns() -> list[TranscriptTurn]:
@@ -382,8 +391,17 @@ class ConversationState(BaseModel):
     reply_cut_off: bool = False
     unsaid: str | None = Field(default=None, max_length=1000)
     transcript_turns: list[TranscriptTurn] = Field(
-        default_factory=_empty_transcript_turns, max_length=80
+        default_factory=_empty_transcript_turns, max_length=MAX_TURNS
     )
+    # Every turn ever added, so turns already summarized can be told apart.
+    turns_appended: int = 0
+    # A short summary of the part of a long call the model no longer sees word for word.
+    earlier_summary: str | None = Field(default=None, max_length=2000)
+    summarized_through: int = 0
+    # The last few lookups, briefly, so a later turn can still refer to them.
+    recent_lookups: list[str] = Field(default_factory=list[str], max_length=3)
+    # Earlier calls and coming appointments of a trusted caller; kept for this call only.
+    caller_history: str | None = Field(default=None, max_length=4000, exclude=True)
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -411,16 +429,28 @@ class ConversationState(BaseModel):
         return self.identity_state.patient_id
 
     def append_transcript_turn(self, speaker: Literal["caller", "agent"], text: str) -> None:
-        clean = redact_transcript(text.strip())[:400].strip()
+        clean = redact_transcript(text.strip())[:1000].strip()
         if not clean:
             return
+        for_model = redact_verification_secrets(text.strip())[:1000].strip()
         self.transcript_turns.append(
-            TranscriptTurn(speaker=speaker, text=clean, language=self.language[:24])
+            TranscriptTurn(
+                speaker=speaker,
+                text=clean,
+                language=self.language[:24],
+                model_text=for_model if for_model != clean else None,
+            )
         )
-        while len(self.transcript_turns) > 80 or (
-            sum(len(turn.text.encode("utf-8")) + 64 for turn in self.transcript_turns) > 16000
+        self.turns_appended += 1
+        while len(self.transcript_turns) > MAX_TURNS or (
+            sum(len(turn.text.encode("utf-8")) + 64 for turn in self.transcript_turns)
+            > MAX_TRANSCRIPT_BYTES
         ):
             self.transcript_turns.pop(0)
+
+    def record_lookup(self, tool: str, result: dict[str, Any]) -> None:
+        digest = json.dumps(result, ensure_ascii=False, default=str)[:300]
+        self.recent_lookups = [*self.recent_lookups, f"{tool}: {digest}"][-3:]
 
     @property
     def active_flow(self) -> str | None:

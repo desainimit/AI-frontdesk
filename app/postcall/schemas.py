@@ -27,12 +27,15 @@ class PostCallInput(BaseModel):
     safety_decision: str = Field(default="continue", max_length=40)
     appointment_action: str | None = Field(default=None, max_length=40)
     appointment_status: str | None = Field(default=None, max_length=40)
+    # Written by the model at the end of the call; the rule-based summary is the fallback.
+    summary: str | None = Field(default=None, max_length=1200)
 
     @classmethod
-    def capture(cls, state: ConversationState) -> "PostCallInput":
+    def capture(cls, state: ConversationState, summary: str | None = None) -> "PostCallInput":
         operation = state.appointment_operation
         return cls(
-            turns=state.transcript_turns.copy(),
+            turns=state.transcript_turns[-80:],
+            summary=summary[:1200] if summary else None,
             language=state.language,
             intent=state.active_intent,
             safety_decision=state.safety_state.decision.value,
@@ -100,7 +103,11 @@ def analyze_post_call(status: str, snapshot: PostCallInput | None) -> PostCallAn
             excerpts.append(f"Later: {callers[-1]}")
     if agents:
         excerpts.append(f"Final response: {agents[-1]}")
-    summary = ". ".join(excerpts)[:1200] or "No transcript available."
+    summary = (
+        redact_transcript(state.summary)[:1200]
+        if state.summary
+        else ". ".join(excerpts)[:1200] or "No transcript available."
+    )
     if state.safety_decision in {"emergency_protocol", "escalate", "transfer"}:
         follow_up: FollowUpKind | None = "human_review"
     elif call_status != "completed":

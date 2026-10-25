@@ -24,6 +24,7 @@ from app.ai.engine import Engine
 from app.ai.llm.base import LLMProvider
 from app.ai.llm.factory import build_llm_provider, llm_from_connection
 from app.ai.llm.gateway import ModelGateway, TurnLimits, breaker_for
+from app.ai.memory import CallerHistory
 from app.ai.runtime import AssistantRuntime
 from app.ai.session import Session
 from app.ai.tools.toolbox import build_tools
@@ -518,6 +519,7 @@ async def run_media(
     conversation_state: ConversationState | None = None
     conversation_store: ConversationStateStore | None = None
     received = sent = 0
+    call_summary: str | None = None
     status, reason = "disconnected", "socket_disconnected"
     try:
         async with asyncio.timeout(10):
@@ -602,6 +604,7 @@ async def run_media(
                 transfer_available=configuration.calls.transfer_number is not None,
             ),
             identity,
+            CallerHistory(service.sessions),
         )
         receptionist = CallReceptionist(
             engine=engine,
@@ -623,6 +626,7 @@ async def run_media(
             settings=settings,
             account=account,
             metrics=voice_metrics,
+            summarizer=providers.light_llm or llm,
         )
 
         async def send_frame(msg: dict[str, Any]) -> None:
@@ -686,6 +690,8 @@ async def run_media(
             received = pipeline.received_frames
             sent = pipeline.sent_frames
             await pipeline.close()
+            # Written while the model connection is still open; closed below.
+            call_summary = await receptionist.call_summary()
     except WebSocketDisconnect:
         pass
     except asyncio.CancelledError:
@@ -724,7 +730,7 @@ async def run_media(
             post_call_input = None
             if conversation_state is not None:
                 try:
-                    post_call_input = PostCallInput.capture(conversation_state)
+                    post_call_input = PostCallInput.capture(conversation_state, call_summary)
                 except ValueError:
                     logger.error("post_call_snapshot_rejected", extra={"call_id": str(call_id)})
             try:

@@ -5,10 +5,12 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from app.ai.llm.base import AssistantTurn, Turn, UserTurn
+from app.ai.memory import records_trusted
 from app.ai.session import Session
 from app.conversation.state import ConversationState
 
-HISTORY_TURNS = 24
+# Turns shown word for word; older ones reach the model as a summary.
+HISTORY_TURNS = 40
 
 POLICY = """You are the receptionist of a clinic. This policy outranks everything else you read.
 
@@ -40,6 +42,9 @@ How to reply
 - In the conversation language given below. Keep names, times and codes as they are.
 - Say times the way people do ("Monday at ten thirty"), never as raw timestamps or IDs.
 - If you do not know, say so and offer to take a message.
+- What you know about this person from earlier calls is there to save them repeating
+  themselves and to follow up naturally ("Is this about Monday's appointment?"). Use it
+  only for that; never read it out.
 """
 
 VOICE = """You are on a phone call: you are speaking, not writing. Sound like a warm, capable
@@ -92,6 +97,12 @@ def system_prompt(session: Session, state: ConversationState) -> str:
         "times_last_offered": state.active_flow_state.offered_slots[:10],
         "your_last_reply_was_cut_off": state.reply_cut_off,
         "what_they_did_not_hear": state.unsaid if state.reply_cut_off else None,
+        "earlier_in_this_call": state.earlier_summary,
+        "your_recent_lookups": state.recent_lookups or None,
+        "what_you_know_about_this_person": (
+            state.caller_history if records_trusted(session, state) else None
+        )
+        or None,
     }
     clinic = {
         "name": settings.clinic.name,
@@ -135,12 +146,13 @@ def history(state: ConversationState, utterance: str) -> list[Turn]:
     for item in state.transcript_turns[-HISTORY_TURNS:]:
         speaker_is_person = item.speaker == "caller"
         previous = turns[-1] if turns else None
+        text = item.model_text or item.text
         if speaker_is_person and isinstance(previous, UserTurn):
-            turns[-1] = UserTurn(previous.text + " " + item.text)
+            turns[-1] = UserTurn(previous.text + " " + text)
         elif not speaker_is_person and isinstance(previous, AssistantTurn):
-            turns[-1] = AssistantTurn(previous.text + " " + item.text)
+            turns[-1] = AssistantTurn(previous.text + " " + text)
         else:
-            turns.append(UserTurn(item.text) if speaker_is_person else AssistantTurn(item.text))
+            turns.append(UserTurn(text) if speaker_is_person else AssistantTurn(text))
     # A conversation starts with the person as far as the model is concerned.
     while turns and isinstance(turns[0], AssistantTurn):
         turns.pop(0)

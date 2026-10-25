@@ -13,6 +13,7 @@ from time import perf_counter
 from typing import Any, Literal, Protocol
 
 from pydantic import ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.ai.catalog import MUTATION_TOOLS
 from app.ai.identity import ContactIdentity
@@ -29,6 +30,7 @@ from app.ai.llm.base import (
     Turn,
     Usage,
 )
+from app.ai.memory import CallerHistory, records_trusted
 from app.ai.prompts import history, system_prompt
 from app.ai.sentences import SentenceSplitter
 from app.ai.session import AssistantAuthorizationError, Session
@@ -43,6 +45,8 @@ from app.safety.engine import SafetyEngine
 
 logger = logging.getLogger(__name__)
 
+# Their results concern who the person is; they are not repeated in later turns.
+UNREMEMBERED_TOOLS = frozenset({"identify_patient", "register_patient"})
 MAX_STEPS = 4
 MAX_TOOL_CALLS = 6
 TURN_SECONDS = 25.0
@@ -110,12 +114,15 @@ class Engine:
         flow: AppointmentFlow,
         safety: SafetyEngine,
         identity: ContactIdentity,
+        history: CallerHistory | None = None,
     ) -> None:
         self.model = model
         self.registry = registry
         self.flow = flow
         self.safety = safety
         self.identity = identity
+        # Earlier calls and coming appointments, for a caller whose identity is trusted.
+        self.history = history
 
     async def run(
         self, session: Session, state: ConversationState, utterance: str
@@ -177,6 +184,16 @@ class Engine:
                     await self.identity.recognise(session, state)
                 except ApplicationError:
                     logger.warning("assistant_recognition_failed")
+            if (
+                self.history is not None
+                and state.caller_history is None
+                and records_trusted(session, state)
+            ):
+                try:
+                    state.caller_history = await self.history.load(session, state)
+                except (ApplicationError, SQLAlchemyError):
+                    logger.warning("assistant_history_unavailable")
+                    state.caller_history = ""
             # 3. What the server answers itself: a code, or yes/no to its own question.
             direct = await self.flow.before_turn(session, state, utterance)
             if direct is not None:
@@ -252,6 +269,8 @@ class Engine:
                         result, ok = {"status": "failed", "reason": code}, False
                     tools.append(call.name)
                     ConversationStateManager.record_tool_call(state, call.name)
+                    if call.name not in UNREMEMBERED_TOOLS:
+                        state.record_lookup(call.name, result)
                     yield Worked(call.name, ok)
                     turns.append(ToolResult(call.id, call.name, result))
                     if (event := handoff()) is not None:

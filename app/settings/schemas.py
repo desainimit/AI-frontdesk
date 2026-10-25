@@ -154,6 +154,9 @@ class PrivacySettings(Section):
     # or goes to staff. By text message a matching number is always enough: the reply
     # only ever reaches that phone.
     known_number_can_manage: bool = False
+    # On: once a caller is verified, the receptionist is reminded of their last calls and
+    # coming appointments, so they are not asked everything again.
+    remember_callers: bool = True
     # Off: an event in a provider's own calendar says only what kind of visit it is.
     calendar_shows_patient_name: bool = False
 
