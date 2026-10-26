@@ -82,7 +82,7 @@ async def test_an_answer_without_a_promise_is_not_questioned() -> None:
 def test_the_model_knows_the_callers_name_and_asks_for_it_when_it_does_not() -> None:
     session, state = call(clinic())
     prompt = system_prompt(session, state)
-    assert '"their_name": null' in prompt and "May I have your name" in prompt
+    assert '"their_name": null' in prompt and "Can I get your name" in prompt
     state.caller_name = "Nimit"
     assert '"their_name": "Nimit"' in system_prompt(session, state)
 

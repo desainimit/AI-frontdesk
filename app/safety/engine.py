@@ -11,6 +11,7 @@ from app.safety import handover
 from app.safety.classifier import SafetyClassifier
 from app.safety.handover_messages import handover_message
 from app.safety.messages import safety_message
+from app.safety.numbers import EmergencyLines
 from app.safety.rules import deterministic_rule
 
 logger = logging.getLogger(__name__)
@@ -31,11 +32,20 @@ class SafetyEngine:
         # On a call, a request for a person is answered with an offer, and the caller is
         # put through once they agree. By text, the team takes over at once.
         self.ask_first = ask_first
+        # The numbers to give in an emergency; set from the clinic's country each turn.
+        self.lines = EmergencyLines()
 
     def message(self, state: ConversationState) -> str:
         """The fixed sentence for the decision already in force."""
+        return self._message(state, state.safety_state.decision)
+
+    def _message(self, state: ConversationState, decision: SafetyDecision) -> str:
         return safety_message(
-            state.language, state.safety_state.decision, transfer_available=self.transfer_available
+            state.language,
+            decision,
+            transfer_available=self.transfer_available,
+            lines=self.lines,
+            reason=state.safety_state.reason,
         )
 
     async def evaluate(
@@ -54,9 +64,7 @@ class SafetyEngine:
             SafetyDecision.TRANSFER,
             SafetyDecision.ESCALATE,
         }:
-            return safety_message(
-                state.language, safety.decision, transfer_available=self.transfer_available
-            )
+            return self._message(state, safety.decision)
         context_hint = (
             safety.context_hint if state.utterance_count - safety.context_turn <= 2 else "none"
         )
@@ -147,7 +155,7 @@ class SafetyEngine:
             state.active_flow_state.flow_type = FlowType.EMERGENCY_ESCALATION
         elif decision in {SafetyDecision.TRANSFER, SafetyDecision.ESCALATE}:
             state.active_flow_state.flow_type = FlowType.HUMAN_TRANSFER
-        return safety_message(state.language, decision, transfer_available=self.transfer_available)
+        return self._message(state, decision)
 
     def _asked_for_person(self, state: ConversationState) -> str:
         """Offer once; asked again, or already offered, put them through."""

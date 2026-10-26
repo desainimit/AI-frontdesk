@@ -30,6 +30,7 @@ from app.safety import handover
 from app.safety.messages import transfer_failed_message
 from app.safety.transfer import TransferError, hang_up, transfer_call
 from app.tickets.service import open_ticket
+from app.voice.acknowledge import acknowledgement, after_acknowledgement, all_acknowledgements
 from app.voice.metrics import VoiceMetrics
 from app.voice.narration import narration
 from app.voice.pipeline import Speech, VoicePipeline
@@ -39,8 +40,11 @@ from app.voice.twilio import TwilioCredentials
 
 logger = logging.getLogger(__name__)
 
-# A pause before answering is normal; only one longer than this gets a soft
-# acknowledgement. A lookup is narrated as it starts instead (see app.voice.narration).
+# A person answers within a beat: when nothing is ready this soon after the caller
+# stopped, a short "Okay," is said while the answer is worked out (app.voice.acknowledge).
+ACK_AFTER_SECONDS = 0.2
+# A wait longer than this gets a second, softer line. A lookup is narrated as it starts
+# instead (see app.voice.narration).
 FILLER_AFTER_SECONDS = 3.0
 # Recognition this unsure of what was said is asked for again, not answered.
 UNCLEAR_BELOW = 0.5
@@ -99,6 +103,10 @@ class CallReceptionist:
         self.tickets = 0
         # When the caller's last words ended, for the time until the reply was heard.
         self._turn_started: float | None = None
+        # Acknowledgements said so far, so the next one is a different word.
+        self._acks = 0
+        self._last_ack: str | None = None
+        self._warming: asyncio.Task[None] | None = None
 
     async def reply(self, result: TranscriptionResult) -> None:
         if self.pipeline is None or not result.is_final or not result.text.strip():
@@ -119,7 +127,30 @@ class CallReceptionist:
             await self._respond(self._lines(spoken(self.state.language, "line_unclear")))
             return
         self._asked_again = False
-        await self._respond(self.engine.run(self.session, self.state, result.text))
+        ack = acknowledgement(self.state.language, result.text, self._acks, self._last_ack)
+        await self._respond(self.engine.run(self.session, self.state, result.text), acknowledge=ack)
+
+    def warm_acknowledgements(self) -> None:
+        """Make the acknowledgements' audio now, one at a time, so each plays at once
+        when needed. Made once per voice and kept for later calls."""
+        pipeline = self.pipeline
+        if pipeline is None or pipeline.phrases is None:
+            return
+
+        async def warm() -> None:
+            for line in all_acknowledgements(self.state.language):
+                speech = await pipeline.prepare(line, cache=True)
+                try:
+                    async for _ in speech.frames():
+                        pass
+                finally:
+                    speech.cancel()
+
+        async def quietly() -> None:
+            with suppress(Exception):
+                await warm()
+
+        self._warming = asyncio.create_task(quietly())
 
     @staticmethod
     async def _lines(*texts: str) -> AsyncIterator[Event]:
@@ -161,7 +192,13 @@ class CallReceptionist:
             logger.warning("call_hang_up_failed", extra={"reason": reason})
             self.ended = False
 
-    async def _respond(self, source: AsyncIterator[Event], *, fillers: bool = True) -> None:
+    async def _respond(
+        self,
+        source: AsyncIterator[Event],
+        *,
+        fillers: bool = True,
+        acknowledge: str | None = None,
+    ) -> None:
         pipeline = self.pipeline
         if pipeline is None:
             return
@@ -200,7 +237,10 @@ class CallReceptionist:
         async def say_filler() -> None:
             self._fillers += 1
             line = filler(self.state.language, self._fillers)
-            if line not in self._said_lines:
+            if acked and not any(record for _, record in items):
+                # "Okay," was just said: not "Okay, let me think." straight after.
+                line = after_acknowledgement(line, self.state.language)
+            if line and line not in self._said_lines:
                 self._said_lines.add(line)
                 await enqueue(line, record=False, cache=True)
 
@@ -213,20 +253,39 @@ class CallReceptionist:
         # When a short "let me check" fills the silence, if nothing has been said by then.
         # At most one per reply.
         fill_at: float | None = monotonic() + FILLER_AFTER_SECONDS if fillers else None
+        ack_at: float | None = monotonic() + ACK_AFTER_SECONDS if acknowledge else None
         narrated = False
+        acked = False
+
+        def follows_ack(text: str) -> str:
+            """Nothing recorded said yet after the acknowledgement: no second "Sure,"."""
+            if not acked or any(record for _, record in items):
+                return text
+            return after_acknowledgement(text, self.state.language)
+
         try:
             while True:
+                deadlines = [at for at in (ack_at, fill_at) if at is not None]
                 try:
-                    wait = None if fill_at is None else max(0.0, fill_at - monotonic())
+                    wait = max(0.0, min(deadlines) - monotonic()) if deadlines else None
                     event = await asyncio.wait_for(events.get(), wait)
                 except TimeoutError:
+                    # Whichever was due first; a timer can wake a little early.
+                    if ack_at is not None and (fill_at is None or ack_at <= fill_at):
+                        ack_at = None
+                        if acknowledge and not items:
+                            acked = True
+                            self._acks += 1
+                            self._last_ack = acknowledge
+                            await enqueue(acknowledge, record=False, cache=True)
+                        continue
                     fill_at = None
                     await say_filler()
                     continue
                 if event is None:
                     break
                 if isinstance(event, Say):
-                    fill_at = None
+                    fill_at = ack_at = None
                     if event.urgent:
                         # A safety alarm: whatever is still queued or playing gives way.
                         player.cancel()
@@ -242,7 +301,9 @@ class CallReceptionist:
                         await pipeline.play(alarm)
                         player = asyncio.create_task(play())
                         continue
-                    await enqueue(event.text)
+                    text = follows_ack(event.text)
+                    if text:
+                        await enqueue(text)
                 elif isinstance(event, Working):
                     if not narrated and not any(record for _, record in items):
                         # Nothing said yet: say what is being looked up, as a person would.
@@ -256,7 +317,9 @@ class CallReceptionist:
                         )
                         if line is not None:
                             narrated, fill_at = True, None
-                            await enqueue(line, record=False)
+                            line = follows_ack(line)
+                            if line:
+                                await enqueue(line, record=False)
                 elif isinstance(event, Handoff):
                     handoff = event
                 elif isinstance(event, Done):

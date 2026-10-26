@@ -3,6 +3,7 @@
 # ruff: noqa: E501
 
 from app.conversation.state import SafetyDecision
+from app.safety.numbers import EmergencyLines
 
 MESSAGES: dict[str, dict[str, str]] = {
     "gu": {
@@ -13,7 +14,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "transfer_failed": "તમારો કૉલ સ્ટાફ સાથે જોડાઈ શક્યો નથી. કૃપા કરીને સંસ્થાનો સીધો સંપર્ક કરો.",
     },
     "en": {
-        "emergency": "This may be an emergency. Call your local emergency services now. I cannot provide emergency care over this call.",
+        "emergency": "That sounds like it could be serious. Please hang up and call your local emergency number right now.",
         "clarify": "Are you having trouble breathing, chest pain, or another urgent symptom right now?",
         "transfer": "I will connect you to a staff member now.",
         "unavailable": "I cannot connect you to staff from this call. Please contact the business directly.",
@@ -64,10 +65,33 @@ MESSAGES: dict[str, dict[str, str]] = {
 }
 
 
-def safety_message(language: str, decision: SafetyDecision, *, transfer_available: bool) -> str:
+# The same alarm with the number to call, where the clinic's country is known.
+EMERGENCY_WITH_NUMBER: dict[str, str] = {
+    "en": "That sounds like it could be serious. Please hang up and call {number} right now.",
+    "hi": "यह गंभीर हो सकता है। कृपया अभी फ़ोन रखिए और तुरंत {number} पर कॉल कीजिए।",
+    "hinglish": "Yeh serious ho sakta hai. Please abhi phone rakhiye aur turant {number} par call kijiye.",
+    "gu": "આ ગંભીર હોઈ શકે છે. કૃપા કરીને હમણાં જ ફોન મૂકીને {number} પર કૉલ કરો.",
+}
+# Someone thinking of harming themselves: kind and slow, a line they can call any time.
+CRISIS: dict[str, str] = {
+    "en": "I'm really sorry you're going through this, and I'm glad you said something. You can call {crisis} any time, day or night, to talk to someone. If you're in danger right now, please call {number}.",
+    "hi": "मुझे सच में दुख है कि आप इससे गुज़र रहे हैं, अच्छा किया आपने बताया। आप किसी भी समय, दिन हो या रात, {crisis} पर कॉल करके किसी से बात कर सकते हैं। अगर आप अभी खतरे में हैं, तो कृपया {number} पर कॉल कीजिए।",
+    "hinglish": "Mujhe sach mein dukh hai ki aap isse guzar rahe hain, achha kiya aapne bataya. Aap kabhi bhi, din ho ya raat, {crisis} par call karke kisi se baat kar sakte hain. Agar aap abhi khatre mein hain, toh please {number} par call kijiye.",
+    "gu": "મને ખરેખર દુઃખ છે કે તમે આમાંથી પસાર થઈ રહ્યા છો, સારું કર્યું કે તમે કહ્યું. તમે ગમે ત્યારે, દિવસ હોય કે રાત, {crisis} પર કૉલ કરીને કોઈની સાથે વાત કરી શકો છો. જો તમે અત્યારે જોખમમાં હો, તો કૃપા કરીને {number} પર કૉલ કરો.",
+}
+
+
+def safety_message(
+    language: str,
+    decision: SafetyDecision,
+    *,
+    transfer_available: bool,
+    lines: EmergencyLines | None = None,
+    reason: str | None = None,
+) -> str:
     messages = MESSAGES.get(language, MESSAGES["en"])
     if decision == SafetyDecision.EMERGENCY_PROTOCOL:
-        return messages["emergency"]
+        return emergency_message(language, lines or EmergencyLines(), reason)
     if decision == SafetyDecision.CLARIFY:
         return messages["clarify"]
     if decision == SafetyDecision.TRANSFER and transfer_available:
@@ -77,3 +101,12 @@ def safety_message(language: str, decision: SafetyDecision, *, transfer_availabl
 
 def transfer_failed_message(language: str) -> str:
     return MESSAGES.get(language, MESSAGES["en"])["transfer_failed"]
+
+
+def emergency_message(language: str, lines: EmergencyLines, reason: str | None) -> str:
+    """The alarm, with the numbers to call when the clinic's country is known."""
+    if reason == "self_harm" and lines.crisis and lines.emergency and language in CRISIS:
+        return CRISIS[language].format(crisis=lines.crisis, number=lines.emergency)
+    if lines.emergency and language in EMERGENCY_WITH_NUMBER:
+        return EMERGENCY_WITH_NUMBER[language].format(number=lines.emergency)
+    return MESSAGES.get(language, MESSAGES["en"])["emergency"]

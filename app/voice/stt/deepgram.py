@@ -86,8 +86,10 @@ class DeepgramSTTProvider:
             ("sample_rate", sample_rate),
             ("channels", 1),
             ("interim_results", "true"),
-            # Half a second: a caller who pauses for breath is not answered too early.
-            ("endpointing", 500),
+            # 300 ms of silence ends a turn, about the beat a person waits. A caller who
+            # pauses mid-sentence and goes on is not lost: the rest arrives as the next
+            # turn, stops the reply that started, and both parts are answered together.
+            ("endpointing", 300),
             ("utterance_end_ms", 1000),
             ("smart_format", "true"),
             *(terms if self.model.startswith("nova-3") else ()),

@@ -231,6 +231,8 @@ class DailyUsage(BaseModel):
     output_tokens: int
     # Milliseconds until the first words, averaged over replies that said something.
     first_text_ms: int | None
+    # On calls: until the caller heard the first sound of a reply, averaged.
+    first_audio_ms: int | None = None
     handed_over: int
     failed: int
 
@@ -288,6 +290,7 @@ async def assistant_usage(
                 func.avg(AiTurn.first_text_ms),
                 func.count().filter(AiTurn.outcome == "handoff"),
                 func.count().filter(AiTurn.outcome.in_(("unavailable", "blocked", "interrupted"))),
+                func.avg(AiTurn.first_audio_ms),
             )
             .where(
                 AiTurn.tenant_id == context.tenant_id,
@@ -305,6 +308,7 @@ async def assistant_usage(
                 input_tokens=int(row[2]),
                 output_tokens=int(row[3]),
                 first_text_ms=int(row[4]) if row[4] is not None else None,
+                first_audio_ms=int(row[7]) if row[7] is not None else None,
                 handed_over=row[5],
                 failed=row[6],
             )

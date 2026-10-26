@@ -10,14 +10,14 @@ HANDOVER: dict[str, dict[str, str]] = {
     "en": {
         "offer_first": "Sure, I can connect you. Is it something I can help with, like booking or a question, or shall I put you through now?",
         "offer": "I can put you through to {target}. Shall I do that now?",
-        "connecting": "Of course, connecting you now. One moment.",
+        "connecting": "Sure, let me get you over to someone on the team.",
         "declined": "No problem. How can I help?",
         "offer_message": "I can't put you through right now, but I can take a message so the team calls you back. Would you like that?",
         "message_taken": "Done. I've passed it on, and someone from the team will call you back.",
         "trouble_offer": "Sorry, I'm having trouble on my side. Shall I put you through to the team?",
         "trouble_message": "Sorry, I'm having trouble on my side. Shall I take a message so the team calls you back?",
         "after_emergency": "I can also connect you to the clinic. Would you like that?",
-        "no_answer": "Sorry, the team couldn't pick up just now. I've noted your request and someone will call you back. Is there anything else I can help with?",
+        "no_answer": "Sorry, the team couldn't pick up just now. I've noted it down and someone will call you back. Anything else I can help with?",
     },
     "es": {
         "offer_first": "Claro, puedo pasarle. ¿Es algo en lo que pueda ayudarle, como una cita o una pregunta, o le paso ahora?",

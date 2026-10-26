@@ -805,31 +805,43 @@ async def run_media(
         )
         receptionist.pipeline = pipeline
         previous_sequence = int(message["sequenceNumber"])
+        greeting: asyncio.Task[None] | None = None
         try:
             await pipeline.start()
-            try:
-                if returned is not None:
-                    voice_metrics.record_human_transfer("no_answer")
-                    await pipeline.speak(handover_message(returned.language, "no_answer"))
-                else:
-                    name = await caller_name(receptionist, identity, history)
-                    if name:
-                        # A caller the clinic trusts by their number is greeted by name.
-                        await pipeline.speak(
-                            spoken(initial_conv_state.language, "hello_name", name=name),
-                            record=False,
-                        )
-                    await pipeline.speak(configuration.receptionist.greeting, cache=True)
-                    if not opened_while_open:
-                        await pipeline.speak(
-                            spoken(initial_conv_state.language, "closed_now"), cache=True
-                        )
-            except TTSError as error:
-                # Without a greeting the caller can still speak and be answered.
-                logger.warning(
-                    "call_greeting_failed",
-                    extra={"call_id": str(call_id), "error_type": error.code},
-                )
+
+            async def greet() -> None:
+                try:
+                    if returned is not None:
+                        voice_metrics.record_human_transfer("no_answer")
+                        await pipeline.speak(handover_message(returned.language, "no_answer"))
+                    else:
+                        name = await caller_name(receptionist, identity, history)
+                        heard = True
+                        if name:
+                            # A caller the clinic trusts by their number is greeted by name.
+                            heard = await pipeline.speak(
+                                spoken(initial_conv_state.language, "hello_name", name=name),
+                                record=False,
+                            )
+                        if heard:
+                            heard = await pipeline.speak(
+                                configuration.receptionist.greeting, cache=True
+                            )
+                        if heard and not opened_while_open:
+                            await pipeline.speak(
+                                spoken(initial_conv_state.language, "closed_now"), cache=True
+                            )
+                except TTSError as error:
+                    # Without a greeting the caller can still speak and be answered.
+                    logger.warning(
+                        "call_greeting_failed",
+                        extra={"call_id": str(call_id), "error_type": error.code},
+                    )
+                receptionist.warm_acknowledgements()
+
+            # Greeted while the caller's audio is already being listened to, so they
+            # can talk over the greeting the way they would with a person.
+            greeting = asyncio.create_task(greet())
             async with asyncio.timeout(configuration.calls.max_duration_minutes * 60):
                 while True:
                     async with asyncio.timeout(IDLE_SECONDS):
@@ -864,6 +876,10 @@ async def run_media(
                     audio = decode_audio(message["media"]["payload"])
                     await pipeline.process_inbound_audio(audio)
         finally:
+            if greeting is not None and not greeting.done():
+                greeting.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await greeting
             received = pipeline.received_frames
             sent = pipeline.sent_frames
             await pipeline.close()

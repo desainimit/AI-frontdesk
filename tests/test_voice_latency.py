@@ -218,7 +218,7 @@ async def test_a_speech_failure_does_not_end_the_call(monkeypatch: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_short_pause_before_answering_is_not_filled() -> None:
+async def test_a_pause_before_answering_gets_a_quick_acknowledgement() -> None:
     line, tts = Line(), TimedTTS(first_byte=0.0)
     receptionist = receptionist_for(ScriptedEngine([(1.8, Say("We do cleanings and fillings."))]))
     pipeline = await started_pipeline(line, tts)
@@ -227,8 +227,9 @@ async def test_a_short_pause_before_answering_is_not_filled() -> None:
         await receptionist.reply(TranscriptionResult("What do you offer?", True))
     finally:
         await pipeline.close()
-    # Nearly two seconds of thinking is a normal pause: no "one second" before it.
-    assert tts.requests == ["We do cleanings and fillings."]
+    # Nearly two seconds of thinking: a quick "Mm," the moment the caller stops, the way
+    # a person answers within a beat, and no "one second".
+    assert tts.requests == ["Mm,", "We do cleanings and fillings."]
 
 
 # --- Deepgram Flux ---------------------------------------------------------------
@@ -323,4 +324,4 @@ def test_flux_query_follows_the_clinic_languages_and_names() -> None:
     with pytest.raises(STTPermanentError):
         query(DeepgramSTTProvider(key, model="flux", language="gu"))
     path, nova = query(DeepgramSTTProvider(key, model="nova-3", language="gu", keyterms=("Lotus",)))
-    assert path == "/v1/listen" and nova["endpointing"] == ["500"] and nova["keyterm"] == ["Lotus"]
+    assert path == "/v1/listen" and nova["endpointing"] == ["300"] and nova["keyterm"] == ["Lotus"]

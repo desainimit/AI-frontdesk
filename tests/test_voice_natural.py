@@ -75,7 +75,8 @@ def test_prompt_carries_tone_and_name() -> None:
     friendly = prompt_for()
     assert "Tone: warm" in friendly and "Your name is" not in friendly
     # Honest when asked, never claims to be human.
-    assert "virtual receptionist" in friendly
+    plain = " ".join(friendly.split())
+    assert "AI assistant" in plain and "Never pretend to be human" in plain
 
 
 def test_voice_and_name_settings_are_checked() -> None:

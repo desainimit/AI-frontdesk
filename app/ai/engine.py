@@ -48,6 +48,7 @@ from app.core.errors import ApplicationError
 from app.safety import handover
 from app.safety.engine import SafetyEngine
 from app.safety.handover_messages import handover_message
+from app.safety.numbers import emergency_lines
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,8 @@ class Engine:
                 raise ToolValidationError("Invalid utterance size")
             words = redact_verification_secrets(utterance)
             answer = await self._answer(state, words)
+            clinic = session.configuration.clinic
+            self.safety.lines = emergency_lines(clinic.phone, clinic.timezone)
             if self.safety.ask_first:
                 # On a call: who can take it right now (opening hours, on-call lines).
                 self.safety.transfer_available = bool(
