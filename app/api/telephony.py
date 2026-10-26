@@ -26,7 +26,13 @@ from app.ai.engine import Engine
 from app.ai.identity import ContactIdentity
 from app.ai.llm.base import LLMProvider
 from app.ai.llm.factory import build_llm_provider, llm_from_connection
-from app.ai.llm.gateway import HEDGE_AFTER_SECONDS, ModelGateway, TurnLimits, breaker_for
+from app.ai.llm.gateway import (
+    FIRST_WORDS_SECONDS,
+    HEDGE_AFTER_SECONDS,
+    ModelGateway,
+    TurnLimits,
+    breaker_for,
+)
 from app.ai.memory import CallerHistory
 from app.ai.runtime import AssistantRuntime
 from app.ai.session import Session
@@ -742,6 +748,7 @@ async def run_media(
                 # beside it, which stands in for the retries a text reply would get.
                 hedge_after=HEDGE_AFTER_SECONDS,
                 retries=0,
+                first_words_within=FIRST_WORDS_SECONDS,
             ),
             registry,
             flow,

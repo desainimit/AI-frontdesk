@@ -12,8 +12,15 @@ from google.genai import types as genai_types
 from pydantic import SecretStr
 
 from app.ai.engine import Handoff, Say
-from app.ai.llm.base import ChatRequest, Completed, LLMUnavailableError, ModelEvent, TextDelta
-from app.ai.llm.factory import TIMEOUT_SECONDS, VOICE_TIMEOUT_SECONDS, build_llm_provider
+from app.ai.llm.base import (
+    ChatRequest,
+    Completed,
+    LLMTimeoutError,
+    LLMUnavailableError,
+    ModelEvent,
+    TextDelta,
+)
+from app.ai.llm.factory import TIMEOUT_SECONDS, build_llm_provider
 from app.ai.llm.gateway import ModelGateway
 from app.ai.llm.gemini import GeminiLLMProvider
 from app.ai.sentences import SentenceSplitter
@@ -172,12 +179,26 @@ async def test_on_a_call_a_failing_model_is_not_retried_in_a_ladder() -> None:
     assert primary.requests == 1 and fallback.requests == 1
 
 
-def test_calls_give_up_on_a_silent_model_sooner_than_texts() -> None:
+def test_calls_keep_the_timeout_google_accepts() -> None:
+    # Gemini's SDK sends the timeout to Google as a deadline; 5 s was refused with
+    # 400 INVALID_ARGUMENT on a real request. A call's limit is the gateway's instead.
     settings = MagicMock(llm_provider="gemini", platform_llm_key=SecretStr("k"))
     voice = build_llm_provider(settings, voice=True)
-    text = build_llm_provider(settings)
-    assert voice._http.timeout.read == VOICE_TIMEOUT_SECONDS  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue, reportUnknownMemberType]
-    assert text._http.timeout.read == TIMEOUT_SECONDS  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue, reportUnknownMemberType]
+    assert voice._http.timeout.read == TIMEOUT_SECONDS  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue, reportUnknownMemberType]
+
+
+@pytest.mark.asyncio
+async def test_on_a_call_a_model_that_does_not_start_answering_is_given_up_on() -> None:
+    model = SlowThenFast(first_delay=5.0)
+    gateway = ModelGateway(model, retries=0, first_words_within=0.1)  # type: ignore[arg-type]
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(LLMTimeoutError):
+        _ = [event async for event in gateway.stream(ChatRequest("", (), ()))]
+    assert asyncio.get_running_loop().time() - started < 1.0
+    # A model that answers in time is not affected.
+    quick = ModelGateway(SlowThenFast(first_delay=0.0), first_words_within=0.5)  # type: ignore[arg-type]
+    events = [event async for event in quick.stream(ChatRequest("", (), ()))]
+    assert isinstance(events[0], TextDelta)
 
 
 def test_a_gemini_failure_logs_googles_reason_but_not_its_message(

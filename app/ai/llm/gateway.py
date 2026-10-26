@@ -15,6 +15,7 @@ from app.ai.llm.base import (
     LLMProvider,
     LLMProviderError,
     LLMRateLimitError,
+    LLMTimeoutError,
     LLMUnavailableError,
     ModelEvent,
     TextDelta,
@@ -26,6 +27,11 @@ RETRIES = 2
 # a second, identical one beside it, and whichever answers first is used. A slow
 # moment at the provider then costs a second, not ten.
 HEDGE_AFTER_SECONDS = 1.8
+# On a call: no first words this long after the request (both copies of it, when
+# hedged), and the next attempt is made, then the caller is told. Kept here rather
+# than as the provider's timeout, which Gemini sends to Google as a deadline it may
+# refuse when short.
+FIRST_WORDS_SECONDS = 8.0
 BREAKER_FAILURES = 4
 BREAKER_RESET_SECONDS = 30.0
 # Clinics on the platform's key share its rate limit; one busy clinic must not use it up.
@@ -59,6 +65,7 @@ class ModelGateway:
         pause_seconds: float = 0.3,
         hedge_after: float | None = None,
         retries: int = RETRIES,
+        first_words_within: float | None = None,
     ) -> None:
         self._primary = primary
         self._fallback = fallback
@@ -69,6 +76,7 @@ class ModelGateway:
         self._pause = pause_seconds
         self._hedge_after = hedge_after
         self._retries = retries
+        self._first_words_within = first_words_within
         # Set when the account itself was refused, so someone can be told to fix it.
         self.account_problem: str | None = None
 
@@ -112,9 +120,33 @@ class ModelGateway:
             self._slot.release()
 
     def _attempt(self, model: LLMProvider, request: ChatRequest) -> AsyncIterator[ModelEvent]:
-        if self._hedge_after is None:
-            return model.stream(request)
-        return first_to_answer(model, request, self._hedge_after)
+        stream = (
+            model.stream(request)
+            if self._hedge_after is None
+            else first_to_answer(model, request, self._hedge_after)
+        )
+        if self._first_words_within is None:
+            return stream
+        return within(stream, self._first_words_within)
+
+
+async def within(stream: AsyncIterator[ModelEvent], seconds: float) -> AsyncIterator[ModelEvent]:
+    """The stream, as long as its first event comes within `seconds`."""
+    events = aiter(stream)
+    try:
+        async with asyncio.timeout(seconds):
+            first = await anext(events)
+    except StopAsyncIteration:
+        return
+    except TimeoutError:
+        close = getattr(events, "aclose", None)
+        if close is not None:
+            with suppress(BaseException):
+                await close()
+        raise LLMTimeoutError("LLM did not start answering in time") from None
+    yield first
+    async for event in events:
+        yield event
 
 
 async def first_to_answer(
