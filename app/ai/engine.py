@@ -308,7 +308,8 @@ class Engine:
                 calls = completed.turn.tool_calls
                 if (
                     not calls
-                    and not tools
+                    # Even after a lookup: "Let me check Wednesday instead." and nothing
+                    # more would leave the caller in silence.
                     and not reminded
                     and steps < MAX_STEPS
                     and promises_a_lookup(completed.turn.text)

@@ -50,8 +50,8 @@ def default_settings(clinic_name: str, timezone: str = DEFAULT_TIMEZONE) -> Clin
                 "to pass the request to the clinic team instead."
             ),
             unknown_answer=(
-                "I do not have that information. I can pass your question to the clinic "
-                "team so they can get back to you."
+                "Hmm, I don't have that in front of me. I can pass your question to the "
+                "team so they get back to you."
             ),
         ),
         calls=CallSettings(),

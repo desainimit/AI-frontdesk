@@ -1,9 +1,11 @@
 import asyncio
 import base64
 import logging
+import re
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import suppress
+from dataclasses import replace
 from time import monotonic
 from typing import Any, Protocol
 from uuid import uuid4
@@ -13,6 +15,7 @@ from app.conversation.backchannel import is_backchannel
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConversationState
 from app.conversation.store import ConversationStateStore
+from app.conversation.turn_end import sounds_unfinished
 from app.voice.audio import ULAW_FRAME, ulaw_speech
 from app.voice.codec import ulaw_to_pcm
 from app.voice.metrics import VoiceMetrics
@@ -38,6 +41,10 @@ RESUME_AFTER_SECONDS = 1.5
 BARGE_IN_CONFIDENCE = 0.5
 # Silence after the receptionist finished, before it asks whether the caller is there.
 SILENCE_SECONDS = 7.0
+# Words that stop mid-sentence ("I'd like to check my") wait this long for the rest
+# before they are answered as they are.
+HOLD_UNFINISHED_SECONDS = 0.9
+DEVANAGARI = re.compile("[ऀ-ॿ]")
 # The breath a person takes between two lines said in a row ("Hi Nimit!" ... "Thank you
 # for calling").
 BEAT_SECONDS = 0.35
@@ -184,6 +191,9 @@ class VoicePipeline:
         self._turn_task: asyncio.Task[None] | None = None
         self._active_response_task: asyncio.Task[None] | None = None
         self._resume_task: asyncio.Task[None] | None = None
+        # The caller's words so far, when they stopped mid-sentence.
+        self._held: TranscriptionResult | None = None
+        self._hold_task: asyncio.Task[None] | None = None
         self._turns: asyncio.Queue[TranscriptionResult] = asyncio.Queue(maxsize=8)
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._running = False
@@ -349,6 +359,9 @@ class VoicePipeline:
                     continue
                 if not result.is_final:
                     self._heard_words(result)
+                    if self._held is not None:
+                        # Still talking: the rest of the sentence is on its way.
+                        self._hold(self._held)
                     continue
                 if self.metrics is not None and self._last_audio_at is not None:
                     self.metrics.record_stt_finalization_latency(
@@ -367,12 +380,48 @@ class VoicePipeline:
                         # The caller said something new; what was still queued to
                         # play answers the old question.
                         self._stop_playback()
+                result = self._joined(result)
+                if sounds_unfinished(result.text):
+                    self._hold(result)
+                    continue
                 self._turns.put_nowait(result)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.error("stt_stream_consumer_failed")
             raise RuntimeError("Speech stream failed") from None
+
+    def _joined(self, result: TranscriptionResult) -> TranscriptionResult:
+        """These words, after any the caller stopped on mid-sentence."""
+        held, self._held = self._held, None
+        self._cancel_hold()
+        if held is None:
+            return result
+        return replace(
+            result,
+            text=held.text + " " + result.text,
+            confidence=min(held.confidence, result.confidence),
+            language=result.language or held.language,
+        )
+
+    def _hold(self, result: TranscriptionResult) -> None:
+        """Wait a moment for the rest of an unfinished sentence."""
+        self._held = result
+        self._cancel_hold()
+        self._hold_task = asyncio.create_task(self._release_held())
+
+    def _cancel_hold(self) -> None:
+        if self._hold_task is not None and not self._hold_task.done():
+            self._hold_task.cancel()
+        self._hold_task = None
+
+    async def _release_held(self) -> None:
+        await asyncio.sleep(HOLD_UNFINISHED_SECONDS)
+        held, self._held = self._held, None
+        if held is not None and self._running:
+            # Nothing more came: answer what was said.
+            with suppress(asyncio.QueueFull):
+                self._turns.put_nowait(held)
 
     def _release_deferred(self) -> None:
         """A "yes" said over the end of a question is the answer to it; any other
@@ -432,6 +481,10 @@ class VoicePipeline:
         voice = str(getattr(self.tts, "voice_key", self.tts.name)) + ":" + (voice_id or "")
         # Said the way a person reads it; the transcript keeps the written form.
         spoken = speakable(text, language)
+        if language in {None, "en", "hinglish"} and DEVANAGARI.search(text):
+            # Hindi script in an English or Hinglish call (a name, a phrase): read with
+            # Hindi pronunciation rather than spelled out by the English voice.
+            language = "hi"
         if cache and self.phrases is not None:
             audio = await self.phrases.get(voice, language or "", text)
             if audio:
@@ -609,6 +662,7 @@ class VoicePipeline:
                 self._turn_task,
                 self._resume_task,
                 self._silence_task,
+                self._hold_task,
             )
             if task is not None
         ]

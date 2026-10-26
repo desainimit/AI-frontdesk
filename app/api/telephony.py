@@ -26,7 +26,7 @@ from app.ai.engine import Engine
 from app.ai.identity import ContactIdentity
 from app.ai.llm.base import LLMProvider
 from app.ai.llm.factory import build_llm_provider, llm_from_connection
-from app.ai.llm.gateway import ModelGateway, TurnLimits, breaker_for
+from app.ai.llm.gateway import HEDGE_AFTER_SECONDS, ModelGateway, TurnLimits, breaker_for
 from app.ai.memory import CallerHistory
 from app.ai.runtime import AssistantRuntime
 from app.ai.session import Session
@@ -738,6 +738,8 @@ async def run_media(
                 fallback=providers.light_llm,
                 breaker=breaker_for(circuit_registry(socket.app), tenant_id, providers.account),
                 slot=turn_limits(socket.app).slot(tenant_id),
+                # A caller is waiting on the line: a slow start gets a second request.
+                hedge_after=HEDGE_AFTER_SECONDS,
             ),
             registry,
             flow,

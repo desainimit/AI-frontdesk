@@ -113,6 +113,7 @@ class OpenRouterLLMProvider:
         self._effort = reasoning_effort
         # On a call the quickest endpoint matters more than the cheapest.
         self._routing = ROUTING | {"sort": "latency"} if fastest else ROUTING
+        self._fastest = fastest
 
     def _body(self) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -123,6 +124,10 @@ class OpenRouterLLMProvider:
         }
         if self._effort:
             body["reasoning"] = {"effort": self._effort}
+        if self._fastest:
+            # The provider's priority lane: answered first when it is busy, for a little
+            # more per token. Where there is none, the request is served as usual.
+            body["service_tier"] = "priority"
         return body
 
     def _headers(self) -> dict[str, str]:

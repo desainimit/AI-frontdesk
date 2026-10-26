@@ -4,6 +4,7 @@ attempt, a circuit breaker per model account and a cap on one clinic's parallel 
 import asyncio
 import random
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from uuid import UUID
 
 from app.ai.llm.base import (
@@ -21,6 +22,10 @@ from app.ai.llm.base import (
 from app.voice.circuit import CircuitBreaker, CircuitRegistry
 
 RETRIES = 2
+# On a call: a request that has not started answering this long after it was sent gets
+# a second, identical one beside it, and whichever answers first is used. A slow
+# moment at the provider then costs a second, not ten.
+HEDGE_AFTER_SECONDS = 1.8
 BREAKER_FAILURES = 4
 BREAKER_RESET_SECONDS = 30.0
 # Clinics on the platform's key share its rate limit; one busy clinic must not use it up.
@@ -52,6 +57,7 @@ class ModelGateway:
         breaker: CircuitBreaker | None = None,
         slot: asyncio.Semaphore | None = None,
         pause_seconds: float = 0.3,
+        hedge_after: float | None = None,
     ) -> None:
         self._primary = primary
         self._fallback = fallback
@@ -60,6 +66,7 @@ class ModelGateway:
         )
         self._slot = slot or asyncio.Semaphore(TURNS_PER_CLINIC)
         self._pause = pause_seconds
+        self._hedge_after = hedge_after
         # Set when the account itself was refused, so someone can be told to fix it.
         self.account_problem: str | None = None
 
@@ -79,7 +86,7 @@ class ModelGateway:
             for number, model in enumerate(attempts):
                 spoken = False
                 try:
-                    async for event in model.stream(request):
+                    async for event in self._attempt(model, request):
                         spoken = spoken or isinstance(event, TextDelta)
                         yield event
                     self._breaker.record_success()
@@ -101,6 +108,58 @@ class ModelGateway:
                     await asyncio.sleep(self._pause * 2**number * (0.5 + random.random()))
         finally:
             self._slot.release()
+
+    def _attempt(self, model: LLMProvider, request: ChatRequest) -> AsyncIterator[ModelEvent]:
+        if self._hedge_after is None:
+            return model.stream(request)
+        return first_to_answer(model, request, self._hedge_after)
+
+
+async def first_to_answer(
+    model: LLMProvider, request: ChatRequest, hedge_after: float
+) -> AsyncIterator[ModelEvent]:
+    """The model's stream, or a second one started beside it when the first is slow to
+    begin: whichever produces its first event first is used, the other is dropped."""
+    first = aiter(model.stream(request))
+    first_event = asyncio.ensure_future(anext(first))
+    done, _ = await asyncio.wait({first_event}, timeout=hedge_after)
+    racers = {first_event: first}
+    if not done:
+        second = aiter(model.stream(request))
+        racers[asyncio.ensure_future(anext(second))] = second
+    winner: AsyncIterator[ModelEvent] | None = None
+    event: ModelEvent | None = None
+    try:
+        pending = set(racers)
+        error: BaseException | None = None
+        while pending and winner is None:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                if task.exception() is None:
+                    winner, event = racers[task], task.result()
+                    break
+                # One failed: the other may still answer.
+                error = error or task.exception()
+        if winner is None:
+            if isinstance(error, StopAsyncIteration):
+                return
+            assert error is not None
+            raise error
+    finally:
+        for task, stream in racers.items():
+            if stream is winner:
+                continue
+            task.cancel()
+            with suppress(BaseException):
+                await task
+            close = getattr(stream, "aclose", None)
+            if close is not None:
+                with suppress(BaseException):
+                    await close()
+    assert event is not None and winner is not None
+    yield event
+    async for event in winner:
+        yield event
 
 
 def breaker_for(registry: CircuitRegistry, tenant_id: UUID, account: str) -> CircuitBreaker:

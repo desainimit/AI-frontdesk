@@ -46,8 +46,10 @@ ACK_AFTER_SECONDS = 0.2
 # A wait longer than this gets a second, softer line. A lookup is narrated as it starts
 # instead (see app.voice.narration).
 FILLER_AFTER_SECONDS = 3.0
-# Recognition this unsure of what was said is asked for again, not answered.
+# Recognition this unsure of a few words is asked for again, not answered. A longer
+# sentence goes to the model, which can ask about just the part that was unclear.
 UNCLEAR_BELOW = 0.5
+UNCLEAR_MAX_WORDS = 3
 # Turns out of the model's view are summarized in batches of this many.
 SUMMARY_EVERY_TURNS = 10
 SUMMARY_SECONDS = 8.0
@@ -120,7 +122,11 @@ class CallReceptionist:
                 return
             # They are not done after all.
             self.state.end_requested = False
-        if result.confidence < UNCLEAR_BELOW and not self._asked_again:
+        if (
+            result.confidence < UNCLEAR_BELOW
+            and len(result.text.split()) <= UNCLEAR_MAX_WORDS
+            and not self._asked_again
+        ):
             # Probably misheard: ask once rather than answer the wrong thing. A second
             # unclear answer goes to the model, which can still ask in its own words.
             self._asked_again = True
@@ -449,6 +455,10 @@ class CallReceptionist:
             await self._ticket("unavailable")
             return
         if safety.transfer_attempted:
+            # Tried once already this call: the team has the request (one ticket per
+            # reason), and the conversation goes on instead of repeating the hand-over.
+            if not self.transferred:
+                self._carry_on()
             return
         # The caller has agreed by now (see app.safety.handover).
         targets = (

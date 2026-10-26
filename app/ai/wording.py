@@ -42,14 +42,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "slot_unavailable": "Ah, that time's just been taken. Want to pick another one?",
         "appointment_unavailable": "Sorry, I can't change that one myself. The front desk can sort it out for you.",
         "new_slot_unavailable": "Ah, that new time's gone. Want to pick another one?",
-        "book_offer": "So that's {time} with {provider}. Shall I book it for you?",
+        "book_offer": "Okay, so that's {provider} {time}. Shall I book it for you?",
         "cancel_offer": "Just to check: you'd like to cancel your appointment {time} with {provider}?",
-        "move_offer": "So I'll move it from {old} to {new} with {provider}. Is that okay?",
+        "move_offer": "So that's {provider} {new}, instead of {old}. Is that okay?",
         "confirm": "{offer}",
         "discarded": "No problem, I haven't changed anything. What would work better?",
-        "booked": "Done, you're booked for {time}. Your appointment number is {reference}.",
+        "booked": "Done, you're all booked {time}. Your appointment number is {reference}.",
         "cancelled": "Done, that appointment is cancelled.",
-        "moved": "Done, I've moved it to {time}. Your appointment number stays {reference}.",
+        "moved": "Done, it's moved. You're now booked {time}, and your appointment number stays {reference}.",
         "unavailable": "Sorry, I can't do that one from here right now. The front desk can help you with it.",
         "knowledge_unavailable": "Hmm, I don't have that info in front of me.",
         "one_moment": "One moment, please.",
@@ -273,4 +273,6 @@ def filler(language: str, turn: int) -> str:
 def spoken(language: str, key: str, **values: Any) -> str:
     templates = MESSAGES.get(language, MESSAGES["en"])
     # A sentence not yet translated is said in English rather than not at all.
-    return (templates.get(key) or MESSAGES["en"][key]).format(**values)
+    text = (templates.get(key) or MESSAGES["en"][key]).format(**values)
+    # "at 5 p.m." ending a sentence keeps one full stop.
+    return text.replace(".m..", ".m.")

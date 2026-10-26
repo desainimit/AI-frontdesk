@@ -22,6 +22,12 @@ _AGREE = re.compile(
     re.IGNORECASE,
 )
 
+# A reply that starts with "no" is a no, whatever follows ("No, can you do it again?").
+_LEADING_NO = re.compile(
+    r"^\W*(?:no|nope|nah|nahi|nahin|na|not now|नहीं|ना|ના)(?![\w\u0900-\u0AFF])",
+    re.IGNORECASE,
+)
+
 
 def targets_now(
     configuration: ClinicConfiguration, state: ConversationState
@@ -73,7 +79,11 @@ def withdraw(state: ConversationState) -> None:
 def consent(utterance: str, answer: bool | None) -> bool | None:
     """Yes, no, or neither, to "shall I put you through?". `answer` is the general reading
     of the reply as yes or no."""
-    if _AGREE.search(utterance) or HUMAN_REQUEST.search(utterance):
+    if HUMAN_REQUEST.search(utterance):
+        return True
+    if _LEADING_NO.search(utterance):
+        return False
+    if _AGREE.search(utterance):
         return True
     return answer
 
