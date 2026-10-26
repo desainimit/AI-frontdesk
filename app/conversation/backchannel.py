@@ -5,6 +5,7 @@
 not a new question.
 """
 
+import re
 import unicodedata
 
 from app.conversation.locales import base_language
@@ -157,6 +158,50 @@ def is_closing(text: str, language: str = "en") -> bool:
     if any(word in _CLOSING for word in words):
         return True
     return is_backchannel(text, language) or len(words) <= 2
+
+
+# The caller is ending the call: "bye", "you can cut the call", "that's all",
+# "phone rakhta hoon". Said with nothing else to ask, it needs no reply but a goodbye.
+_ENDING = re.compile(
+    r"\b(?:bye|bye-bye|goodbye|good bye|cut the call|cut the phone|hang up|disconnect"
+    r"|that'?s all|that is all|that'?s it|nothing else|nothing more|i'?m done"
+    r"|rakh(?:ta|ti|te)? (?:hoon|hu|hun|do|dijiye|rahe)|phone rakh\w*|band kar\w*"
+    r"|bas itna|aur kuch nahi)\b"
+    r"|बाय|फ़ोन रख|फोन रख|रखता हूँ|रखती हूँ|बस इतना|और कुछ नहीं|આવજો|ફોન મૂકું",
+    re.IGNORECASE,
+)
+# The receptionist's "anything else?", after which "no, thanks" means goodbye.
+_ANYTHING_ELSE = re.compile(
+    r"anything else|kuch aur|कुछ और|બીજું કંઈ|algo más|autre chose|noch etwas|mais alguma",
+    re.IGNORECASE,
+)
+# All a caller says to "anything else?" when they are done: "no, thanks", "that's all",
+# "nahi bas", "thank you so much".
+_DONE_WORDS = {
+    "no", "nope", "nah", "nahi", "nahin", "thanks", "thank", "you", "so", "much", "very",
+    "that's", "thats", "all", "it", "i'm", "im", "good", "fine", "ok", "okay", "nothing",
+    "else", "bas", "ji", "dhanyavaad", "dhanyawad", "shukriya", "नहीं", "बस", "जी",
+    "धन्यवाद", "शुक्रिया", "ना", "આભાર",
+}  # fmt: skip
+# An explicit goodbye inside a longer request ("I need to cancel, bye") is not one.
+MAX_ENDING_WORDS = 10
+
+
+def wants_to_end(text: str, last_reply: str | None = None) -> bool:
+    """Whether the caller is saying goodbye, with nothing more to ask.
+
+    An explicit goodbye ("bye", "cut the call", "phone rakhta hoon"), or "no, thanks"
+    straight after the receptionist asked whether there is anything else.
+    """
+    if "?" in text or "?" in text:
+        return False
+    words = _words(text)
+    if not words or any(word in _CARRY_ON for word in words):
+        return False
+    if _ENDING.search(text) and len(words) <= MAX_ENDING_WORDS:
+        return True
+    asked = bool(last_reply and _ANYTHING_ELSE.search(last_reply))
+    return asked and len(words) <= MAX_CLOSING_WORDS and all(word in _DONE_WORDS for word in words)
 
 
 def is_backchannel(text: str, language: str = "en") -> bool:

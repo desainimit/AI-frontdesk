@@ -53,7 +53,7 @@ from app.safety.numbers import emergency_lines
 logger = logging.getLogger(__name__)
 
 # Their results concern who the person is; they are not repeated in later turns.
-UNREMEMBERED_TOOLS = frozenset({"identify_patient", "register_patient"})
+UNREMEMBERED_TOOLS = frozenset({"identify_patient", "confirm_identity", "register_patient"})
 MAX_STEPS = 4
 MAX_TOOL_CALLS = 6
 TURN_SECONDS = 25.0
@@ -69,6 +69,14 @@ KEEP_PROMISE = (
 Outcome = Literal[
     "answered", "confirmation", "safety", "handoff", "unavailable", "blocked", "interrupted"
 ]
+
+
+# A plain "no, thanks" is answered with a fixed line; anything longer is a new request.
+PLAIN_NO_WORDS = 4
+
+
+def _says_more_than_no(words: str) -> bool:
+    return "?" in words or len(words.split()) > PLAIN_NO_WORDS
 
 
 @dataclass(frozen=True)
@@ -205,9 +213,12 @@ class Engine:
                         return
                     if agreed is False:
                         handover.withdraw(state)
-                        yield say(handover_message(state.language, "declined"))
-                        yield done("answered")
-                        return
+                        if not _says_more_than_no(words):
+                            yield say(handover_message(state.language, "declined"))
+                            yield done("answered")
+                            return
+                        # "No, can you transfer the call?": the no is to the offer; what
+                        # they ask next goes to the model below.
                 elif state.safety_state.transfer_offered:
                     handover.withdraw(state)
             # 1. The instant safety rules. They need no model and nothing outranks them.
@@ -265,7 +276,8 @@ class Engine:
                 if perf_counter() - started > TURN_SECONDS:
                     raise TimeoutError
                 steps += 1
-                splitter = SentenceSplitter()
+                # On a call the first words are spoken while the rest is written.
+                splitter = SentenceSplitter(first_clause=session.channel == "voice")
                 completed: Completed | None = None
                 try:
                     async for item in self.model.stream(ChatRequest(system, tuple(turns), specs)):

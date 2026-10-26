@@ -116,6 +116,8 @@ class VerificationStatus(StrEnum):
 class IdentifierType(StrEnum):
     ACCESS_CODE = "access_code"
     PHONE = "phone"
+    # The caller gave the name on the appointment (and its number, from another phone).
+    CONFIRMED = "confirmed"
     DOB = "dob"
     ACCOUNT_ID = "account_id"
     OTP = "otp"
@@ -134,6 +136,8 @@ class IdentityState(BaseModel):
     attempts: int = Field(default=0, ge=0)
     max_attempts: int = Field(default=3, ge=1, le=10)
     verified_at: datetime | None = None
+    # Tries at the name check (app.ai.caller_check) on this call.
+    name_checks: int = Field(default=0, ge=0)
 
     @property
     def is_verified(self) -> bool:

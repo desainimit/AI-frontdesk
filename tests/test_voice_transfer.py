@@ -245,3 +245,13 @@ async def test_a_message_for_the_team_lets_the_call_go_on(monkeypatch: Any) -> N
     transfer.assert_not_awaited()
     receptionist._ticket.assert_awaited_once()  # type: ignore[attr-defined]
     assert state.safety_state.decision == SafetyDecision.CONTINUE
+
+
+async def test_a_no_with_a_question_gets_the_question_answered() -> None:
+    # Seen on a call: "No, please. Can you transfer the call?" got "How can I help?".
+    built = voice_engine("Sorry, nobody can take the call right now. Shall I take a message?")
+    session, state = call(clinic(FRONT))
+    await turn(built, session, state, "Let me speak to the receptionist")
+    said, events, _ = await turn(built, session, state, "No, please. Can you transfer the call?")
+    assert said != [handover_message("en", "declined")] and not handed_over(events)
+    assert said == ["Sorry, nobody can take the call right now.", "Shall I take a message?"]

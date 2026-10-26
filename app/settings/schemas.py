@@ -196,6 +196,10 @@ class PrivacySettings(Section):
     # or goes to staff. By text message a matching number is always enough: the reply
     # only ever reaches that phone.
     known_number_can_manage: bool = False
+    # On: a caller can still see, move and cancel their own appointments by giving the
+    # name on the appointment (and its number, when they call from another phone), the
+    # way they would at the desk. Off: that needs a code from reception or goes to staff.
+    confirm_callers_by_name: bool = True
     # On: once a caller is verified, the receptionist is reminded of their last calls and
     # coming appointments, so they are not asked everything again.
     remember_callers: bool = True

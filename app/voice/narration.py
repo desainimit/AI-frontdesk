@@ -106,6 +106,16 @@ LINES: dict[str, dict[str, tuple[str, ...]]] = {
         "pt": ("Vou anotar para a equipe.",),
     },
 }
+LINES["confirm_identity"] = {
+    "en": ("Let me just check that.", "One moment, let me match that up."),
+    "hi": ("जी, एक बार मिला लेते हैं।",),
+    "hinglish": ("Ji, ek baar match kar lete hain.",),
+    "gu": ("જી, એક વાર મેળવી લઈએ.",),
+    "es": ("Déjeme comprobarlo.",),
+    "fr": ("Je vérifie.",),
+    "de": ("Ich gleiche das kurz ab.",),
+    "pt": ("Deixe-me conferir.",),
+}
 # Moving or cancelling sounds like booking: "let me set that up".
 LINES["reschedule_appointment"] = LINES["book_appointment"]
 LINES["cancel_appointment"] = LINES["book_appointment"]

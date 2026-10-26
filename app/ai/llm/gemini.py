@@ -1,5 +1,6 @@
 """Gemini adapter. Every request carries its own context; nothing is stored at Google."""
 
+import logging
 from collections.abc import AsyncIterator
 from typing import Any, Literal, cast
 
@@ -28,6 +29,8 @@ from app.ai.llm.base import (
     UserTurn,
 )
 from app.ai.llm.schema import wire_schema
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 ThinkingLevel = Literal["minimal", "low", "medium", "high"]
@@ -106,6 +109,7 @@ class GeminiLLMProvider:
         *,
         thinking_level: ThinkingLevel | None = "low",
         http_client: httpx.AsyncClient | None = None,
+        priority: bool = False,
     ) -> None:
         if not api_key.get_secret_value():
             raise LLMCredentialsError("LLM credentials are not configured")
@@ -119,6 +123,9 @@ class GeminiLLMProvider:
             ),
         )
         self.model = model or DEFAULT_MODEL
+        # On a call: Google's priority lane, answered ahead of standard traffic. Only
+        # Tier 2 and 3 accounts get it; any other is served as standard, without error.
+        self._tier = types.ServiceTier.PRIORITY if priority else None
         self._max_output_tokens = max_output_tokens
         self._thinking = (
             types.ThinkingConfig(thinking_level=types.ThinkingLevel(thinking_level.upper()))
@@ -126,11 +133,30 @@ class GeminiLLMProvider:
             else None
         )
 
+    def _failed(self, error: Exception) -> LLMProviderError:
+        """Google's own reason for a failure, logged so it can be told apart from ours:
+        the status code and status ("UNAVAILABLE", "RESOURCE_EXHAUSTED") or the kind of
+        network error. Never the message, which can repeat the request."""
+        if isinstance(error, errors.APIError):
+            logger.warning(
+                "gemini_request_failed",
+                extra={"model": self.model, "status_code": error.code, "status": error.status},
+            )
+            return _failure(error.code)
+        logger.warning(
+            "gemini_request_failed",
+            extra={"model": self.model, "error_type": type(error).__name__},
+        )
+        if isinstance(error, httpx.TimeoutException | TimeoutError):
+            return LLMTimeoutError("LLM request timed out")
+        return LLMUnavailableError("LLM is unavailable")
+
     async def stream(self, request: ChatRequest) -> AsyncIterator[ModelEvent]:
         config = types.GenerateContentConfig(
             system_instruction=request.system,
             max_output_tokens=self._max_output_tokens,
             thinking_config=self._thinking,
+            service_tier=self._tier,
             tools=[
                 types.Tool(
                     function_declarations=[
@@ -180,12 +206,8 @@ class GeminiLLMProvider:
                         text.append(part.text)
                         yield TextDelta(part.text)
                 finish = candidate.finish_reason or finish
-        except errors.APIError as error:
-            raise _failure(error.code) from None
-        except (httpx.TimeoutException, TimeoutError):
-            raise LLMTimeoutError("LLM request timed out") from None
-        except (httpx.HTTPError, OSError):
-            raise LLMUnavailableError("LLM is unavailable") from None
+        except (errors.APIError, httpx.HTTPError, OSError) as error:
+            raise self._failed(error) from None
         except ValueError:
             # The stream carried something that is not a response at all.
             raise LLMInvalidResponseError("LLM returned no usable response") from None
@@ -224,12 +246,8 @@ class GeminiLLMProvider:
                 ],
                 config=config,
             )
-        except errors.APIError as error:
-            raise _failure(error.code) from None
-        except (httpx.TimeoutException, TimeoutError):
-            raise LLMTimeoutError("LLM request timed out") from None
-        except (httpx.HTTPError, OSError):
-            raise LLMUnavailableError("LLM is unavailable") from None
+        except (errors.APIError, httpx.HTTPError, OSError) as error:
+            raise self._failed(error) from None
         candidate = response.candidates[0] if response.candidates else None
         if candidate is None or candidate.finish_reason in _BLOCKED:
             raise LLMBlockedError("LLM returned no usable response")

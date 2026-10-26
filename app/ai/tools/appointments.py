@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from app.ai.caller_check import appointment_number
 from app.ai.identity import ContactIdentity
 from app.ai.memory import first_name
 from app.ai.session import AssistantAuthorizationError, Session
@@ -60,12 +61,25 @@ class AppointmentsInput(ToolInput):
     which: Literal["upcoming", "past"] = "upcoming"
 
 
+# Tries at the name check before the team takes it.
+NAME_CHECKS = 3
 # Enough to choose from on a call without reading out a long list.
 LISTED_APPOINTMENTS = 5
 
 
 class RegisterInput(ToolInput):
     full_name: str = Field(min_length=2, max_length=120, description="As the person gave it.")
+
+
+class ConfirmInput(ToolInput):
+    full_name: str = Field(
+        min_length=2, max_length=120, description="The name on the appointment, as they said it."
+    )
+    appointment_number: str | None = Field(
+        default=None,
+        max_length=20,
+        description='As they said it ("A-3"). Needed when they call from another phone.',
+    )
 
 
 class AvailabilityInput(ToolInput):
@@ -154,6 +168,48 @@ class AppointmentFlow:
             state.identity_state.identifier_type = IdentifierType.ACCESS_CODE
         return Outcome(status="identified")
 
+    async def confirm(
+        self, session: Session, state: ConversationState, payload: BaseModel
+    ) -> BaseModel:
+        """The caller's check before their appointments are shown or changed (see
+        app.ai.caller_check). A few tries per call, then the team takes it."""
+        command = ConfirmInput.model_validate(payload.model_dump())
+        identity = state.identity_state
+        if (
+            session.provider_call_id is None
+            or not session.configuration.privacy.confirm_callers_by_name
+        ):
+            return Outcome(status="not_available", next="offer_to_take_a_message")
+        if identity.name_checks >= NAME_CHECKS:
+            return Outcome(status="too_many_tries", next="offer_to_take_a_message")
+        number = None
+        if command.appointment_number:
+            number = appointment_number(command.appointment_number)
+            if number is None:
+                return Outcome(status="unclear_number", next="ask_for_the_appointment_number")
+        own_number = identity.is_verified and identity.identifier_type == IdentifierType.PHONE
+        if number is None and not own_number:
+            return Outcome(
+                status="appointment_number_needed", next="ask_for_the_appointment_number"
+            )
+        found = await self.identity.confirm(session, state, command.full_name, number)
+        if found is None:
+            identity.name_checks += 1
+            if identity.name_checks >= NAME_CHECKS:
+                return Outcome(status="not_matched", next="offer_to_take_a_message")
+            return Outcome(status="not_matched", next="ask_them_to_check_the_name_or_number")
+        patient_id, on_file = found
+        confirmed = IdentityState(
+            caller_phone=identity.caller_phone, name_checks=identity.name_checks
+        )
+        confirmed.record_attempt(True, patient_id)
+        confirmed.identifier_type = IdentifierType.CONFIRMED
+        state.identity_state = confirmed
+        state.caller_name = first_name(on_file) or ""
+        # What is remembered about the caller is reloaded for the confirmed patient.
+        state.caller_history = None
+        return Outcome(status="confirmed", next="carry_on_with_what_they_asked")
+
     async def register(
         self, session: Session, state: ConversationState, payload: BaseModel
     ) -> BaseModel:
@@ -238,7 +294,16 @@ class AppointmentFlow:
     ) -> Outcome | None:
         """Why this person may not go on, if they may not."""
         identity = state.identity_state
+        on_call = session.channel == "voice"
+        confirmable = on_call and session.configuration.privacy.confirm_callers_by_name
         if not identity.is_verified:
+            if managing and confirmable:
+                # Someone else's phone, or a number the clinic does not know: the
+                # appointment number and the name on it.
+                return Outcome(
+                    status="confirm_identity",
+                    next="ask_for_the_appointment_number_and_name_then_confirm_identity",
+                )
             if session.contact:
                 return Outcome(
                     status="identity_required", next="ask_full_name_then_register_patient"
@@ -246,13 +311,18 @@ class AppointmentFlow:
             return Outcome(status="identity_required", next="offer_to_take_a_message")
         if (
             managing
-            and session.channel == "voice"
+            and on_call
             and identity.identifier_type == IdentifierType.PHONE
             and not session.configuration.privacy.known_number_can_manage
         ):
             # A caller's number can be faked, so on a call the clinic may want more than
             # a matching number before existing appointments are shown or changed. A
             # text message is different: the answer only reaches the patient's own phone.
+            if confirmable:
+                return Outcome(
+                    status="confirm_identity",
+                    next="ask_for_the_name_on_the_appointment_then_confirm_identity",
+                )
             return Outcome(status="staff_only", next="offer_to_take_a_message_or_ask_for_code")
         return None
 

@@ -6,6 +6,9 @@ from app.ai.llm.base import LLMProvider
 from app.core.settings import Settings
 
 TIMEOUT_SECONDS = 10
+# On a call: the longest wait for the model's first words, and between two pieces
+# of the reply. Longer than this and the caller is better told something is wrong.
+VOICE_TIMEOUT_SECONDS = 5
 # Thinking tokens count against this budget, so it leaves room for the reply.
 MAX_OUTPUT_TOKENS = 2048
 # The quicker, cheaper model: the safety check, summaries, and one last attempt at a
@@ -26,17 +29,20 @@ VOICE_MODELS = LIGHT_MODELS
 def _provider(
     name: str, api_key: SecretStr, model: str, reasoning: Any = "low", *, voice: bool = False
 ) -> LLMProvider:
+    timeout = TIMEOUT_SECONDS
     if voice:
         reasoning = VOICE_REASONING
+        timeout = VOICE_TIMEOUT_SECONDS
     if name == "gemini":
         from app.ai.llm.gemini import GeminiLLMProvider
 
         return GeminiLLMProvider(
             api_key,
             model,
-            TIMEOUT_SECONDS,
+            timeout,
             MAX_OUTPUT_TOKENS,
             thinking_level=reasoning,
+            priority=voice,
         )
     if name == "openrouter":
         from app.ai.llm.openrouter import OpenRouterLLMProvider
@@ -44,7 +50,7 @@ def _provider(
         return OpenRouterLLMProvider(
             api_key,
             model,
-            TIMEOUT_SECONDS,
+            timeout,
             MAX_OUTPUT_TOKENS,
             reasoning_effort=reasoning,
             fastest=voice,

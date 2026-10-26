@@ -15,6 +15,7 @@ from app.ai.tools.appointments import (
     AvailabilityInput,
     BookInput,
     CancelInput,
+    ConfirmInput,
     NoInput,
     Outcome,
     RegisterInput,
@@ -247,6 +248,14 @@ def build_tools(
             "Redeem an 8-digit code reception gave the caller. Never guess a code.",
             IdentifyPatient,
             flow.identify,
+        ),
+        Tool(
+            "confirm_identity",
+            "On a call, when a tool answers confirm_identity: check the name on the "
+            "appointment, and its number (A-3) when they are calling from another phone. "
+            "Pass what they said; never guess either.",
+            ConfirmInput,
+            flow.confirm,
         ),
         Tool(
             "register_patient",

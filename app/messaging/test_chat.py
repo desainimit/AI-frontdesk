@@ -34,6 +34,7 @@ TOOL_LABELS = {
     "cancel_appointment": "Proposed a cancellation",
     "reschedule_appointment": "Proposed a new time",
     "identify_patient": "Checked a reception code",
+    "confirm_identity": "Checked the caller's name and appointment number",
     "register_patient": "Registered a new patient",
     "create_ticket": "Took a message for the team",
     "transfer_to_staff": "Asked for a person",

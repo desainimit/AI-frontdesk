@@ -4,19 +4,27 @@ on a real call. Everything runs against stand-ins; no provider is called."""
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from google.genai import errors
+from google.genai import types as genai_types
+from pydantic import SecretStr
 
-from app.ai.engine import Handoff
-from app.ai.llm.base import ChatRequest, Completed, ModelEvent, TextDelta
+from app.ai.engine import Handoff, Say
+from app.ai.llm.base import ChatRequest, Completed, LLMUnavailableError, ModelEvent, TextDelta
+from app.ai.llm.factory import TIMEOUT_SECONDS, VOICE_TIMEOUT_SECONDS, build_llm_provider
 from app.ai.llm.gateway import ModelGateway
+from app.ai.llm.gemini import GeminiLLMProvider
+from app.ai.sentences import SentenceSplitter
+from app.conversation.backchannel import wants_to_end
 from app.conversation.state import SafetyDecision
 from app.conversation.turn_end import sounds_unfinished
 from app.safety.handover import consent
+from app.settings.defaults import default_settings
 from app.voice.pipeline import VoicePipeline
 from app.voice.stt.base import TranscriptionResult
-from tests.test_voice_latency import ScriptedEngine, receptionist_for
+from tests.test_voice_latency import ScriptedEngine, receptionist_for, started_pipeline
 from tests.voice_sim import Line, ScriptedSTT, TimedTTS
 
 # --- The end of a sentence -----------------------------------------------------------
@@ -134,3 +142,114 @@ async def test_a_second_hand_over_lets_the_conversation_go_on(monkeypatch: Any) 
     await receptionist._hand_over(AsyncMock(), Handoff("requested"))  # pyright: ignore[reportPrivateUsage]
     # Before, it stayed in hand-over and every later sentence got "I cannot connect you".
     assert safety.decision == SafetyDecision.CONTINUE
+
+
+# --- When the model provider fails ---------------------------------------------------
+
+
+class AlwaysDown:
+    def __init__(self) -> None:
+        self.requests = 0
+
+    async def stream(self, request: ChatRequest) -> AsyncIterator[ModelEvent]:
+        self.requests += 1
+        raise LLMUnavailableError("down")
+        yield  # pragma: no cover
+
+
+@pytest.mark.asyncio
+async def test_on_a_call_a_failing_model_is_not_retried_in_a_ladder() -> None:
+    primary, fallback = AlwaysDown(), AlwaysDown()
+    gateway = ModelGateway(
+        primary,  # type: ignore[arg-type]
+        fallback=fallback,  # type: ignore[arg-type]
+        pause_seconds=0,
+        retries=0,
+    )
+    with pytest.raises(LLMUnavailableError):
+        _ = [event async for event in gateway.stream(ChatRequest("", (), ()))]
+    # Before, three tries of 10 s each kept a caller waiting 38 s.
+    assert primary.requests == 1 and fallback.requests == 1
+
+
+def test_calls_give_up_on_a_silent_model_sooner_than_texts() -> None:
+    settings = MagicMock(llm_provider="gemini", platform_llm_key=SecretStr("k"))
+    voice = build_llm_provider(settings, voice=True)
+    text = build_llm_provider(settings)
+    assert voice._http.timeout.read == VOICE_TIMEOUT_SECONDS  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue, reportUnknownMemberType]
+    assert text._http.timeout.read == TIMEOUT_SECONDS  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue, reportUnknownMemberType]
+
+
+def test_a_gemini_failure_logs_googles_reason_but_not_its_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    provider = GeminiLLMProvider(SecretStr("k"), "gemini-3.5-flash-lite", 5, 64)
+    error = errors.APIError(503, {"error": {"code": 503, "status": "UNAVAILABLE", "message": "x"}})
+    with caplog.at_level("WARNING"):
+        mapped = provider._failed(error)  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(mapped, LLMUnavailableError)
+    record = next(item for item in caplog.records if item.msg == "gemini_request_failed")
+    assert record.status == "UNAVAILABLE" and record.status_code == 503  # type: ignore[attr-defined]
+
+
+# --- Goodbyes, first words, and the rest -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("said", "last_reply", "ending"),
+    [
+        ("Ok. Thank you. You can make... Cut the call.", None, True),
+        ("theek hai, phone rakhta hoon", None, True),
+        ("No, thank you.", "Anything else I can help with?", True),
+        ("Thank you so much", "Anything else I can help with?", True),
+        ("Thank you so much", None, False),
+        ("No, Wednesday is better", "Anything else?", False),
+        ("No. Can you transfer the call?", "Anything else?", False),
+        ("ok bye, but one more thing", None, False),
+    ],
+)
+def test_a_goodbye_is_told_from_a_request(said: str, last_reply: str | None, ending: bool) -> None:
+    assert wants_to_end(said, last_reply) is ending
+
+
+@pytest.mark.asyncio
+async def test_a_goodbye_is_said_warmly_at_once_and_the_call_ends(monkeypatch: Any) -> None:
+    receptionist = receptionist_for(ScriptedEngine([(5.0, Say("never asked"))]))
+    receptionist.session = MagicMock(configuration=default_settings("Sunrise Clinic"))
+    receptionist.state.caller_name = "Nimit"
+    hang_up = AsyncMock()
+    monkeypatch.setattr("app.voice.receptionist.hang_up", hang_up)
+    line, tts = Line(), TimedTTS(first_byte=0.0)
+    pipeline = await started_pipeline(line, tts)
+    receptionist.pipeline = pipeline
+    try:
+        await receptionist.reply(
+            TranscriptionResult("Okay, thank you. You can cut the call.", True)
+        )
+    finally:
+        await pipeline.close()
+    assert tts.requests == [
+        "Thanks so much for calling Sunrise Clinic, Nimit. Take care, and have a lovely day!"
+    ]
+    hang_up.assert_awaited_once()
+
+
+def test_a_long_first_sentence_starts_at_its_first_comma_on_a_call() -> None:
+    splitter = SentenceSplitter(first_clause=True)
+    said: list[str] = []
+    for piece in ("I've got Tuesday at ten ", "or Thursday at two thirty, ", "if either works. "):
+        said += splitter.feed(piece)
+    assert said == ["I've got Tuesday at ten or Thursday at two thirty,", "if either works."]
+    # Texts keep whole sentences.
+    whole = SentenceSplitter()
+    assert whole.feed("I've got Tuesday at ten or Thursday at two thirty, if either works. ") == [
+        "I've got Tuesday at ten or Thursday at two thirty, if either works."
+    ]
+
+
+def test_calls_ask_gemini_for_its_priority_lane() -> None:
+    settings = MagicMock(llm_provider="gemini", platform_llm_key=SecretStr("k"))
+    voice = build_llm_provider(settings, voice=True)
+    text = build_llm_provider(settings)
+    assert voice._tier == genai_types.ServiceTier.PRIORITY  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    assert text._tier is None  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]

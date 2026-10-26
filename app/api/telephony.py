@@ -738,8 +738,10 @@ async def run_media(
                 fallback=providers.light_llm,
                 breaker=breaker_for(circuit_registry(socket.app), tenant_id, providers.account),
                 slot=turn_limits(socket.app).slot(tenant_id),
-                # A caller is waiting on the line: a slow start gets a second request.
+                # A caller is waiting on the line: a slow start gets a second request
+                # beside it, which stands in for the retries a text reply would get.
                 hedge_after=HEDGE_AFTER_SECONDS,
+                retries=0,
             ),
             registry,
             flow,

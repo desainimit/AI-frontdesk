@@ -11,7 +11,9 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.ai.caller_check import names_match
 from app.ai.session import Session
+from app.appointments.models import Appointment
 from app.calls.models import Call
 from app.conversation.state import (
     ConversationState,
@@ -50,6 +52,38 @@ class ContactIdentity:
             await self._bind(database, session, matches[0])
         self._remember(state, matches[0])
         return True
+
+    async def confirm(
+        self, session: Session, state: ConversationState, name: str, number: int | None
+    ) -> tuple[UUID, str] | None:
+        """The patient and their name on file when the caller's details match them.
+
+        With an appointment number: the patient that appointment belongs to, if the name
+        is theirs. Without one: the patient this number already belongs to, if the name
+        is theirs. Nothing is told about a mismatch, so it cannot be used to probe.
+        """
+        identity = state.identity_state
+        async with self._sessions.begin() as database:
+            await enter_tenant_scope(database, session.request(state))
+            if number is not None:
+                patient_id = await database.scalar(
+                    select(Appointment.patient_id).where(
+                        Appointment.tenant_id == session.tenant_id, Appointment.number == number
+                    )
+                )
+            else:
+                patient_id = identity.patient_id if identity.is_verified else None
+            if patient_id is None:
+                return None
+            on_file = await database.scalar(
+                select(Patient.display_name).where(
+                    Patient.tenant_id == session.tenant_id, Patient.id == patient_id
+                )
+            )
+            if on_file is None or not names_match(name, on_file):
+                return None
+            await self._bind(database, session, patient_id)
+        return patient_id, on_file
 
     async def register(self, session: Session, state: ConversationState, name: str) -> bool:
         """Add the person as a new patient under the number they are using."""

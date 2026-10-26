@@ -99,7 +99,8 @@ async def test_the_receptionist_hangs_up_once_the_goodbye_was_heard(monkeypatch:
     pipeline = await started_pipeline(line, TimedTTS(first_byte=0.05))
     receptionist.pipeline = pipeline
     try:
-        await receptionist.reply(TranscriptionResult("Bye!", True))
+        # Not a plain "bye" (said at once without the model): the model decides to end.
+        await receptionist.reply(TranscriptionResult("Great, I think I have everything.", True))
     finally:
         await pipeline.close()
     hung_up.assert_awaited_once()

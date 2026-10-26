@@ -58,6 +58,7 @@ class ModelGateway:
         slot: asyncio.Semaphore | None = None,
         pause_seconds: float = 0.3,
         hedge_after: float | None = None,
+        retries: int = RETRIES,
     ) -> None:
         self._primary = primary
         self._fallback = fallback
@@ -67,6 +68,7 @@ class ModelGateway:
         self._slot = slot or asyncio.Semaphore(TURNS_PER_CLINIC)
         self._pause = pause_seconds
         self._hedge_after = hedge_after
+        self._retries = retries
         # Set when the account itself was refused, so someone can be told to fix it.
         self.account_problem: str | None = None
 
@@ -80,7 +82,7 @@ class ModelGateway:
             raise LLMRateLimitError("Too many conversations at once") from None
         try:
             # The same model up to three times, then the lighter one once.
-            attempts = [self._primary] * (RETRIES + 1)
+            attempts = [self._primary] * (self._retries + 1)
             if self._fallback is not None:
                 attempts.append(self._fallback)
             for number, model in enumerate(attempts):

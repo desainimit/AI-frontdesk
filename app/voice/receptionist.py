@@ -19,7 +19,7 @@ from app.ai.usage import record_turn
 from app.ai.wording import filler, spoken
 from app.audit.events import AuditAction
 from app.calls.service import CallService
-from app.conversation.backchannel import is_closing
+from app.conversation.backchannel import is_closing, wants_to_end
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConversationState, SafetyDecision, TranscriptTurn
 from app.conversation.store import ConversationStateStore
@@ -122,6 +122,9 @@ class CallReceptionist:
                 return
             # They are not done after all.
             self.state.end_requested = False
+        if self._saying_goodbye(result.text):
+            await self._goodbye()
+            return
         if (
             result.confidence < UNCLEAR_BELOW
             and len(result.text.split()) <= UNCLEAR_MAX_WORDS
@@ -157,6 +160,29 @@ class CallReceptionist:
                 await warm()
 
         self._warming = asyncio.create_task(quietly())
+
+    def _saying_goodbye(self, text: str) -> bool:
+        """The caller is done ("bye", "you can cut the call", "no, thanks" after "anything
+        else?") and nothing is waiting on their answer."""
+        state = self.state
+        if state.awaiting_confirmation or handover.pending(state) or self.transferred:
+            return False
+        return wants_to_end(text, state.last_agent_response)
+
+    async def _goodbye(self) -> None:
+        """Thank them warmly, by name when known, and hang up once they have heard it.
+
+        Said at once, without waiting for the model: a goodbye needs no thinking.
+        """
+        name = self.state.caller_name
+        line = spoken(
+            self.state.language,
+            "farewell_name" if name else "farewell",
+            clinic=self.session.configuration.clinic.name,
+            name=name or "",
+        )
+        self.state.end_requested = True
+        await self._respond(self._lines(line), fillers=False)
 
     @staticmethod
     async def _lines(*texts: str) -> AsyncIterator[Event]:

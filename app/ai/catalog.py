@@ -4,6 +4,7 @@ SAFE_READ_TOOLS = frozenset({"list_locations", "list_providers", "list_services"
 APPOINTMENT_TOOLS = frozenset(
     {
         "identify_patient",
+        "confirm_identity",
         "register_patient",
         "check_availability",
         "list_my_appointments",
