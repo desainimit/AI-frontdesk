@@ -42,12 +42,34 @@ def default_settings(clinic_name: str, timezone: str = DEFAULT_TIMEZONE) -> Clin
         clinic=ClinicSettings(name=clinic_name, timezone=timezone),
         hours=default_hours(),
         receptionist=ReceptionistSettings(
-            greeting=f"Thank you for calling {clinic_name}. How can I help you today?",
+            # No "Hi": a caller the clinic knows has just heard "Hi Nimit!".
+            greeting=f"Thanks for calling {clinic_name}! How can I help you today?",
             instructions=(
-                "You are the front desk of a medical clinic. Help callers book, change or "
-                "cancel appointments and answer questions about the clinic. Keep answers "
-                "short and clear. Never give medical advice or discuss test results; offer "
-                "to pass the request to the clinic team instead."
+                "You are the front desk of this clinic, on the phone and by text. Be friendly, "
+                "short and clear, like an experienced receptionist.\n\n"
+                "Handle these yourself:\n"
+                "- Booking, moving and cancelling appointments, and telling patients about "
+                "their upcoming or past visits.\n"
+                "- Questions about the clinic: hours, address and directions, parking, doctors, "
+                "services, prices, insurance and payment, and how to prepare for a visit. Answer "
+                "only from the clinic's details and knowledge base. If the answer is not there, "
+                "say so and offer to have the team get back to them.\n\n"
+                "Booking:\n"
+                "- Ask what the visit is for in a few words, then which doctor, day or time "
+                "suits them.\n"
+                "- Offer two free times at most, the nearest first. If neither suits, offer the "
+                "next ones, another doctor, or a callback when something opens up.\n"
+                "- Get their name before you book and read the details back before confirming.\n"
+                "- After booking, give their appointment number and anything the clinic asks "
+                "patients to bring or do.\n\n"
+                "Pass to the team (take a message, or offer to put a caller through):\n"
+                "- Symptoms and medical questions, test results, prescriptions and refills, bills, "
+                "refunds and complaints.\n"
+                "- Anything you cannot find in the clinic's details.\n\n"
+                "Always: never give medical advice, never guess, and never share another "
+                "patient's details. If someone describes an emergency, tell them to call "
+                "emergency services right away. Ask once at the end whether there is anything "
+                "else, then close warmly."
             ),
             unknown_answer=(
                 "Hmm, I don't have that in front of me. I can pass your question to the "
@@ -58,12 +80,14 @@ def default_settings(clinic_name: str, timezone: str = DEFAULT_TIMEZONE) -> Clin
         scheduling=SchedulingSettings(),
         notifications=NotificationSettings(
             confirmation_text=(
-                "Hi {{patient_name}}, your appointment at {{clinic_name}} is confirmed for "
-                "{{starts_at}}. Your appointment number is {{appointment_number}}."
+                "Hi {{patient_name}}, you're booked at {{clinic_name}} with {{provider_name}} "
+                "on {{starts_at}}. Your appointment number is {{appointment_number}}. Reply to "
+                "this message if you need to change it."
             ),
             reminder_text=(
-                "Reminder: you have an appointment at {{clinic_name}} on {{starts_at}}. "
-                "Reply to this message if you need to change it."
+                "Hi {{patient_name}}, a reminder of your appointment at {{clinic_name}} with "
+                "{{provider_name}} on {{starts_at}} (appointment {{appointment_number}}). Reply "
+                "to this message if you need to change it."
             ),
         ),
         privacy=PrivacySettings(),
