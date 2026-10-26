@@ -76,6 +76,7 @@ from app.voice.factory import (
 )
 from app.voice.keyterms import clinic_directory
 from app.voice.metrics import VoiceMetrics
+from app.voice.opening import opening
 from app.voice.phrases import MemoryPhraseCache, PhraseCache
 from app.voice.pipeline import PhraseStore, VoicePipeline
 from app.voice.processors.interruption import InterruptionConfig
@@ -815,22 +816,20 @@ async def run_media(
                         voice_metrics.record_human_transfer("no_answer")
                         await pipeline.speak(handover_message(returned.language, "no_answer"))
                     else:
+                        language = initial_conv_state.language
                         name = await caller_name(receptionist, identity, history)
-                        heard = True
-                        if name:
-                            # A caller the clinic trusts by their number is greeted by name.
-                            heard = await pipeline.speak(
-                                spoken(initial_conv_state.language, "hello_name", name=name),
-                                record=False,
+                        # In a receptionist's order: a caller the clinic trusts by their
+                        # number by name, the greeting, that the clinic is closed, and
+                        # the greeting's question last.
+                        await pipeline.speak_lines(
+                            opening(
+                                configuration.receptionist.greeting,
+                                hello=spoken(language, "hello_name", name=name) if name else None,
+                                closed=None
+                                if opened_while_open
+                                else spoken(language, "closed_now"),
                             )
-                        if heard:
-                            heard = await pipeline.speak(
-                                configuration.receptionist.greeting, cache=True
-                            )
-                        if heard and not opened_while_open:
-                            await pipeline.speak(
-                                spoken(initial_conv_state.language, "closed_now"), cache=True
-                            )
+                        )
                 except TTSError as error:
                     # Without a greeting the caller can still speak and be answered.
                     logger.warning(

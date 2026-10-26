@@ -14,6 +14,7 @@ from app.ai.engine import Done, Say
 from app.safety.messages import emergency_message
 from app.safety.numbers import emergency_lines
 from app.voice.acknowledge import acknowledgement, after_acknowledgement
+from app.voice.opening import opening
 from app.voice.stt.base import TranscriptionResult
 from app.voice.tts.base import TTSRateLimitError
 from app.voice.tts.elevenlabs import ElevenLabsTTSProvider
@@ -195,3 +196,40 @@ def test_emergency_numbers_follow_the_clinics_country() -> None:
     assert "9 1 1" in emergency_message("en", emergency_lines("", "America/Chicago"), None)
     unknown = emergency_message("en", emergency_lines("", "Asia/Tokyo"), None)
     assert "local emergency number" in unknown
+
+
+# --- The opening ---------------------------------------------------------------------
+
+
+def test_the_opening_is_said_in_a_receptionists_order() -> None:
+    greeting = "Thank you for calling Sunrise Clinic. How can I help you today?"
+    closed = "Just so you know, we're closed right now."
+    lines = opening(greeting, hello="Hi Nimit!", closed=closed)
+    assert [line.text for line in lines] == [
+        "Hi Nimit!",
+        "Thank you for calling Sunrise Clinic.",
+        closed,
+        "How can I help you today?",
+    ]
+    assert [line.record for line in lines] == [False, True, True, True]
+    # Open, and a new caller: just the greeting, as one line.
+    assert [line.text for line in opening(greeting, hello=None, closed=None)] == [greeting]
+
+
+@pytest.mark.asyncio
+async def test_opening_lines_follow_each_other_with_a_beat_and_cut_nothing_off() -> None:
+    lines = opening("Thank you for calling.", hello="Hi Nimit!", closed=None)
+    frames: list[int] = []
+    for beat in (0.0, 0.3):
+        line, tts = Line(), TimedTTS(first_byte=0.1)
+        pipeline = await started_pipeline(line, tts)
+        try:
+            assert await pipeline.speak_lines(lines, beat=beat)
+        finally:
+            await pipeline.close()
+        # Before, each line cleared the end of the one before it off the line.
+        assert not line.cleared()
+        assert tts.requests == ["Hi Nimit!", "Thank you for calling."]
+        frames.append(len(line.media_times()))
+    # A beat of 0.3 s between the two lines: fifteen 20 ms frames of silence.
+    assert frames[1] - frames[0] == 15

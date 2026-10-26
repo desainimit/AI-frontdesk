@@ -16,6 +16,7 @@ from app.conversation.store import ConversationStateStore
 from app.voice.audio import ULAW_FRAME, ulaw_speech
 from app.voice.codec import ulaw_to_pcm
 from app.voice.metrics import VoiceMetrics
+from app.voice.opening import Line
 from app.voice.processors.interruption import (
     ENERGY_REASON,
     InterruptionConfig,
@@ -37,6 +38,11 @@ RESUME_AFTER_SECONDS = 1.5
 BARGE_IN_CONFIDENCE = 0.5
 # Silence after the receptionist finished, before it asks whether the caller is there.
 SILENCE_SECONDS = 7.0
+# The breath a person takes between two lines said in a row ("Hi Nimit!" ... "Thank you
+# for calling").
+BEAT_SECONDS = 0.35
+# Telephone silence, 20 ms of it.
+SILENT_FRAME = bytes([0xFF]) * ULAW_FRAME
 
 
 class PhraseStore(Protocol):
@@ -457,14 +463,42 @@ class VoicePipeline:
         if not self._running or not text.strip():
             return False
 
-        if record and self.conversation_state:
-            ConversationStateManager.record_agent_response(self.conversation_state, text)
-            self.conversation_state.append_transcript_turn("agent", text)
-            if self.conversation_store:
-                await self.conversation_store.save(
-                    self.conversation_state, self.conversation_ttl_seconds
-                )
+        if record:
+            await self._record(text)
         return await self.play(await self.prepare(text, voice_id, cache=cache), follow_on=follow_on)
+
+    async def speak_lines(self, lines: list[Line], *, beat: float = BEAT_SECONDS) -> bool:
+        """Say several lines one after the other, a short beat between them, none
+        cutting off the end of the one before. False when the caller spoke over them.
+
+        All are made at once, so each is ready by the time the one before it ends.
+        """
+        lines = [line for line in lines if line.text.strip()]
+        speeches = [await self.prepare(line.text, cache=line.cache) for line in lines]
+        try:
+            for index, (line, speech) in enumerate(zip(lines, speeches, strict=True)):
+                if index and beat > 0:
+                    pause = Speech.ready("", SILENT_FRAME * round(beat / 0.02))
+                    if not await self.play(pause, follow_on=True):
+                        return False
+                if line.record:
+                    await self._record(line.text)
+                if not await self.play(speech, follow_on=True):
+                    return False
+            return True
+        finally:
+            for speech in speeches:
+                speech.cancel()
+
+    async def _record(self, text: str) -> None:
+        if self.conversation_state is None:
+            return
+        ConversationStateManager.record_agent_response(self.conversation_state, text)
+        self.conversation_state.append_transcript_turn("agent", text)
+        if self.conversation_store:
+            await self.conversation_store.save(
+                self.conversation_state, self.conversation_ttl_seconds
+            )
 
     async def play(self, speech: Speech, *, follow_on: bool = False) -> bool:
         """Send prepared speech to the caller. True when all of it was sent."""
