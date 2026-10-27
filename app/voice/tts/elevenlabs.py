@@ -72,7 +72,8 @@ class ElevenLabsTTSProvider:
     def voice_key(self) -> str:
         """What decides how a phrase sounds, for reusing audio already made."""
         key = f"elevenlabs:{self.model_id}:{self.default_voice_id}"
-        return key if self.speed == "normal" else f"{key}:{self.speed}"
+        # The pace itself, so audio made at an earlier pace is never replayed.
+        return f"{key}:{ELEVENLABS_SPEED[self.speed]}"
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:

@@ -24,7 +24,7 @@ def recorder() -> tuple[list[httpx.Request], httpx.AsyncClient]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("speed", "value"), [("slow", 0.85), ("normal", 1.0), ("very_fast", 1.2)])
+@pytest.mark.parametrize(("speed", "value"), [("slow", 0.8), ("normal", 0.9), ("very_fast", 1.1)])
 async def test_elevenlabs_is_asked_for_the_chosen_pace(speed: SpeakingSpeed, value: float) -> None:
     requests, client = recorder()
     async with client:
@@ -32,20 +32,20 @@ async def test_elevenlabs_is_asked_for_the_chosen_pace(speed: SpeakingSpeed, val
         _ = [chunk async for chunk in provider.synthesize("Hello", language="en")]
     assert json.loads(requests[0].content)["voice_settings"]["speed"] == value
     # Audio made at another pace is never replayed for this one.
-    assert provider.voice_key.endswith(":slow") == (speed == "slow")
+    assert provider.voice_key.endswith(f":{value}")
 
 
 @pytest.mark.asyncio
-async def test_azure_slows_down_with_prosody_and_leaves_normal_alone() -> None:
+async def test_azure_slows_down_with_prosody_and_leaves_fast_at_its_own_pace() -> None:
     bodies: dict[str, str] = {}
-    for speed in ("slow", "normal"):
+    for speed in ("slow", "fast"):
         requests, client = recorder()
         async with client:
             provider = AzureTTSProvider(SecretStr("test"), client=client, speed=speed)
             _ = [chunk async for chunk in provider.synthesize("Hello & bye", language="en")]
         bodies[speed] = requests[0].content.decode()
-    assert '<prosody rate="-15%">Hello &amp; bye</prosody>' in bodies["slow"]
-    assert "prosody" not in bodies["normal"]
+    assert '<prosody rate="-20%">Hello &amp; bye</prosody>' in bodies["slow"]
+    assert "prosody" not in bodies["fast"]
 
 
 def test_the_administrators_choice_becomes_the_platform_setting() -> None:

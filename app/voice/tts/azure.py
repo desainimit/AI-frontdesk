@@ -49,7 +49,8 @@ class AzureTTSProvider:
     @property
     def voice_key(self) -> str:
         """What decides how a phrase sounds, for reusing audio already made."""
-        return "azure" if self.speed == "normal" else f"azure:{self.speed}"
+        # The pace itself, so audio made at an earlier pace is never replayed.
+        return f"azure:{AZURE_RATE[self.speed] or '0%'}"
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
