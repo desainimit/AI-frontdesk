@@ -24,7 +24,7 @@ def recorder() -> tuple[list[httpx.Request], httpx.AsyncClient]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("speed", "value"), [("slow", 0.8), ("normal", 0.9), ("very_fast", 1.1)])
+@pytest.mark.parametrize(("speed", "value"), [("slow", 0.7), ("normal", 0.8), ("very_fast", 1.0)])
 async def test_elevenlabs_is_asked_for_the_chosen_pace(speed: SpeakingSpeed, value: float) -> None:
     requests, client = recorder()
     async with client:
@@ -36,16 +36,16 @@ async def test_elevenlabs_is_asked_for_the_chosen_pace(speed: SpeakingSpeed, val
 
 
 @pytest.mark.asyncio
-async def test_azure_slows_down_with_prosody_and_leaves_fast_at_its_own_pace() -> None:
+async def test_azure_slows_down_with_prosody_and_leaves_very_fast_at_its_own_pace() -> None:
     bodies: dict[str, str] = {}
-    for speed in ("slow", "fast"):
+    for speed in ("slow", "very_fast"):
         requests, client = recorder()
         async with client:
             provider = AzureTTSProvider(SecretStr("test"), client=client, speed=speed)
             _ = [chunk async for chunk in provider.synthesize("Hello & bye", language="en")]
         bodies[speed] = requests[0].content.decode()
-    assert '<prosody rate="-20%">Hello &amp; bye</prosody>' in bodies["slow"]
-    assert "prosody" not in bodies["fast"]
+    assert '<prosody rate="-30%">Hello &amp; bye</prosody>' in bodies["slow"]
+    assert "prosody" not in bodies["very_fast"]
 
 
 def test_the_administrators_choice_becomes_the_platform_setting() -> None:
