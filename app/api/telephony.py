@@ -697,7 +697,9 @@ async def run_media(
         resolver = tenant_resolver(socket.app)
         configuration = await service.settings(context)
         opened_while_open = configuration.is_open(datetime.now(UTC))
-        directory = await clinic_directory(service.sessions, tenant_id, configuration)
+        directory = await clinic_directory(
+            service.sessions, tenant_id, configuration, caller_number
+        )
         providers = await resolve_call_providers(
             socket.app, settings, tenant_id, configuration.receptionist.languages
         )
