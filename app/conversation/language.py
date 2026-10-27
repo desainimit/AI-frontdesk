@@ -32,6 +32,16 @@ def _detector() -> LanguageDetector:
     return LanguageDetectorBuilder.from_languages(*_LINGUA_LANGUAGES).build()
 
 
+def _written_in(text: str) -> str | None:
+    """Hindi or Gujarati when most words are written in that script ("मुझे साढ़े दस की
+    appointment चाहिए"); None otherwise, so a name alone does not count."""
+    words = [word for word in text.split() if any(char.isalpha() for char in word)]
+    for code, first, last in (("hi", "ऀ", "ॿ"), ("gu", "઀", "૿")):
+        if words and sum(any(first <= c <= last for c in word) for word in words) * 2 > len(words):
+            return code
+    return None
+
+
 def observe_language(
     text: str,
     provider_language: str | None = None,
@@ -47,6 +57,14 @@ def observe_language(
     # do not change the call's language, regardless of vocabulary.
     if len(tokens) < 3 or len(set(tokens)) < 2:
         return None
+    written = _written_in(text)
+    if written is not None:
+        # Hindi or Gujarati script is that language, whatever the recogniser labelled it:
+        # on 27 Oct "दस बजे का" came labelled English, and with one misheard English line
+        # before it, the call switched to English while the caller went on in Hindi.
+        if written not in enabled_languages:
+            return None
+        return LanguageObservation(written, 0.9, any("a" <= c <= "z" for c in text.casefold()))
     codes = tuple(
         dict.fromkeys(
             normalize_language(code)

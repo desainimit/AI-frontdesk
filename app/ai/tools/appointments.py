@@ -528,8 +528,9 @@ class AppointmentFlow:
                 state.appointment_operation = None
                 confirmation.reset()
                 state.active_flow_state.transition(FlowStep.COLLECTING_DETAILS)
-                if answer is False:
+                if answer is False and only_a_no(utterance):
                     return Direct(spoken(state.language, "discarded"), operation.action)
+                # "No, half past ten": what they want instead goes to the model.
                 return None
             operation.status = "executing"
             state.active_flow_state.transition(FlowStep.EXECUTING)
