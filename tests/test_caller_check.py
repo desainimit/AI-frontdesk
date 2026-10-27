@@ -10,7 +10,8 @@ import pytest
 
 from app.ai.caller_check import appointment_number, names_match
 from app.ai.memory import records_trusted
-from app.ai.tools.appointments import AppointmentFlow, ConfirmInput
+from app.ai.tools.appointments import AppointmentFlow, ConfirmInput, RegisterInput
+from app.ai.wording import spoken
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConversationState, IdentifierType
 from app.settings.defaults import default_settings
@@ -132,3 +133,56 @@ async def test_wrong_details_get_a_few_tries_and_say_nothing_about_whose_it_is()
     assert all(not item.items for item in outcomes)  # type: ignore[attr-defined]
     # Still known by their number for booking, just not for changing appointments.
     assert state.identity_state.identifier_type == IdentifierType.PHONE
+
+
+def test_a_name_said_in_english_matches_one_stored_in_hindi_or_spelled_out() -> None:
+    # 27 Oct: "Vimit Desai", then "N I m I p. B e s a I", never matched "निमित देसाई".
+    assert names_match("Vimit Desai", "निमित देसाई")
+    assert names_match("N I m I p. B e s a I", "निमित देसाई")
+    assert names_match("Nimit Desai", "નિમિત દેસાઈ")
+    assert names_match("N I M I T D E S A I", "Nimit Desai")
+    assert names_match("Bhavesh Shah", "भावेश शाह") and names_match("José", "Jose Silva")
+    assert not names_match("Rahul Shah", "निमित देसाई")
+
+
+def new_caller() -> tuple[AppointmentFlow, AsyncMock, Any, ConversationState]:
+    flow = AppointmentFlow.__new__(AppointmentFlow)
+    register = AsyncMock(return_value=True)
+    flow.identity = MagicMock(register=register)
+    session = session_for()
+    session.writes = True
+    return flow, register, session, state_for()
+
+
+@pytest.mark.asyncio
+async def test_on_a_call_a_new_name_is_read_back_and_registered_on_a_yes() -> None:
+    flow, register, session, state = new_caller()
+    heard = await flow.register(session, state, RegisterInput(full_name="Kit Balsar"))
+    assert heard.status == "name_read_back" and "Kit Balsar" in heard.say  # type: ignore[attr-defined]
+    register.assert_not_awaited()
+    # A yes registers it, and the model carries on with the booking.
+    assert await flow.before_turn(session, state, "Yes, that's right") is None
+    assert register.call_args.args[2] == "Kit Balsar"
+    assert state.caller_name == "Kit" and state.identity_state.pending_name is None
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_name_is_asked_for_another_way_then_kept_for_the_team() -> None:
+    flow, register, session, state = new_caller()
+    asked: list[str] = []
+    for heard in ("With browser", "Kit Bausar", "Kit Balsar"):
+        await flow.register(session, state, RegisterInput(full_name=heard))
+        reply = await flow.before_turn(session, state, "No, that's wrong")
+        assert reply is not None
+        asked.append(reply.response)
+    assert asked == [
+        spoken("en", "name_spell"),
+        spoken("en", "name_slowly"),
+        spoken("en", "name_noted"),
+    ]
+    assert register.await_count == 1 and register.call_args.kwargs == {"unsure": True}
+    # A correction goes back to the model, which registers the name again.
+    flow, register, session, state = new_caller()
+    await flow.register(session, state, RegisterInput(full_name="Kit Bausar"))
+    assert await flow.before_turn(session, state, "No, it's Balsar. B A L S A R") is None
+    register.assert_not_awaited()

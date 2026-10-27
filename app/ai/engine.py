@@ -340,11 +340,15 @@ class Engine:
                     raise ToolValidationError("Tool budget exhausted")
                 turns.append(completed.turn)
                 proposals = [call for call in calls if call.name in MUTATION_TOOLS]
-                for call in calls:
+                # Lookups and registering first, the proposal last: its question to the
+                # person ends the turn, and it needs to know who they are ("my name is
+                # Asha" comes as register_patient and book_appointment together).
+                ordered = [call for call in calls if call.name not in MUTATION_TOOLS] + proposals
+                for call in ordered:
                     yield Working(call.name, call.arguments or {})
                     result: dict[str, Any]
                     try:
-                        if proposals and (len(calls) > 1):
+                        if call.name in MUTATION_TOOLS and len(proposals) > 1:
                             raise ToolValidationError("Propose one change at a time")
                         result = await self.registry.execute(session, state, call)
                         ok = True
@@ -420,7 +424,8 @@ class Engine:
         """The reply read as yes or no, when the caller was asked something."""
         operation = state.appointment_operation
         booking = operation is not None and operation.status == "proposed"
-        if not booking and not (self.safety.ask_first and handover.pending(state)):
+        naming = state.identity_state.pending_name is not None
+        if not booking and not naming and not (self.safety.ask_first and handover.pending(state)):
             return None
         answer = confirmation_answer(words, state.language)
         if answer is None and self.consent is not None:

@@ -138,6 +138,10 @@ class IdentityState(BaseModel):
     verified_at: datetime | None = None
     # Tries at the name check (app.ai.caller_check) on this call.
     name_checks: int = Field(default=0, ge=0)
+    # On a call: the name a new caller gave, read back to them and not yet registered,
+    # and how many times a name has been read back. Kept out of storage like caller_name.
+    pending_name: str | None = Field(default=None, max_length=120, exclude=True)
+    name_readbacks: int = Field(default=0, ge=0)
 
     @property
     def is_verified(self) -> bool:

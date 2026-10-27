@@ -5,6 +5,10 @@ from typing import Any
 
 MESSAGES: dict[str, dict[str, str]] = {
     "gu": {
+        "name_check": "તો તમારું નામ {name} છે. બરાબર છે?",
+        "name_spell": "માફ કરશો! શું તમે નામ એક-એક અક્ષર કરીને કહી શકશો? English letters માં પણ ચાલશે.",
+        "name_slowly": "કોઈ વાંધો નહીં. પહેલા તમારું નામ, પછી અટક, ધીમે ધીમે બોલો. અઘરા અક્ષર માટે કોઈ શબ્દ કહો, જેમ કે B for Bombay.",
+        "name_noted": "કોઈ વાંધો નહીં, નામ જેવું સાંભળ્યું તેવું લખી લીધું છે, ટીમ તમારી સાથે spelling પાકી કરી લેશે. આગળ વધીએ?",
         "access_denied": "પ્રવેશની પુષ્ટિ થઈ શકી નથી. કૃપા કરીને રિસેપ્શનનો સંપર્ક કરો.",
         "identified": "આ કૉલ માટે રિસેપ્શન દ્વારા મંજૂર કરાયેલ પ્રવેશ સક્રિય છે.",
         "identity_required": "ઓળખની ચકાસણી પછી કૃપા કરીને રિસેપ્શન પાસેથી કૉલ માટેનો પ્રવેશ કોડ મેળવો.",
@@ -38,6 +42,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "started": "સંદેશા ફરી શરૂ થયા છે. અમે કેવી રીતે મદદ કરી શકીએ?",
     },
     "en": {
+        "name_check": "So that's {name}. Did I get that right?",
+        "name_spell": "Sorry about that! Could you spell it for me, one letter at a time?",
+        "name_slowly": "No worries. Could you say your first name, then your last name, nice and slowly? For a tricky letter, a word helps, like B for Bombay.",
+        "name_noted": "No problem, I've noted it as best I can, and the team will check the spelling with you. Shall we carry on?",
         "access_denied": "Access could not be confirmed. Please contact reception.",
         "identified": "Reception-authorized access is active for this call.",
         "identity_required": "Please obtain a call access code from reception after verification.",
@@ -71,6 +79,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "started": "Texts are back on. How can we help?",
     },
     "es": {
+        "name_check": "Entonces es {name}. ¿Lo he entendido bien?",
+        "name_spell": "¡Perdone! ¿Me lo puede deletrear, letra por letra?",
+        "name_slowly": "No pasa nada. ¿Puede decir su nombre y luego su apellido, despacio? Para una letra difícil, ayuda una palabra, como B de Barcelona.",
+        "name_noted": "No se preocupe, lo he anotado lo mejor posible y el equipo comprobará la ortografía con usted. ¿Seguimos?",
         "one_moment": "Un momento, por favor.",
         "staff_will_reply": "No he podido completarlo. Lo he pasado al equipo y le responderán en breve.",
         "say_again": "Perdone, ¿puede repetirlo?",
@@ -101,6 +113,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "knowledge_unavailable": "No encontré información aprobada sobre eso.",
     },
     "fr": {
+        "name_check": "Donc c'est {name}. C'est bien ça ?",
+        "name_spell": "Pardon ! Pourriez-vous me l'épeler, lettre par lettre ?",
+        "name_slowly": "Pas de souci. Pourriez-vous dire votre prénom, puis votre nom, lentement ? Pour une lettre difficile, un mot aide, comme B comme Bernard.",
+        "name_noted": "Pas de problème, je l'ai noté au mieux et l'équipe vérifiera l'orthographe avec vous. On continue ?",
         "one_moment": "Un instant, s'il vous plaît.",
         "staff_will_reply": "Je n'ai pas pu terminer. J'ai transmis votre demande à l'équipe, qui vous répondra bientôt.",
         "say_again": "Pardon, pouvez-vous répéter ?",
@@ -131,6 +147,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "knowledge_unavailable": "Je n'ai pas trouvé d'information approuvée à ce sujet.",
     },
     "de": {
+        "name_check": "Also {name}. Habe ich das richtig verstanden?",
+        "name_spell": "Entschuldigung! Könnten Sie es mir buchstabieren, Buchstabe für Buchstabe?",
+        "name_slowly": "Kein Problem. Sagen Sie bitte erst Ihren Vornamen, dann Ihren Nachnamen, ganz langsam. Bei schwierigen Buchstaben hilft ein Wort, wie B wie Berta.",
+        "name_noted": "Kein Problem, ich habe es so gut wie möglich notiert, und das Team prüft die Schreibweise mit Ihnen. Machen wir weiter?",
         "one_moment": "Einen Moment bitte.",
         "staff_will_reply": "Das konnte ich nicht abschließen. Ich habe es an das Team weitergegeben; es meldet sich in Kürze.",
         "say_again": "Entschuldigung, können Sie das wiederholen?",
@@ -171,6 +191,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "knowledge_unavailable": "Dazu habe ich keine freigegebenen Informationen gefunden.",
     },
     "pt": {
+        "name_check": "Então é {name}. Entendi certo?",
+        "name_spell": "Desculpe! Pode soletrar para mim, letra por letra?",
+        "name_slowly": "Sem problema. Pode dizer seu nome e depois o sobrenome, bem devagar? Para uma letra difícil, ajuda uma palavra, como B de Bola.",
+        "name_noted": "Sem problema, anotei da melhor forma, e a equipe vai confirmar a grafia com você. Vamos continuar?",
         "one_moment": "Um momento, por favor.",
         "staff_will_reply": "Não consegui concluir. Passei o pedido à equipa, que responderá em breve.",
         "say_again": "Desculpe, pode repetir?",
@@ -205,6 +229,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "knowledge_unavailable": "Não encontrei informações aprovadas sobre isso.",
     },
     "hi": {
+        "name_check": "तो आपका नाम {name} है। सही है?",
+        "name_spell": "माफ़ कीजिए! क्या आप नाम एक-एक अक्षर करके बता सकते हैं? English letters में भी चलेगा।",
+        "name_slowly": "कोई बात नहीं। पहले अपना नाम, फिर सरनेम, धीरे-धीरे बोलिए। मुश्किल अक्षर के लिए कोई शब्द बता दीजिए, जैसे B for Bombay।",
+        "name_noted": "कोई बात नहीं, नाम जैसा सुना वैसा लिख लिया है, टीम आपसे spelling पक्की कर लेगी। आगे बढ़ें?",
         "one_moment": "एक क्षण रुकिए।",
         "staff_will_reply": "मैं यह पूरा नहीं कर सका। मैंने आपका अनुरोध टीम को भेज दिया है, वे जल्द ही आपसे संपर्क करेंगे।",
         "say_again": "माफ़ कीजिए, क्या आप दोबारा कह सकते हैं?",
@@ -233,6 +261,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "knowledge_unavailable": "मुझे इस बारे में स्वीकृत जानकारी नहीं मिली।",
     },
     "hinglish": {
+        "name_check": "Toh aapka naam {name} hai. Sahi hai?",
+        "name_spell": "Maaf kijiye! Kya aap naam ek-ek letter karke bata sakte hain?",
+        "name_slowly": "Koi baat nahi. Pehle apna naam, phir surname, dheere-dheere boliye. Mushkil letter ke liye koi shabd bata dijiye, jaise B for Bombay.",
+        "name_noted": "Koi baat nahi, naam jaisa suna waisa likh liya hai, team aapse spelling pakki kar legi. Aage badhein?",
         "one_moment": "Ek minute rukiye.",
         "staff_will_reply": "Main yeh complete nahi kar paya. Maine aapki request team ko bhej di hai, woh jaldi aapse contact karenge.",
         "say_again": "Sorry, kya aap dobara bol sakte hain?",

@@ -85,16 +85,6 @@ LINES: dict[str, dict[str, tuple[str, ...]]] = {
         "de": ("Ich schaue kurz nach.",),
         "pt": ("Vou ver isso.",),
     },
-    "register_patient": {
-        "en": ("Let me just pop you into our system.",),
-        "hi": ("आपका नाम हमारे रिकॉर्ड में जोड़ते हैं।",),
-        "hinglish": ("Aapka naam record mein jodte hain.",),
-        "gu": ("તમારું નામ રેકોર્ડમાં ઉમેરીએ.",),
-        "es": ("Le agrego a nuestros registros.",),
-        "fr": ("Je vous ajoute à nos dossiers.",),
-        "de": ("Ich nehme Sie kurz in unsere Kartei auf.",),
-        "pt": ("Vou adicionar você ao nosso cadastro.",),
-    },
     "create_ticket": {
         "en": ("Let me note that down for the team.",),
         "hi": ("यह टीम के लिए नोट कर रहे हैं।",),

@@ -52,6 +52,7 @@ _AGREE = {
     "fine",
     "good",
     "absolutely",
+    "exactly",
     "definitely",
     "certainly",
     "proceed",
@@ -97,6 +98,8 @@ _AGREE = {
     "ji",
     "jee",
     "bilkul",
+    "sahi",
+    "सही",
     "zaroor",
     "jaroor",
     "theek",
@@ -150,6 +153,10 @@ _AGREE = {
 # Words that may stand around a yes without changing it.
 _FILLER = {
     "hi",
+    "that's",
+    "thats",
+    "it's",
+    "its",
     "hello",
     "sir",
     "madam",
@@ -310,6 +317,13 @@ _REFUSE = {
 }
 # "na" ends a Hindi request politely ("kar do na"); anywhere else it is a refusal.
 _SOFT_NO = {"ना", "na", "ના"}
+# "No, that's not quite right": what a no to a read-back says beyond the no itself.
+_NOT_RIGHT = {
+    "wrong", "incorrect", "right", "correct", "quite", "exactly", "its", "it's", "thats",
+    "that's", "isnt", "isn't", "sorry", "actually",
+    "गलत", "ग़लत", "सही", "galat", "sahi", "ખોટું", "ખોટુ", "બરાબર", "khotu", "barabar",
+    "incorrecto", "falso", "faux", "pas", "falsch", "richtig", "errado", "certo",
+}  # fmt: skip
 
 
 def _words(text: str) -> list[str]:
@@ -339,3 +353,11 @@ def confirmation_answer(text: str, language: str = "en") -> bool | None:
     if all(word in _AGREE or word in _FILLER for word in words):
         return True
     return None
+
+
+def only_a_no(text: str) -> bool:
+    """A no and nothing more ("No, that's wrong"), not a correction ("No, it's Balsar")."""
+    if confirmation_answer(text) is not False:
+        return False
+    plain = _REFUSE | _SOFT_NO | _FILLER | _NOT_RIGHT
+    return all(word in plain for word in _words(text))

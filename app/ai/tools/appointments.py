@@ -28,7 +28,7 @@ from app.appointments.commands import (
 from app.appointments.service import AppointmentService
 from app.calendar_sync.service import CalendarService
 from app.calls.access import CallPatientAccess, IdentifyPatient, normalize_access_code
-from app.conversation.confirmation import confirmation_answer
+from app.conversation.confirmation import confirmation_answer, only_a_no
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import (
     AppointmentDraft,
@@ -63,6 +63,8 @@ class AppointmentsInput(ToolInput):
 
 # Tries at the name check before the team takes it.
 NAME_CHECKS = 3
+# Times a new caller's name is read back before it is kept as heard for the team to check.
+NAME_READBACKS = 3
 # Enough to choose from on a call without reading out a long list.
 LISTED_APPOINTMENTS = 5
 
@@ -214,15 +216,65 @@ class AppointmentFlow:
         self, session: Session, state: ConversationState, payload: BaseModel
     ) -> BaseModel:
         command = RegisterInput.model_validate(payload.model_dump())
-        if state.identity_state.is_verified:
+        identity = state.identity_state
+        if identity.is_verified:
             return Outcome(status="already_known")
         if not session.writes:
             return Outcome(status="test_mode", say=spoken(state.language, "test_mode"))
-        if not await self.identity.register(session, state, command.full_name):
+        if not session.contact:
             # No number to file the person under, such as a withheld caller ID.
             return Outcome(status="cannot_register", next="offer_to_take_a_message")
-        state.caller_name = first_name(command.full_name) or ""
+        if session.channel != "voice":
+            # Typed, so it is as they wrote it.
+            return await self._register(session, state, command.full_name)
+        if identity.name_readbacks >= NAME_READBACKS:
+            # Still not right after reading it back three times: kept as heard, and
+            # the team checks the spelling with them.
+            return await self._register(session, state, command.full_name, unsure=True)
+        # Heard on a phone line, a name is easily misheard ("With browser" for "Kit
+        # Balsar"). The server reads it back and registers it on a yes (before_turn).
+        identity.pending_name = command.full_name.strip()
+        identity.name_readbacks += 1
+        return Outcome(
+            status="name_read_back",
+            say=spoken(state.language, "name_check", name=identity.pending_name),
+        )
+
+    async def _register(
+        self, session: Session, state: ConversationState, name: str, *, unsure: bool = False
+    ) -> Outcome:
+        if not await self.identity.register(session, state, name, unsure=unsure):
+            return Outcome(status="cannot_register", next="offer_to_take_a_message")
+        state.caller_name = first_name(name) or ""
+        if unsure:
+            return Outcome(
+                status="registered",
+                next="say_the_team_will_check_the_spelling_then_carry_on",
+            )
         return Outcome(status="registered")
+
+    async def _name_answer(
+        self, state: ConversationState, session: Session, utterance: str, answer: bool | None
+    ) -> Direct | None:
+        """The caller's answer to their name read back. A yes registers it and the model
+        carries on; a bare no asks for it another way; a correction goes to the model,
+        which calls register_patient again."""
+        identity = state.identity_state
+        name, identity.pending_name = identity.pending_name or "", None
+        if answer is True:
+            result = await self._register(session, state, name)
+            if result.status != "registered":
+                return Direct(spoken(state.language, "staff_will_call"), "register_patient")
+            return None
+        if not only_a_no(utterance):
+            return None
+        if identity.name_readbacks >= NAME_READBACKS:
+            await self._register(session, state, name, unsure=True)
+            return Direct(spoken(state.language, "name_noted"), "register_patient")
+        # First letter by letter (English letters do, in any language), then each part
+        # slowly with a word for the hard letters.
+        key = "name_spell" if identity.name_readbacks == 1 else "name_slowly"
+        return Direct(spoken(state.language, key), "register_patient")
 
     async def slots(
         self, session: Session, state: ConversationState, payload: BaseModel
@@ -454,6 +506,8 @@ class AppointmentFlow:
                 ),
                 "identify_patient",
             )
+        if state.identity_state.pending_name is not None:
+            return await self._name_answer(state, session, utterance, answer)
         operation = state.appointment_operation
         if operation is not None and operation.action not in session.allowed_tools:
             raise AssistantAuthorizationError("Appointment action is not authorized")

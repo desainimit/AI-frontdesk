@@ -274,3 +274,19 @@ def test_calls_ask_gemini_for_its_priority_lane() -> None:
     text = build_llm_provider(settings)
     assert voice._tier == genai_types.ServiceTier.PRIORITY  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
     assert text._tier is None  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
+
+@pytest.mark.asyncio
+async def test_on_a_call_the_lighter_model_gets_what_is_left_not_a_fresh_wait() -> None:
+    # On 27 Oct a slow provider kept a caller in silence 8 s, then 8 s more.
+    gateway = ModelGateway(
+        SlowThenFast(first_delay=5.0),  # type: ignore[arg-type]
+        fallback=SlowThenFast(first_delay=5.0),  # type: ignore[arg-type]
+        pause_seconds=0,
+        retries=0,
+        first_words_within=0.3,
+    )
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(LLMTimeoutError):
+        _ = [event async for event in gateway.stream(ChatRequest("", (), ()))]
+    assert asyncio.get_running_loop().time() - started < 0.45

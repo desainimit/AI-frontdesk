@@ -27,11 +27,13 @@ RETRIES = 2
 # a second, identical one beside it, and whichever answers first is used. A slow
 # moment at the provider then costs a second, not ten.
 HEDGE_AFTER_SECONDS = 1.8
-# On a call: no first words this long after the request (both copies of it, when
-# hedged), and the next attempt is made, then the caller is told. Kept here rather
-# than as the provider's timeout, which Gemini sends to Google as a deadline it may
-# refuse when short.
-FIRST_WORDS_SECONDS = 8.0
+# On a call: no first words this long after the request, over every attempt together,
+# and the caller is told. The first attempt (both copies of it, when hedged) gets
+# FIRST_TRY_SHARE of it and the lighter model the rest: one 8 s wait each left a
+# caller in silence for 16 s on 27 Oct. Kept here rather than as the provider's
+# timeout, which Gemini sends to Google as a deadline it may refuse when short.
+FIRST_WORDS_SECONDS = 9.0
+FIRST_TRY_SHARE = 2 / 3
 BREAKER_FAILURES = 4
 BREAKER_RESET_SECONDS = 30.0
 # Clinics on the platform's key share its rate limit; one busy clinic must not use it up.
@@ -93,10 +95,12 @@ class ModelGateway:
             attempts = [self._primary] * (self._retries + 1)
             if self._fallback is not None:
                 attempts.append(self._fallback)
+            started = asyncio.get_running_loop().time()
             for number, model in enumerate(attempts):
                 spoken = False
                 try:
-                    async for event in self._attempt(model, request):
+                    window = self._window(started, last=number == len(attempts) - 1)
+                    async for event in self._attempt(model, request, window):
                         spoken = spoken or isinstance(event, TextDelta)
                         yield event
                     self._breaker.record_success()
@@ -119,15 +123,27 @@ class ModelGateway:
         finally:
             self._slot.release()
 
-    def _attempt(self, model: LLMProvider, request: ChatRequest) -> AsyncIterator[ModelEvent]:
+    def _window(self, started: float, *, last: bool) -> float | None:
+        """How long this attempt may take to start answering: what is left of the
+        turn's limit, and only a share of it while another attempt can follow."""
+        if self._first_words_within is None:
+            return None
+        left = self._first_words_within - (asyncio.get_running_loop().time() - started)
+        if left <= 0:
+            raise LLMTimeoutError("LLM did not start answering in time")
+        return left if last else min(left, self._first_words_within * FIRST_TRY_SHARE)
+
+    def _attempt(
+        self, model: LLMProvider, request: ChatRequest, window: float | None
+    ) -> AsyncIterator[ModelEvent]:
         stream = (
             model.stream(request)
             if self._hedge_after is None
             else first_to_answer(model, request, self._hedge_after)
         )
-        if self._first_words_within is None:
+        if window is None:
             return stream
-        return within(stream, self._first_words_within)
+        return within(stream, window)
 
 
 async def within(stream: AsyncIterator[ModelEvent], seconds: float) -> AsyncIterator[ModelEvent]:

@@ -25,6 +25,7 @@ from app.core.database.unit_of_work import enter_tenant_scope
 from app.messaging.models import Conversation
 from app.patients.models import Patient
 from app.settings.store import load_settings
+from app.tickets.service import open_ticket
 
 
 class ContactIdentity:
@@ -85,8 +86,11 @@ class ContactIdentity:
             await self._bind(database, session, patient_id)
         return patient_id, on_file
 
-    async def register(self, session: Session, state: ConversationState, name: str) -> bool:
-        """Add the person as a new patient under the number they are using."""
+    async def register(
+        self, session: Session, state: ConversationState, name: str, *, unsure: bool = False
+    ) -> bool:
+        """Add the person as a new patient under the number they are using. `unsure`: the
+        caller could not confirm the name as heard, so the team is asked to check it."""
         if not session.contact or not session.writes:
             return False
         async with self._sessions.begin() as database:
@@ -100,6 +104,23 @@ class ContactIdentity:
             database.add(patient)
             await database.flush()
             await self._bind(database, session, patient.id)
+            if unsure:
+                on_call = session.provider_call_id is not None
+                await open_ticket(
+                    database,
+                    session.tenant_id,
+                    source="call" if on_call else "sms",
+                    subject="Check a new patient's name",
+                    description=(
+                        f'Registered on a call as "{patient.display_name}". The caller could '
+                        "not confirm the spelling; please check it with them."
+                    ),
+                    patient_id=patient.id,
+                    contact=session.contact,
+                    call_id=session.conversation_id if on_call else None,
+                    conversation_id=None if on_call else session.conversation_id,
+                    author="assistant",
+                )
         self._remember(state, patient.id)
         return True
 

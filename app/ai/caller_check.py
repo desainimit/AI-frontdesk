@@ -8,8 +8,9 @@ Every move or cancellation also sends a message to the patient's own phone.
 """
 
 import re
-import unicodedata
 from difflib import SequenceMatcher
+
+from app.ai.romanize import latin_fold, sound_fold
 
 # Not part of a name when said aloud.
 _TITLES = frozenset(
@@ -24,23 +25,42 @@ SIMILAR = 0.8
 
 
 def _words(name: str) -> list[str]:
-    folded = unicodedata.normalize("NFKC", name).casefold()
-    words = re.findall(r"[^\W\d_]+", folded)
+    """The parts of a name in Latin letters, whatever script it was said or stored in."""
+    words: list[str] = []
+    # Spelled out ("N I M I T. D E S A I"): the letters of one part make one word.
+    for part in re.split(r"[.,;]", latin_fold(name)):
+        letters = ""
+        for word in re.findall(r"[^\W\d_]+", part):
+            if len(word) == 1:
+                letters += word
+                continue
+            if letters:
+                words.append(letters)
+                letters = ""
+            words.append(word)
+        if letters:
+            words.append(letters)
     return [word for word in words if word not in _TITLES]
 
 
 def _close(a: str, b: str) -> bool:
-    return a == b or SequenceMatcher(None, a, b).ratio() >= SIMILAR
+    return (
+        a == b
+        or SequenceMatcher(None, a, b).ratio() >= SIMILAR
+        or SequenceMatcher(None, sound_fold(a), sound_fold(b)).ratio() >= SIMILAR
+    )
 
 
 def names_match(said: str, on_file: str) -> bool:
     """Whether the name the caller gave is the name on file: the whole name, or the
-    first name when only that was given. Small mishearings are allowed."""
+    first name when only that was given. Small mishearings are allowed, and the name
+    may be said in English while it is stored in Hindi or Gujarati, or spelled out."""
     given, filed = _words(said), _words(on_file)
     if not given or not filed:
         return False
     if len(given) == 1:
-        return _close(given[0], filed[0])
+        # One word may also be the whole name spelled without a break.
+        return _close(given[0], filed[0]) or _close(given[0], "".join(filed))
     return _close(given[0], filed[0]) and _close(given[-1], filed[-1])
 
 
