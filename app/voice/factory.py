@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import SecretStr
 
 from app.conversation.locales import LOCALES, LanguagePolicy
-from app.core.settings import Settings
+from app.core.settings import Settings, SpeakingSpeed
 from app.integrations.resolver import IntegrationUnavailableError, ResolvedIntegration
 from app.voice.routing import RoutedSTTProvider, RoutedTTSProvider
 from app.voice.stt.azure import AzureSTTProvider
@@ -138,11 +138,16 @@ def _routed_stt(
     )
 
 
-def _routed_tts(config: Mapping[str, Any], secrets: Mapping[str, SecretStr]) -> RoutedTTSProvider:
+def _routed_tts(
+    config: Mapping[str, Any], secrets: Mapping[str, SecretStr], speed: SpeakingSpeed
+) -> RoutedTTSProvider:
     return RoutedTTSProvider(
-        AzureTTSProvider(speech_key=secrets["speech_key"], region=str(config["region"])),
+        AzureTTSProvider(
+            speech_key=secrets["speech_key"], region=str(config["region"]), speed=speed
+        ),
         ElevenLabsTTSProvider(
             api_key=secrets["elevenlabs_api_key"],
+            speed=speed,
             default_voice_id=str(config["voice_id"]),
             model_id=str(config["model_id"]),
         ),
@@ -187,12 +192,13 @@ def tts_from_connection(
 ) -> TextToSpeechProvider:
     config = connection.config
     if connection.provider == "language_router":
-        return _routed_tts(config, connection.secrets)
+        return _routed_tts(config, connection.secrets, settings.speaking_speed)
     if connection.provider == "elevenlabs":
         return ElevenLabsTTSProvider(
             api_key=connection.secret("api_key"),
             default_voice_id=str(config["voice_id"]),
             model_id=str(config["model_id"]),
+            speed=settings.speaking_speed,
         )
     if connection.provider == "azure_speech":
         return AzureTTSProvider(
@@ -200,6 +206,7 @@ def tts_from_connection(
             region=str(config["region"]),
             default_voice=str(config["voice"]),
             hindi_voice=str(config["hindi_voice"]),
+            speed=settings.speaking_speed,
         )
     raise ValueError("Unsupported TTS provider")
 
@@ -255,13 +262,16 @@ def platform_tts(settings: Settings) -> TextToSpeechProvider | None:
             settings.routed_tts_secrets.get(name, SecretStr("")).get_secret_value()
             for name in ("speech_key", "elevenlabs_api_key")
         ):
-            return _routed_tts(settings.routed_tts_config, settings.routed_tts_secrets)
+            return _routed_tts(
+                settings.routed_tts_config, settings.routed_tts_secrets, settings.speaking_speed
+            )
         return None
     if settings.tts_provider == "elevenlabs" and settings.elevenlabs_api_key.get_secret_value():
         return ElevenLabsTTSProvider(
             api_key=settings.elevenlabs_api_key,
             default_voice_id=settings.elevenlabs_voice_id,
             model_id=settings.elevenlabs_model_id,
+            speed=settings.speaking_speed,
         )
     azure_key = (
         settings.azure_tts_key
@@ -278,6 +288,7 @@ def platform_tts(settings: Settings) -> TextToSpeechProvider | None:
             ),
             default_voice=settings.azure_speech_voice,
             hindi_voice=settings.azure_hindi_voice,
+            speed=settings.speaking_speed,
         )
     return None
 

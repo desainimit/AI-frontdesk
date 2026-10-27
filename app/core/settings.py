@@ -7,6 +7,10 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
+# How fast the receptionist speaks on calls; each speech provider turns it into its
+# own setting (app.voice.tts.speed).
+SpeakingSpeed = Literal["slow", "normal", "fast", "very_fast"]
+
 
 class Environment(StrEnum):
     LOCAL = "local"
@@ -50,6 +54,7 @@ PLATFORM_MANAGED = frozenset(
         "azure_speech_language",
         "azure_speech_voice",
         "azure_hindi_voice",
+        "speaking_speed",
         "llm_provider",
         "gemini_api_key",
         "openrouter_api_key",
@@ -161,6 +166,7 @@ class Settings(BaseSettings):
     azure_speech_language: str = "en-US"
     azure_speech_voice: str = "en-US-JennyNeural"
     azure_hindi_voice: str = "hi-IN-SwaraNeural"
+    speaking_speed: SpeakingSpeed = "normal"
 
     # Knowledge documents; the API and the worker share this storage.
     knowledge_storage_backend: Literal["local", "s3"] = "local"

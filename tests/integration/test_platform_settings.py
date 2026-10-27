@@ -56,7 +56,7 @@ async def platform(tenancy: TenancyFixture) -> AsyncGenerator[Settings]:
             await session.execute(delete(PlatformConnection))
             await session.execute(
                 text(
-                    "UPDATE platform_settings SET session_minutes = 30, "
+                    "UPDATE platform_settings SET session_minutes = 30, speaking_speed = 'normal', "
                     "allowed_llm_models = CAST(:models AS jsonb)"
                 ),
                 {"models": json.dumps(models)},

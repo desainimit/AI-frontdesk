@@ -8,6 +8,7 @@ import httpx
 from pydantic import SecretStr
 
 from app.conversation.locales import LOCALES, normalize_language
+from app.core.settings import SpeakingSpeed
 from app.voice.http import retry_after_seconds
 from app.voice.tts.base import (
     TTSError,
@@ -17,6 +18,7 @@ from app.voice.tts.base import (
     TTSTransientError,
 )
 from app.voice.tts.elevenlabs_stream import ElevenLabsSocket
+from app.voice.tts.speed import ELEVENLABS_SPEED
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ class ElevenLabsTTSProvider:
         self,
         api_key: SecretStr,
         *,
+        speed: SpeakingSpeed = "normal",
         default_voice_id: str = "21m00Tcm4TlvDq8ikWAM",  # Rachel
         model_id: str = "eleven_flash_v2_5",
         output_format: str = "pcm_8000",
@@ -48,6 +51,8 @@ class ElevenLabsTTSProvider:
         self._api_key = api_key
         self.default_voice_id = default_voice_id
         self.model_id = model_id
+        self.speed: SpeakingSpeed = speed
+        self.voice_settings = {**VOICE_SETTINGS, "speed": ELEVENLABS_SPEED[speed]}
         self.output_format = output_format
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
@@ -66,7 +71,8 @@ class ElevenLabsTTSProvider:
     @property
     def voice_key(self) -> str:
         """What decides how a phrase sounds, for reusing audio already made."""
-        return f"elevenlabs:{self.model_id}:{self.default_voice_id}"
+        key = f"elevenlabs:{self.model_id}:{self.default_voice_id}"
+        return key if self.speed == "normal" else f"{key}:{self.speed}"
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -102,7 +108,7 @@ class ElevenLabsTTSProvider:
                 voice_id=key[0],
                 model_id=self.model_id,
                 language_code=key[1],
-                voice_settings=VOICE_SETTINGS,
+                voice_settings=self.voice_settings,
                 base_url=self.base_url,
                 timeout_seconds=self.timeout_seconds,
             )
@@ -177,7 +183,7 @@ class ElevenLabsTTSProvider:
         payload: dict[str, Any] = {
             "text": text,
             "model_id": self.model_id,
-            "voice_settings": VOICE_SETTINGS,
+            "voice_settings": self.voice_settings,
         }
         code = self._language_code(language)
         if code:

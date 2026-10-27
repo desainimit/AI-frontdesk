@@ -6,6 +6,7 @@ import httpx
 from pydantic import SecretStr
 
 from app.conversation.locales import LOCALES, base_language
+from app.core.settings import SpeakingSpeed
 from app.voice.http import retry_after_seconds
 from app.voice.tts.base import (
     TTSPermanentError,
@@ -13,6 +14,7 @@ from app.voice.tts.base import (
     TTSTimeoutError,
     TTSTransientError,
 )
+from app.voice.tts.speed import AZURE_RATE
 
 
 class AzureTTSProvider:
@@ -25,6 +27,7 @@ class AzureTTSProvider:
         *,
         default_voice: str = "en-US-JennyNeural",
         hindi_voice: str = "hi-IN-SwaraNeural",
+        speed: SpeakingSpeed = "normal",
         output_format: str = "raw-8khz-16bit-mono-pcm",
         timeout_seconds: float = 5.0,
         client: httpx.AsyncClient | None = None,
@@ -33,6 +36,7 @@ class AzureTTSProvider:
         self.region = region
         self.default_voice = default_voice
         self.hindi_voice = hindi_voice
+        self.speed: SpeakingSpeed = speed
         self.output_format = output_format
         self.timeout_seconds = timeout_seconds
         self._client = client
@@ -41,6 +45,11 @@ class AzureTTSProvider:
     @property
     def name(self) -> str:
         return "azure"
+
+    @property
+    def voice_key(self) -> str:
+        """What decides how a phrase sounds, for reusing audio already made."""
+        return "azure" if self.speed == "normal" else f"azure:{self.speed}"
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -83,6 +92,9 @@ class AzureTTSProvider:
         }
         # Escape XML characters in speech text
         escaped = escape(text)
+        rate = AZURE_RATE[self.speed]
+        if rate:
+            escaped = f"<prosody rate={quoteattr(rate)}>{escaped}</prosody>"
         ssml = (
             f"<speak version='1.0' xml:lang={quoteattr(voice_locale)}>"
             f"<voice xml:lang={quoteattr(voice_locale)} name={quoteattr(target_voice)}>"

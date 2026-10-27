@@ -80,6 +80,10 @@ class PlatformSettings(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("id = 1", name="single_row"),
         CheckConstraint("session_minutes BETWEEN 5 AND 720", name="session_minutes_range"),
+        CheckConstraint(
+            "speaking_speed IN ('slow', 'normal', 'fast', 'very_fast')",
+            name="speaking_speed_choice",
+        ),
     )
     id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
     product_name: Mapped[str] = mapped_column(String(100), default="AI Frontdesk")
@@ -88,6 +92,10 @@ class PlatformSettings(TimestampMixin, Base):
     allowed_llm_models: Mapped[list[str]] = mapped_column(JSONB)
     # How long a platform administrator stays signed in.
     session_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    # How fast the receptionist speaks on every clinic's calls.
+    speaking_speed: Mapped[str] = mapped_column(
+        String(10), default="normal", server_default="normal"
+    )
     # What a new clinic starts with; empty while the product's own defaults are in use.
     workspace_defaults: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 

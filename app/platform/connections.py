@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ApplicationError, NotFoundError
 from app.core.security.encryption import SecretCipher
-from app.core.settings import PLATFORM_MANAGED, Settings
+from app.core.settings import PLATFORM_MANAGED, Settings, SpeakingSpeed
 from app.identity.mail import SMTP_TIMEOUT_SECONDS, send_smtp
 from app.identity.sessions import platform_scope
 from app.integrations.catalog import (
@@ -127,6 +127,7 @@ class ProductSettings(BaseModel):
     support_email: str = Field(default="", max_length=254, pattern=r"^(|[^\s@]+@[^\s@]+\.[^\s@]+)$")
     allowed_llm_models: list[str] = Field(min_length=1, max_length=30)
     session_minutes: int = Field(ge=5, le=720)
+    speaking_speed: SpeakingSpeed = "normal"
 
     @field_validator("allowed_llm_models")
     @classmethod
@@ -269,6 +270,7 @@ def platform_values(
             platform_session_minutes=product.session_minutes,
             product_name=product.product_name,
             support_email=product.support_email,
+            speaking_speed=product.speaking_speed,
         )
     return values
 
