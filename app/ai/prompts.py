@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from app.ai.llm.base import AssistantTurn, Turn, UserTurn
 from app.ai.memory import records_trusted
 from app.ai.session import Session
+from app.conversation.locales import LOCALES, base_language
 from app.conversation.state import ConversationState
 from app.safety import handover
 
@@ -72,7 +73,9 @@ Booking a new appointment, one step and one question at a time
 4. Their name, if you do not have it yet, and register_patient when person_is_known is
    false. Their number is already known when their_number_is_known is true: do not ask
    for it.
-5. Propose the booking; the server reads it back and asks them to confirm.
+5. Propose the booking with book_appointment as soon as they pick a time; the server
+   reads it back and asks them to confirm. Never say yourself that a time is booked,
+   kept or done: only the server books, after their yes.
 6. After it is booked: any preparation the clinic has published for that visit, and for
    a new patient, whatever the clinic asks new patients to bring or do, if it says so.
    Ask about insurance only if they bring it up or the clinic's facts ask for it.
@@ -280,6 +283,44 @@ TONES = {
 }
 
 
+# How each conversation language is written. Hindi mixed with English is how people
+# speak it; a whole English sentence is not.
+SCRIPTS = {
+    "hi": (
+        "Hindi in Devanagari script, the everyday spoken Hindi of a receptionist. English "
+        "words people use in Hindi (appointment, time, doctor) are fine, but never a whole "
+        'English sentence, and never English written in Devanagari (not "लेट मी चेक")'
+    ),
+    "hinglish": (
+        "Hinglish: Hindi with English words mixed in the way they speak, written in Latin "
+        'letters ("Ji, kal shaam saadhe paanch baje khaali hai."). Never plain English, never '
+        "Devanagari"
+    ),
+    "gu": (
+        "Gujarati in Gujarati script. Keep names, codes and appointment facts as they are; "
+        "understand Gujarati digits as well as 0-9. If a spoken date, time or number is "
+        "unclear, ask; never guess a booking time"
+    ),
+}
+
+
+def language_name(language: str) -> str:
+    return "Hinglish" if language == "hinglish" else LOCALES[base_language(language)].name
+
+
+def language_rule(language: str) -> str:
+    """The one rule on language, said last so that nothing above outweighs it."""
+    name = language_name(language)
+    how = SCRIPTS.get(language, f"everyday spoken {name}")
+    return (
+        f"Language: reply only in {name}, every sentence: {how}. The server chose it from "
+        "how they speak and changes it when they switch language or ask to, so keep to it "
+        "even when they use a word or a name from another language, when a tool answers in "
+        "English, or when an example in these instructions is in English (the examples "
+        f"show the tone; say them in {name})."
+    )
+
+
 def system_prompt(session: Session, state: ConversationState) -> str:
     settings = session.configuration
     now = datetime.now(UTC)
@@ -323,19 +364,6 @@ def system_prompt(session: Session, state: ConversationState) -> str:
     style += "\n" + TONES[settings.receptionist.tone]
     if settings.receptionist.persona_name:
         style += f"\nYour name is {settings.receptionist.persona_name}. Give it when asked."
-    if state.language == "hinglish":
-        style += (
-            " The caller speaks Hinglish. Reply in Hinglish too: Hindi and English mixed the "
-            'way they speak, written in Latin letters ("Ji, kal shaam saadhe paanch baje '
-            'khaali hai."). Never switch to plain English or to Devanagari.'
-        )
-    if state.language == "gu":
-        style += (
-            " Reply in natural Gujarati using Gujarati script. Preserve patient and provider "
-            "names, access codes and appointment facts. Understand Gujarati digits as well as "
-            "ASCII digits. Ask for clarification when a spoken date, time or number is ambiguous; "
-            "never guess a booking time."
-        )
     return "\n\n".join(
         (
             POLICY,
@@ -346,6 +374,7 @@ def system_prompt(session: Session, state: ConversationState) -> str:
             + (settings.receptionist.instructions or "None."),
             "Where this conversation stands (set by the server):\n"
             + json.dumps(snapshot, ensure_ascii=False),
+            language_rule(state.language),
         )
     )
 

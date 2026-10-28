@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from app.conversation.confirmation import confirmation_answer
-from app.conversation.language import observe_language
+from app.conversation.language import asked_for_language, observe_language
 from app.conversation.locales import LanguagePolicy
 from app.conversation.redaction import redact_verification_secrets
 from app.conversation.state import (
@@ -103,20 +103,25 @@ class ConversationStateManager:
         threshold: float,
         detected_languages: tuple[str, ...] = (),
     ) -> None:
-        if not state.language_state.policy.auto_detect:
+        language = state.language_state
+        if not language.policy.auto_detect:
+            return
+        enabled = tuple(language.policy.enabled_languages)
+        asked = asked_for_language(text, enabled)
+        if asked is not None and language.request(asked):
             return
         observation = observe_language(
             text,
             detected_language,
             provider_languages=detected_languages,
-            enabled_languages=tuple(state.language_state.policy.enabled_languages),
+            enabled_languages=enabled,
         )
         if observation is not None:
-            # A substantive first utterance can establish the language immediately;
-            # LanguageState still requires sustained evidence for later switches.
-            if not state.language_state.recent_languages and observation.confidence >= threshold:
-                state.language_state.primary_language = observation.language
-            state.language_state.record_utterance(
+            # The first sentence that shows a language sets it; after that it takes
+            # sentences in a row (LanguageState) or a request to change it.
+            if not language.recent_languages and observation.confidence >= threshold:
+                language.establish(observation.language, observation.confidence)
+            language.record_utterance(
                 detected_language=observation.language,
                 confidence=observation.confidence,
                 threshold=threshold,

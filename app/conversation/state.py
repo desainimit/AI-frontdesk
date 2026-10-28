@@ -25,12 +25,17 @@ class SupportedLanguage(StrEnum):
     HINGLISH = "hinglish"
 
 
-class LanguageState(BaseModel):
-    """Tracks conversation-level language and code-switching dynamics.
+# Sentences in a row, in another language, that make it the call's language.
+SWITCH_AFTER = 2
 
-    Adheres to the architectural requirement that a single foreign word does not
-    destabilize the conversation language, while code-switching between
-    the shop's enabled languages is intentionally supported.
+
+class LanguageState(BaseModel):
+    """The language the conversation is held in, and when it changes.
+
+    It stays until the person changes it: by asking ("Can we speak English?"), or by
+    speaking another language for SWITCH_AFTER sentences in a row. A short reply, a
+    name, an English word in a Hindi sentence or one misheard line changes nothing.
+    Hindi and Hinglish are the same spoken language: a call never flips between them.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -41,6 +46,9 @@ class LanguageState(BaseModel):
     code_switching: bool = False
     recent_languages: list[str] = Field(default_factory=list)
     history_window_size: int = Field(default=5, ge=2, le=20)
+    # Another language heard in the last sentences in a row, and how many.
+    switch_to: str | None = None
+    switch_votes: int = Field(default=0, ge=0)
 
     def record_utterance(
         self,
@@ -49,29 +57,49 @@ class LanguageState(BaseModel):
         threshold: float = 0.6,
         code_switching: bool = False,
     ) -> None:
-        """Records an utterance language observation and updates primary language smoothly."""
+        """Take one sentence's language into account (see the class docstring)."""
         normalized = self._normalize_language(detected_language)
         if base_language(normalized) not in self.policy.enabled_languages or confidence < threshold:
             return
         self.recent_languages.append(normalized)
         if len(self.recent_languages) > self.history_window_size:
             self.recent_languages.pop(0)
-
         self.code_switching = (
             code_switching
             or "hinglish" in self.recent_languages
-            or len(set(self.recent_languages)) > 1
+            or len({base_language(code) for code in self.recent_languages}) > 1
         )
+        if base_language(normalized) == base_language(self.primary_language):
+            # Still their language, in whichever script it came: the run of another ends.
+            self.switch_to, self.switch_votes = None, 0
+            self.confidence = confidence
+            return
+        if self.switch_to is not None and base_language(self.switch_to) == base_language(
+            normalized
+        ):
+            self.switch_votes += 1
+        else:
+            self.switch_to, self.switch_votes = normalized, 1
+        if self.switch_votes >= SWITCH_AFTER:
+            self.primary_language, self.confidence = normalized, confidence
+            self.switch_to, self.switch_votes = None, 0
 
-        # Do not immediately switch session language for low-confidence or single-word switches.
-        # Shift primary_language only if sustained (>= 2 consecutive turns) or high confidence.
-        if confidence >= threshold:
-            consecutive_matches = sum(
-                1 for lang in self.recent_languages[-2:] if lang == normalized
-            )
-            if consecutive_matches >= 2 or normalized == self.primary_language:
-                self.primary_language = normalized
-                self.confidence = confidence
+    def establish(self, language: str, confidence: float) -> None:
+        """The first sentence that shows a language sets it for the call."""
+        self.primary_language, self.confidence = self._normalize_language(language), confidence
+        self.switch_to, self.switch_votes = None, 0
+
+    def request(self, language: str) -> bool:
+        """They asked for a language: from now on, at once. False when the clinic does not
+        offer it. Asked for Hindi in a Hinglish call, it stays Hinglish (the same)."""
+        code = self._normalize_language(language)
+        if base_language(code) not in self.policy.enabled_languages:
+            return False
+        if base_language(code) != base_language(self.primary_language):
+            self.primary_language = code
+        self.confidence = 1.0
+        self.switch_to, self.switch_votes = None, 0
+        return True
 
     @staticmethod
     def _normalize_language(lang: str) -> str:

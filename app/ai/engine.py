@@ -27,21 +27,23 @@ from app.ai.llm.base import (
     LLMProviderError,
     ModelEvent,
     TextDelta,
+    ToolCall,
     ToolResult,
     Turn,
     Usage,
     UserTurn,
 )
 from app.ai.memory import CallerHistory, records_trusted
-from app.ai.prompts import history, system_prompt
+from app.ai.prompts import history, language_name, system_prompt
 from app.ai.sentences import SentenceSplitter
 from app.ai.session import AssistantAuthorizationError, Session
 from app.ai.tools.appointments import AppointmentFlow
 from app.ai.tools.registry import ToolRegistry, ToolValidationError
 from app.ai.wording import spoken
 from app.conversation.confirmation import confirmation_answer
+from app.conversation.language import CHECK_WORDS, reply_fits
 from app.conversation.manager import ConversationStateManager
-from app.conversation.promises import promises_a_lookup
+from app.conversation.promises import promises_a_lookup, settles_a_time
 from app.conversation.redaction import redact_verification_secrets
 from app.conversation.state import ConversationState, SafetyDecision
 from app.core.errors import ApplicationError
@@ -66,6 +68,19 @@ KEEP_PROMISE = (
     "lookup now with a tool, without saying anything first."
 )
 
+# Not the caller: the server asking for a reply in the call's language.
+RIGHT_LANGUAGE = (
+    "(Server note, not the caller.) That reply was not in {language}, the language of "
+    "this call. Give your reply again, in {language} only."
+)
+# Not the caller: the server, when a reply spoke of an offered time as settled.
+BOOK_IT = (
+    "(Server note, not the caller.) You spoke of {time} as settled, but nothing is booked "
+    "until book_appointment and their yes. If they chose it, call book_appointment now "
+    "(register_patient first if person_is_known is false) without saying anything first. "
+    "If they did not choose it, say nothing."
+)
+
 Outcome = Literal[
     "answered", "confirmation", "safety", "handoff", "unavailable", "blocked", "interrupted"
 ]
@@ -77,6 +92,72 @@ PLAIN_NO_WORDS = 4
 
 def _says_more_than_no(words: str) -> bool:
     return "?" in words or len(words.split()) > PLAIN_NO_WORDS
+
+
+class LanguageGate:
+    """Holds the first words of a reply until there are enough to tell their language.
+
+    A reply in another language than the call's is then not said at all (27 Oct: an
+    English line in a Hindi call); `wrong` is set and the model is asked again.
+    """
+
+    def __init__(self, language: str, *, check: bool) -> None:
+        self._language = language
+        self._checking = check
+        self._held: list[str] = []
+        self.wrong = False
+
+    def feed(self, sentence: str) -> list[str]:
+        """What can be said now."""
+        if self.wrong:
+            return []
+        if not self._checking:
+            return [sentence]
+        self._held.append(sentence)
+        if len(" ".join(self._held).split()) < CHECK_WORDS:
+            return []
+        return self._decide()
+
+    def finish(self, rest: str) -> list[str]:
+        """The end of the reply: whatever is still held, checked if it was not yet."""
+        if rest:
+            self._held.append(rest)
+        if self.wrong or not self._checking:
+            return self._held if not self.wrong else []
+        return self._decide()
+
+    def _decide(self) -> list[str]:
+        self._checking = False
+        if not reply_fits(" ".join(self._held), self._language):
+            self.wrong = True
+            return []
+        ready, self._held = self._held, []
+        return ready
+
+
+def _reminder(state: ConversationState, completed: Completed) -> str | None:
+    """A server note for the model when its reply left something undone, or None."""
+    text = completed.turn.text
+    if completed.turn.tool_calls:
+        return None
+    # "Let me check" and nothing more would leave the caller in silence. A question
+    # back ("...may I have your name?") waits for the caller.
+    if promises_a_lookup(text) and not text.rstrip().endswith("?"):
+        return KEEP_PROMISE
+    # A time spoken of as theirs, but nothing is booked until book_appointment and
+    # their yes (27 Oct: "पक्का, सवा नौ बजे का रख लेते हैं" and no booking).
+    if state.appointment_operation is None:
+        settled = settles_a_time(text, state.active_flow_state.offered_slots)
+        if settled is not None:
+            return BOOK_IT.format(time=settled)
+    return None
+
+
+async def _close(stream: AsyncIterator[Any]) -> None:
+    """Stop a model reply that is not wanted, so its request ends too."""
+    close = getattr(stream, "aclose", None)
+    if close is not None:
+        await close()
 
 
 @dataclass(frozen=True)
@@ -232,32 +313,8 @@ class Engine:
                 yield done("safety")
                 return
             session.validate(state)
-            # 2. A number that belongs to one patient identifies them.
-            if not state.identity_state.is_verified and session.contact and session.writes:
-                try:
-                    await self.identity.recognise(session, state)
-                except ApplicationError:
-                    logger.warning("assistant_recognition_failed")
-            if (
-                self.history is not None
-                and state.caller_name is None
-                and state.identity_state.is_verified
-            ):
-                try:
-                    state.caller_name = await self.history.name(session, state) or ""
-                except (ApplicationError, SQLAlchemyError):
-                    logger.warning("assistant_name_unavailable")
-                    state.caller_name = ""
-            if (
-                self.history is not None
-                and state.caller_history is None
-                and records_trusted(session, state)
-            ):
-                try:
-                    state.caller_history = await self.history.load(session, state)
-                except (ApplicationError, SQLAlchemyError):
-                    logger.warning("assistant_history_unavailable")
-                    state.caller_history = ""
+            # 2. Who they are, and what is known about them.
+            await self._know_the_caller(session, state)
             # 3. What the server answers itself: a code, or yes/no to its own question.
             direct = await self.flow.before_turn(session, state, utterance, answer)
             if direct is not None:
@@ -272,27 +329,33 @@ class Engine:
             specs = self.registry.specs(session)
             system = system_prompt(session, state)
             reminded = False
+            relanguaged = False
             while steps < MAX_STEPS:
                 if perf_counter() - started > TURN_SECONDS:
                     raise TimeoutError
                 steps += 1
                 # On a call the first words are spoken while the rest is written.
                 splitter = SentenceSplitter(first_clause=session.channel == "voice")
+                gate = LanguageGate(state.language, check=not relanguaged)
                 completed: Completed | None = None
+                stream = self.model.stream(ChatRequest(system, tuple(turns), specs))
                 try:
-                    async for item in self.model.stream(ChatRequest(system, tuple(turns), specs)):
-                        if isinstance(item, TextDelta):
-                            for sentence in splitter.feed(item.text):
-                                semantic, alarm = await self._alarm(semantic, started)
-                                if alarm is not None:
-                                    yield say(alarm, urgent=bool(said))
-                                    if (event := handoff()) is not None:
-                                        yield event
-                                    yield done("safety")
-                                    return
-                                yield say(sentence)
-                        else:
+                    async for item in stream:
+                        if not isinstance(item, TextDelta):
                             completed = item
+                            continue
+                        for sentence in splitter.feed(item.text):
+                            semantic, alarm = await self._alarm(semantic, started)
+                            if alarm is not None:
+                                yield say(alarm, urgent=bool(said))
+                                if (event := handoff()) is not None:
+                                    yield event
+                                yield done("safety")
+                                return
+                            for line in gate.feed(sentence):
+                                yield say(line)
+                        if gate.wrong:
+                            break
                 except LLMInvalidResponseError:
                     if not reminded:
                         raise
@@ -300,38 +363,37 @@ class Engine:
                     # already said stands.
                     yield done("answered")
                     return
-                if completed is None:
+                if gate.wrong:
+                    await _close(stream)
+                if completed is None and not gate.wrong:
                     raise LLMInvalidResponseError("LLM returned no usable response")
-                usage = Usage(
-                    usage.input_tokens + completed.usage.input_tokens,
-                    usage.output_tokens + completed.usage.output_tokens,
-                )
-                model = completed.model or model
-                semantic, alarm = await self._alarm(semantic, started)
-                if alarm is not None:
-                    yield say(alarm, urgent=bool(said))
-                    if (event := handoff()) is not None:
-                        yield event
-                    yield done("safety")
-                    return
-                rest = splitter.finish(cut_off=completed.finish == "length")
-                if rest:
-                    yield say(rest)
+                if completed is not None:
+                    usage = Usage(
+                        usage.input_tokens + completed.usage.input_tokens,
+                        usage.output_tokens + completed.usage.output_tokens,
+                    )
+                    model = completed.model or model
+                    semantic, alarm = await self._alarm(semantic, started)
+                    if alarm is not None:
+                        yield say(alarm, urgent=bool(said))
+                        if (event := handoff()) is not None:
+                            yield event
+                        yield done("safety")
+                        return
+                    ready = gate.finish(splitter.finish(cut_off=completed.finish == "length"))
+                    for line in ready:
+                        yield say(line)
+                if gate.wrong or completed is None:
+                    # Nothing of it was said; asked for again in the call's language, once.
+                    relanguaged = True
+                    note = RIGHT_LANGUAGE.format(language=language_name(state.language))
+                    turns.append(UserTurn(note))
+                    continue
                 calls = completed.turn.tool_calls
-                if (
-                    not calls
-                    # Even after a lookup: "Let me check Wednesday instead." and nothing
-                    # more would leave the caller in silence.
-                    and not reminded
-                    and steps < MAX_STEPS
-                    and promises_a_lookup(completed.turn.text)
-                    # A question back ("...may I have your name?") waits for the caller.
-                    and not completed.turn.text.rstrip().endswith("?")
-                ):
-                    # It said "let me check" and stopped: the caller would hear
-                    # silence. Have it make the lookup it promised.
+                note = None if reminded or steps >= MAX_STEPS else _reminder(state, completed)
+                if note is not None:
                     reminded = True
-                    turns += [completed.turn, UserTurn(KEEP_PROMISE)]
+                    turns += [completed.turn, UserTurn(note)]
                     continue
                 if not calls:
                     yield done("answered")
@@ -346,20 +408,7 @@ class Engine:
                 ordered = [call for call in calls if call.name not in MUTATION_TOOLS] + proposals
                 for call in ordered:
                     yield Working(call.name, call.arguments or {})
-                    result: dict[str, Any]
-                    try:
-                        if call.name in MUTATION_TOOLS and len(proposals) > 1:
-                            raise ToolValidationError("Propose one change at a time")
-                        result = await self.registry.execute(session, state, call)
-                        ok = True
-                    except AssistantAuthorizationError:
-                        raise
-                    except (ToolValidationError, ValidationError, ValueError):
-                        # The model can read this and try again with better arguments.
-                        result, ok = {"status": "invalid_arguments"}, False
-                    except (TimeoutError, ApplicationError) as error:
-                        code = error.code if isinstance(error, ApplicationError) else "timeout"
-                        result, ok = {"status": "failed", "reason": code}, False
+                    result, ok = await self._execute(session, state, call, len(proposals))
                     tools.append(call.name)
                     ConversationStateManager.record_tool_call(state, call.name)
                     if call.name not in UNREMEMBERED_TOOLS:
@@ -419,6 +468,47 @@ class Engine:
         finally:
             if semantic is not None and not semantic.done():
                 semantic.cancel()
+
+    async def _know_the_caller(self, session: Session, state: ConversationState) -> None:
+        """A number that belongs to one patient identifies them; then their name and,
+        when their records may be used, what is known from earlier calls."""
+        if not state.identity_state.is_verified and session.contact and session.writes:
+            try:
+                await self.identity.recognise(session, state)
+            except ApplicationError:
+                logger.warning("assistant_recognition_failed")
+        if self.history is None:
+            return
+        if state.caller_name is None and state.identity_state.is_verified:
+            try:
+                state.caller_name = await self.history.name(session, state) or ""
+            except (ApplicationError, SQLAlchemyError):
+                logger.warning("assistant_name_unavailable")
+                state.caller_name = ""
+        if state.caller_history is None and records_trusted(session, state):
+            try:
+                state.caller_history = await self.history.load(session, state)
+            except (ApplicationError, SQLAlchemyError):
+                logger.warning("assistant_history_unavailable")
+                state.caller_history = ""
+
+    async def _execute(
+        self, session: Session, state: ConversationState, call: ToolCall, proposals: int
+    ) -> tuple[dict[str, Any], bool]:
+        """One tool call's result for the model, and whether it worked. A failure is told
+        to the model, which can try again; only a refusal to act ends the turn."""
+        try:
+            if call.name in MUTATION_TOOLS and proposals > 1:
+                raise ToolValidationError("Propose one change at a time")
+            return await self.registry.execute(session, state, call), True
+        except AssistantAuthorizationError:
+            raise
+        except (ToolValidationError, ValidationError, ValueError):
+            # The model can read this and try again with better arguments.
+            return {"status": "invalid_arguments"}, False
+        except (TimeoutError, ApplicationError) as error:
+            code = error.code if isinstance(error, ApplicationError) else "timeout"
+            return {"status": "failed", "reason": code}, False
 
     async def _answer(self, state: ConversationState, words: str) -> bool | None:
         """The reply read as yes or no, when the caller was asked something."""

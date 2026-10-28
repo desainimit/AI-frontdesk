@@ -90,7 +90,10 @@ def test_the_model_knows_the_callers_name_and_asks_for_it_when_it_does_not() -> 
 def test_hinglish_callers_get_hinglish_back() -> None:
     session, state = call(clinic())
     state.language_state.primary_language = "hinglish"
-    assert "Reply in Hinglish too" in system_prompt(session, state)
+    prompt = system_prompt(session, state)
+    # The language rule comes last, so nothing before it outweighs it.
+    assert prompt.rstrip().endswith("say them in Hinglish).")
+    assert "reply only in Hinglish" in prompt and "Never plain English" in prompt
 
 
 @pytest.mark.parametrize(

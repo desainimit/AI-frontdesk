@@ -55,7 +55,9 @@ def test_provider_evidence_policy_and_short_replies() -> None:
     assert observe_language("Dr Shah", "en") is None
     assert observe_language("12345678", "en") is None
     assert observe_language("yes yes yes", "en") is None
-    assert observe_language("A sufficiently long transcript", "ja") is None
+    # The recogniser's label is not trusted: the words are English, so it is English.
+    labelled = observe_language("A sufficiently long transcript", "ja")
+    assert labelled is not None and labelled.language == "en"
     assert observe_language(SENTENCES[1][1], "es", enabled_languages=("en",)) is None
     assert observe_language(SENTENCES[1][1], enabled_languages=("en",)) is None
 

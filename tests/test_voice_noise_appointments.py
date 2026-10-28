@@ -77,7 +77,8 @@ class Appointments:
             provider_id=uuid4(),
             provider_name="Dr. Rao",
             service_name="Follow-up visit",
-            starts_at=datetime(2026, 10, 27, 12, 0, tzinfo=UTC),
+            # Near now, so it is said as a day ("tomorrow"), whatever day the test runs.
+            starts_at=(datetime.now(UTC) + timedelta(days=1)).replace(hour=12, minute=0),
             status="booked",
         )
         return [row]
