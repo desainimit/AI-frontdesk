@@ -81,7 +81,8 @@ async def test_openrouter_streams_text_then_reports_what_it_cost() -> None:
     assert (done.finish, done.usage.input_tokens, done.usage.output_tokens) == ("stop", 40, 6)
     body = seen[0]
     assert body["stream"] is True and body["model"] == "google/test-model"
-    assert body["messages"][0] == {"role": "system", "content": "Policy"}
+    fixed = {"type": "text", "text": "Policy"}
+    assert body["messages"][0] == {"role": "system", "content": [fixed]}
     assert body["tools"][0]["function"]["name"] == "list_providers"
     # Nothing is routed to an endpoint that keeps or trains on the conversation.
     assert body["provider"]["data_collection"] == "deny"

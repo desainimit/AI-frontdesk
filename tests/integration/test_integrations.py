@@ -19,7 +19,12 @@ from app.calls.models import Call, PhoneNumber
 from app.calls.service import CallBinding, CallService
 from app.conversation.store import MemoryConversationStateStore
 from app.core.database.rls import set_tenant_scope
-from app.core.errors import AuthorizationError, ConflictError, NotFoundError
+from app.core.errors import (
+    AuthorizationError,
+    ConflictError,
+    NotFoundError,
+    ValidationFailedError,
+)
 from app.core.settings import Settings
 from app.events.idempotency import IdempotencyConflictError
 from app.integrations.catalog import Purpose
@@ -450,13 +455,15 @@ async def test_only_tenant_admins_and_explicit_platform_actions_manage_connectio
             azure.id,
             UpdateIntegration(revision=azure.revision, config={"region": "westeurope"}),
         )
-    with pytest.raises(IntegrationValidationError):
+    # A model the catalog does not offer is refused beside the job it was chosen for.
+    with pytest.raises(ValidationFailedError) as refused:
         await harness.service.create(
             admin,
             CreateIntegration(
                 purpose=Purpose.LLM, provider="gemini", config={"model": "not-allowed"}
             ),
         )
+    assert refused.value.fields[0][0] == "config.model"
     with pytest.raises(IntegrationValidationError):
         await harness.service.create(
             admin, CreateIntegration(purpose=Purpose.STT, provider="twilio")

@@ -1,5 +1,6 @@
 """Upload, approve, archive, and search approved static tenant knowledge."""
 
+import logging
 from hashlib import sha256
 from io import BytesIO
 from pathlib import PurePath
@@ -15,6 +16,8 @@ from app.core.errors import ConflictError, NotFoundError
 from app.knowledge.embeddings import Embedder
 from app.knowledge.schemas import DocumentView, KnowledgeResult, SourceView, VersionView
 from app.knowledge.storage import ObjectStorage
+
+logger = logging.getLogger(__name__)
 
 CONTENT_TYPES = {
     "pdf": "application/pdf",
@@ -152,7 +155,11 @@ class KnowledgeService:
             raise RuntimeError("Knowledge embedder is unavailable")
         vector = (await self.embedder.embed([question], kind="query"))[0]
         async with self.uow.transaction(context) as tx:
-            rows = await tx.knowledge.retrieve(context.tenant_id, vector, limit)
+            rows = await tx.knowledge.retrieve(
+                context.tenant_id, vector, limit, self.embedder.model
+            )
+            if await tx.knowledge.reindex_other_models(context.tenant_id, self.embedder.model):
+                logger.info("knowledge_reindex_queued")
             sources = [
                 SourceView(
                     document_id=document.id,

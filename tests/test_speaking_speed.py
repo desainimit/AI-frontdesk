@@ -52,7 +52,6 @@ def test_the_administrators_choice_becomes_the_platform_setting() -> None:
     product = PlatformSettings(
         product_name="AI Frontdesk",
         support_email="",
-        allowed_llm_models=["gemini-3.8-flash"],
         session_minutes=30,
         speaking_speed="slow",
     )
@@ -62,7 +61,6 @@ def test_the_administrators_choice_becomes_the_platform_setting() -> None:
         ProductSettings.model_validate(
             {
                 "product_name": "x",
-                "allowed_llm_models": ["m-1"],
                 "session_minutes": 30,
                 "speaking_speed": "turbo",
             }

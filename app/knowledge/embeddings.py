@@ -31,6 +31,9 @@ _PREFIX: dict[EmbeddingKind, str] = {
 
 
 class Embedder(Protocol):
+    # Vectors from different models cannot be compared; each chunk records its own.
+    model: str
+
     async def embed(
         self, texts: list[str], *, kind: EmbeddingKind = "document"
     ) -> list[list[float]]: ...
@@ -48,6 +51,8 @@ def _checked(texts: list[str]) -> None:
 
 
 class GeminiEmbedder:
+    model = EMBEDDING_MODEL
+
     def __init__(self, api_key: SecretStr, *, http_client: httpx.AsyncClient | None = None) -> None:
         if not api_key.get_secret_value():
             raise ValueError("Embedding credentials are not configured")
@@ -91,6 +96,8 @@ class GeminiEmbedder:
 
 class OpenRouterEmbedder:
     """One request per batch, never retried, and only to endpoints that keep no data."""
+
+    model = OPENROUTER_EMBEDDING_MODEL
 
     def __init__(self, api_key: SecretStr, *, http_client: httpx.AsyncClient | None = None) -> None:
         if not api_key.get_secret_value():
@@ -137,7 +144,8 @@ def build_embedder(provider: str, api_key: SecretStr) -> OwnedEmbedder:
 
 
 def platform_embedder(settings: Settings) -> OwnedEmbedder:
-    """The platform account's embedder, following the selected model provider."""
+    """The platform account's embedder, following the selected model provider. Chunks
+    made by the other provider's model are re-indexed when next searched."""
     provider = "openrouter" if settings.llm_provider == "openrouter" else "gemini"
     return build_embedder(provider, settings.platform_llm_key)
 

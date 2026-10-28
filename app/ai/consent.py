@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.ai.llm.base import LLMMessage, LLMProvider, LLMRequest
 
@@ -20,6 +20,8 @@ READ_SECONDS = 2.0
 
 
 class Reading(BaseModel):
+    # Strict JSON schemas need every object closed.
+    model_config = ConfigDict(extra="forbid")
     answer: Literal["yes", "no", "unclear"]
 
 

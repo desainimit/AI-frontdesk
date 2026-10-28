@@ -93,6 +93,8 @@ class DocumentChunk(IdentityMixin, TimestampMixin, Base):
     page_number: Mapped[int | None] = mapped_column(Integer)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding: Mapped[list[float]] = mapped_column(VECTOR(1536), nullable=False)
+    # The model that made the vector; empty for chunks made before it was recorded.
+    embedding_model: Mapped[str] = mapped_column(String(100), nullable=False, server_default="")
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     source_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 

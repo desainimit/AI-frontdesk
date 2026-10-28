@@ -41,6 +41,10 @@ async def record_turn(
                     tools=list(done.tools),
                     outcome=done.outcome,
                     error=done.error[:40] if done.error else None,
+                    cached_tokens=done.usage.cached_tokens,
+                    cost_usd=round(done.usage.cost_usd, 6),
+                    checks_cost_usd=round(done.checks.cost_usd, 6),
+                    served_by=done.served_by[:60],
                 )
             )
     except Exception:

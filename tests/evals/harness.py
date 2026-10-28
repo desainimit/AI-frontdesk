@@ -68,6 +68,8 @@ class Result:
     problems: list[str] = field(default_factory=lambda: list[str]())
     first_text_ms: list[int] = field(default_factory=lambda: list[int]())
     replies: list[str] = field(default_factory=lambda: list[str]())
+    # US dollars for the model: replies and the quick checks beside them.
+    cost_usd: float = 0.0
 
     @property
     def passed(self) -> bool:
@@ -99,6 +101,7 @@ async def run(
     appointments: list[Appointment] = await clinic.rows(Appointment)
     result.replies = [row.body for row in messages if row.author == "assistant"]
     result.first_text_ms = [row.first_text_ms for row in turns if row.first_text_ms is not None]
+    result.cost_usd = sum(float(row.cost_usd) + float(row.checks_cost_usd) for row in turns)
     used = {str(tool) for row in turns for tool in row.tools}
     last = result.replies[-1] if result.replies else ""
 

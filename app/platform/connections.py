@@ -16,12 +16,12 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from cryptography.exceptions import InvalidTag
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.errors import ApplicationError, NotFoundError
+from app.core.errors import ApplicationError, NotFoundError, ValidationFailedError
 from app.core.security.encryption import SecretCipher
 from app.core.settings import PLATFORM_MANAGED, Settings, SpeakingSpeed
 from app.identity.mail import SMTP_TIMEOUT_SECONDS, send_smtp
@@ -65,6 +65,14 @@ PROBLEMS = {
         "My Voices in ElevenLabs."
     ),
     "model_unavailable": "This account cannot use the selected model.",
+    "model_missing_features": (
+        "One of the chosen models cannot use the receptionist's tools or answer in the "
+        "required format right now. Choose another model for that job."
+    ),
+    "model_not_private": (
+        "One of the chosen models has no endpoint that keeps nothing of the "
+        "conversation. Choose another model for that job."
+    ),
     "provider_unavailable": "The provider could not be reached. Try again in a moment.",
     "server_unreachable": "The email server could not be reached. Check the host and port.",
     "secure_connection_failed": "The email server refused a secure connection.",
@@ -125,20 +133,8 @@ class ProductSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, from_attributes=True)
     product_name: str = Field(min_length=1, max_length=100)
     support_email: str = Field(default="", max_length=254, pattern=r"^(|[^\s@]+@[^\s@]+\.[^\s@]+)$")
-    allowed_llm_models: list[str] = Field(min_length=1, max_length=30)
     session_minutes: int = Field(ge=5, le=720)
     speaking_speed: SpeakingSpeed = "normal"
-
-    @field_validator("allowed_llm_models")
-    @classmethod
-    def model_names(cls, values: list[str]) -> list[str]:
-        import re
-
-        if any(not re.fullmatch(r"[a-z0-9][a-z0-9.\-:/]{1,120}", value) for value in values):
-            raise ValueError("Use model names such as gemini-3.8-flash")
-        if len(set(values)) != len(values):
-            raise ValueError("Each model can be listed once")
-        return values
 
 
 def _context(purpose: str, provider: str) -> str:
@@ -253,7 +249,8 @@ def platform_values(
                     azure_hindi_voice=config["hindi_voice"],
                 )
         elif row.provider in {"gemini", "openrouter"}:
-            values.update(llm_provider=row.provider, llm_model=config["model"])
+            # Every job's model and the text model's thinking level.
+            values.update(llm_provider=row.provider, llm_config=dict(config))
             values[f"{row.provider}_api_key"] = SecretStr(secrets["api_key"])
         elif row.provider == "smtp":
             values.update(
@@ -266,7 +263,6 @@ def platform_values(
             )
     if product is not None:
         values.update(
-            tenant_llm_models=",".join(product.allowed_llm_models),
             platform_session_minutes=product.session_minutes,
             product_name=product.product_name,
             support_email=product.support_email,
@@ -390,7 +386,9 @@ class PlatformConnectionService:
                     raise InvalidIntegrationError("Invalid account identifier")
             else:
                 account = None
-        except InvalidIntegrationError:
+        except InvalidIntegrationError as error:
+            if error.field:
+                raise ValidationFailedError([(error.field, str(error))]) from None
             raise InvalidConnectionError() from None
         async with self._sessions.begin() as session:
             await platform_scope(session, context)

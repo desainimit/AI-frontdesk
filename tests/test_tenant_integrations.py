@@ -57,17 +57,17 @@ def test_catalog_accepts_only_allowlisted_configuration() -> None:
     for purpose, provider in (("stt", "twilio"), ("telephony", "deepgram"), ("sms", "twilio")):
         with pytest.raises(InvalidIntegrationError):
             spec_for(purpose, provider)
-    entries = catalog_entries(("gemini-3.8-flash", "google/gemini-3.8-flash"))
-    models = {
-        item.provider: item.config_schema["properties"]["model"]["enum"]
-        for item in entries
-        if item.purpose == "llm"
-    }
-    # Each provider is offered only the allowed models written in its own form.
-    assert models == {"gemini": ["gemini-3.8-flash"], "openrouter": ["google/gemini-3.8-flash"]}
+    entries = catalog_entries()
+    schemas = {item.provider: item.config_schema for item in entries if item.purpose == "llm"}
+    # Each job is offered only the catalog models of that account that may do it.
+    voice = schemas["openrouter"]["properties"]["voice_model"]["enum"]
+    assert "google/gemini-3.5-flash-lite" in voice and "google/gemini-3.8-flash" not in voice
+    assert all("/" not in model for model in schemas["gemini"]["properties"]["model"]["enum"])
     for model in ("gemini-3.8-flash", "../v1/key", "google/gemini 3", "https://x.example/y"):
-        with pytest.raises(InvalidIntegrationError):
+        with pytest.raises(InvalidIntegrationError) as rejected:
             validate_config(spec_for("llm", "openrouter"), {"model": model})
+        # Said beside the setting it is about.
+        assert rejected.value.field == "config.model"
     twilio = next(item for item in entries if item.provider == "twilio")
     assert twilio.requires_account_identifier and twilio.required_secret_fields == ["auth_token"]
 
@@ -172,14 +172,6 @@ async def test_verifier_classifies_provider_answers_and_uses_fixed_hosts() -> No
             {"api_key": "k" * 20},
             "generativelanguage.googleapis.com",
         ),
-        (
-            "llm",
-            "openrouter",
-            None,
-            {"model": "google/gemini-3.8-flash"},
-            {"api_key": "k" * 20},
-            "openrouter.ai",
-        ),
         ("embeddings", "openrouter", None, {}, {"api_key": "k" * 20}, "openrouter.ai"),
     )
     for purpose, provider, account, config, secrets_, host in cases:
@@ -242,32 +234,56 @@ def tenant_settings(settings: Settings) -> Settings:
 
 async def test_openrouter_check_costs_nothing_and_keeps_the_key_off_public_routes() -> None:
     requests: list[httpx.Request] = []
-    known = {"google/gemini-3.8-flash"}
+    private = {
+        "google/gemini-3.8-flash",
+        "google/gemini-3.5-flash-lite",
+        "anthropic/claude-haiku-5.5",
+        "mistralai/mistral-small-2603",
+    }
+    tools_only = {"z-ai/glm-5.3-flash"}
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.url.path == "/api/v1/key":
             accepted = request.headers.get("authorization") == "Bearer " + "k" * 20
             return httpx.Response(200 if accepted else 401, json={})
+        if request.url.path == "/api/v1/endpoints/zdr":
+            return httpx.Response(200, json={"data": [{"model_id": m} for m in private]})
         slug = request.url.path.removeprefix("/api/v1/models/").removesuffix("/endpoints")
-        return httpx.Response(200 if slug in known else 404, json={})
+        if slug == "google/gone":
+            return httpx.Response(404, json={})
+        params = ["tools"] if slug in tools_only else ["tools", "structured_outputs"]
+        endpoints = [{"supported_parameters": params}]
+        return httpx.Response(200, json={"data": {"endpoints": endpoints}})
 
     verifier = HttpProviderVerifier(2, transport=httpx.MockTransport(handler))
     secrets_ = {"api_key": "k" * 20}
-    good = await verifier.verify(
-        "llm", "openrouter", None, {"model": "google/gemini-3.8-flash"}, secrets_
+
+    async def check(config: dict[str, str], key: dict[str, str] = secrets_) -> tuple[str, str]:
+        result = await verifier.verify("llm", "openrouter", None, config, key)
+        return result.outcome, result.code
+
+    # Every job's model is checked; jobs not chosen use the defaults.
+    assert await check({"model": "google/gemini-3.8-flash"}) == ("verified", "ok")
+    assert await check({"model": "google/gone"}) == ("invalid", "model_unavailable")
+    # A quick-check model must answer in a JSON schema.
+    assert await check({"quick_model": "z-ai/glm-5.3-flash"}) == (
+        "invalid",
+        "model_missing_features",
     )
-    assert good.outcome == "verified"
-    missing = await verifier.verify("llm", "openrouter", None, {"model": "google/gone"}, secrets_)
-    assert (missing.outcome, missing.code) == ("invalid", "model_unavailable")
-    rejected = await verifier.verify(
-        "llm", "openrouter", None, {"model": "google/gemini-3.8-flash"}, {"api_key": "x" * 20}
+    # Patients' words never go to an endpoint that keeps them.
+    assert await check({"backup_model": "deepseek/deepseek-v4.1-flash"}) == (
+        "invalid",
+        "model_not_private",
     )
-    assert (rejected.outcome, rejected.code) == ("invalid", "credentials_rejected")
+    assert await check({"model": "google/gemini-3.8-flash"}, {"api_key": "x" * 20}) == (
+        "invalid",
+        "credentials_rejected",
+    )
     # Only read-only information routes are used; nothing here generates or bills.
     assert {request.method for request in requests} == {"GET"}
     assert all("/chat/" not in request.url.path for request in requests)
-    public = [request for request in requests if request.url.path.endswith("/endpoints")]
+    public = [request for request in requests if request.url.path != "/api/v1/key"]
     assert public and all("authorization" not in request.headers for request in public)
 
 

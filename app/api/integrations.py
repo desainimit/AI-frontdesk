@@ -220,9 +220,8 @@ async def platform_integration_providers(
     return _catalog(request, context)
 
 
-def _catalog(request: Request, _authenticated: Any) -> list[ProviderCatalogEntry]:
-    settings = request.app.state.settings
-    return catalog_entries(settings.llm_models)
+def _catalog(_request: Request, _authenticated: Any) -> list[ProviderCatalogEntry]:
+    return catalog_entries()
 
 
 router.include_router(_routes("/api/v1", "/tenants/current", tenant_actor, "integrations"))

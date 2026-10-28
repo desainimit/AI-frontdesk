@@ -48,6 +48,9 @@ class AssistantTurn:
     # Whatever the provider must be shown again, unchanged, to continue after a tool
     # call (Gemini's thought signatures). Opaque to everything but its own adapter.
     provider_state: Any = None
+    # The model that wrote provider_state. Another model is never shown it: the backup
+    # can take over between the steps of one reply.
+    state_model: str = ""
 
 
 @dataclass(frozen=True)
@@ -62,15 +65,53 @@ Turn = UserTurn | AssistantTurn | ToolResult
 
 @dataclass(frozen=True)
 class ChatRequest:
+    # The instructions that stay the same through a conversation, so a provider can
+    # keep them cached between turns.
     system: str
     turns: tuple[Turn, ...]
     tools: tuple[ToolSpec, ...] = ()
+    # What changes every turn (the time, where the conversation stands); sent after
+    # the fixed part.
+    context: str = ""
+    # The conversation, so a provider sends its turns to the endpoint holding its cache.
+    session_id: str = ""
+
+    @property
+    def instructions(self) -> str:
+        return f"{self.system}\n\n{self.context}" if self.context else self.system
 
 
 @dataclass(frozen=True)
 class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
+    # Of input_tokens, those read from the provider's cache at a lower price.
+    cached_tokens: int = 0
+    # US dollars: the provider's own figure when it reports one, else the catalog price.
+    cost_usd: float = 0.0
+
+    def __add__(self, other: "Usage") -> "Usage":
+        return Usage(
+            self.input_tokens + other.input_tokens,
+            self.output_tokens + other.output_tokens,
+            self.cached_tokens + other.cached_tokens,
+            self.cost_usd + other.cost_usd,
+        )
+
+
+class UsageMeter:
+    """What one conversation's quick checks (safety, yes/no, summary) used, taken with
+    the reply they ran beside."""
+
+    def __init__(self) -> None:
+        self._usage = Usage()
+
+    def add(self, usage: Usage) -> None:
+        self._usage = self._usage + usage
+
+    def take(self) -> Usage:
+        usage, self._usage = self._usage, Usage()
+        return usage
 
 
 @dataclass(frozen=True)
@@ -87,6 +128,8 @@ class Completed:
     finish: Literal["stop", "tool_calls", "length"]
     usage: Usage = field(default_factory=Usage)
     model: str = ""
+    # Where the request was served (OpenRouter's upstream, such as "Google Vertex").
+    served_by: str = ""
 
 
 ModelEvent = TextDelta | Completed

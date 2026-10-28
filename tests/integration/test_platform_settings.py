@@ -46,8 +46,6 @@ async def platform(tenancy: TenancyFixture) -> AsyncGenerator[Settings]:
             "stream_token_key": SecretStr(secrets.token_urlsafe(48)),
         }
     )
-    async with tenancy.admin.begin() as session:
-        models = await session.scalar(text("SELECT allowed_llm_models FROM platform_settings"))
     try:
         yield settings
     finally:
@@ -55,11 +53,7 @@ async def platform(tenancy: TenancyFixture) -> AsyncGenerator[Settings]:
         async with tenancy.admin.begin() as session:
             await session.execute(delete(PlatformConnection))
             await session.execute(
-                text(
-                    "UPDATE platform_settings SET session_minutes = 30, speaking_speed = 'normal', "
-                    "allowed_llm_models = CAST(:models AS jsonb)"
-                ),
-                {"models": json.dumps(models)},
+                text("UPDATE platform_settings SET session_minutes = 30, speaking_speed = 'normal'")
             )
 
 
@@ -132,11 +126,21 @@ async def test_administrator_saves_verifies_and_removes_a_provider_account(
         assert bad.status_code == 422 and bad.json()["error"]["code"] == "invalid_connection"
 
         product = (await client.get("settings")).json()
-        changed = await client.put(
-            "settings", json={**product, "session_minutes": 45, "allowed_llm_models": ["gemini-x"]}
-        )
+        changed = await client.put("settings", json={**product, "session_minutes": 45})
         assert changed.status_code == 200
-        assert platform.platform_session_minutes == 45 and platform.llm_models == ("gemini-x",)
+        assert platform.platform_session_minutes == 45
+        # The AI model choices come from the catalog, never from a typed list.
+        assert "allowed_llm_models" not in product
+        wrong = await client.put(
+            "connections/llm",
+            json={
+                "provider": "openrouter",
+                "config": {"voice_model": "google/gemini-3.8-flash"},
+                "secrets": {"api_key": "k" * 32},
+            },
+        )
+        assert wrong.status_code == 422
+        assert wrong.json()["error"]["fields"][0]["field"] == "config.voice_model"
 
         assert (await client.delete("connections/telephony")).status_code == 204
         assert not platform.platform_twilio

@@ -20,7 +20,7 @@ from app.ai.llm.base import (
     ModelEvent,
     TextDelta,
 )
-from app.ai.llm.factory import TIMEOUT_SECONDS, build_llm_provider
+from app.ai.llm.factory import TIMEOUT_SECONDS, open_models
 from app.ai.llm.gateway import ModelGateway
 from app.ai.llm.gemini import GeminiLLMProvider
 from app.ai.sentences import SentenceSplitter
@@ -182,8 +182,7 @@ async def test_on_a_call_a_failing_model_is_not_retried_in_a_ladder() -> None:
 def test_calls_keep_the_timeout_google_accepts() -> None:
     # Gemini's SDK sends the timeout to Google as a deadline; 5 s was refused with
     # 400 INVALID_ARGUMENT on a real request. A call's limit is the gateway's instead.
-    settings = MagicMock(llm_provider="gemini", platform_llm_key=SecretStr("k"))
-    voice = build_llm_provider(settings, voice=True)
+    voice = open_models("gemini", SecretStr("k"), {}, "platform", voice=True).reply
     assert voice._http.timeout.read == TIMEOUT_SECONDS  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue, reportUnknownMemberType]
 
 
@@ -269,9 +268,8 @@ def test_a_long_first_sentence_starts_at_its_first_comma_on_a_call() -> None:
 
 
 def test_calls_ask_gemini_for_its_priority_lane() -> None:
-    settings = MagicMock(llm_provider="gemini", platform_llm_key=SecretStr("k"))
-    voice = build_llm_provider(settings, voice=True)
-    text = build_llm_provider(settings)
+    voice = open_models("gemini", SecretStr("k"), {}, "platform", voice=True).reply
+    text = open_models("gemini", SecretStr("k"), {}, "platform", voice=False).reply
     assert voice._tier == genai_types.ServiceTier.PRIORITY  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
     assert text._tier is None  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 

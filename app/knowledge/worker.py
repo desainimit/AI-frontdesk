@@ -95,7 +95,11 @@ class KnowledgeWorker:
         return name, body
 
     async def _save(
-        self, job: ClaimedJob, chunks: list[ParsedChunk], vectors: list[list[float]]
+        self,
+        job: ClaimedJob,
+        chunks: list[ParsedChunk],
+        vectors: list[list[float]],
+        model: str,
     ) -> None:
         async with self.sessions.begin() as session:
             await set_tenant_scope(session, job.tenant_id)
@@ -131,6 +135,7 @@ class KnowledgeWorker:
                         page_number=chunk.page_number,
                         token_count=chunk.token_count,
                         embedding=vector,
+                        embedding_model=model,
                         checksum=chunk.checksum,
                         source_metadata=chunk.source_metadata,
                     )
@@ -203,7 +208,7 @@ class KnowledgeWorker:
                 finally:
                     if opened is not None:
                         await opened.close()
-                await self._save(job, chunks, vectors)
+                await self._save(job, chunks, vectors, embedder.model)
         except (ValueError, UnicodeError):
             await self._fail(job, "invalid_document")
         except Exception as exc:

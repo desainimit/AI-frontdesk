@@ -25,7 +25,7 @@ from app.ai.consent import ConsentReader
 from app.ai.engine import Engine
 from app.ai.identity import ContactIdentity
 from app.ai.llm.base import LLMProvider
-from app.ai.llm.factory import build_llm_provider, llm_from_connection
+from app.ai.llm.factory import ModelSet, open_models, platform_models
 from app.ai.llm.gateway import (
     FIRST_WORDS_SECONDS,
     HEDGE_AFTER_SECONDS,
@@ -511,12 +511,8 @@ class CallProviders:
 
     stt_connection: ResolvedIntegration | None
     tts: TextToSpeechProvider
-    llm: LLMProvider
-    # The quicker model: the safety check, and one last attempt at a reply.
-    light_llm: LLMProvider | None
-    owned: tuple[LLMProvider, ...]
-    # Which model account this call uses, for its circuit breaker.
-    account: str
+    # The call model, the quick checks and the backup, on one model account.
+    models: ModelSet
     multilingual: bool
 
     def speech_to_text(
@@ -567,29 +563,24 @@ async def resolve_call_providers(
     )
     if tts is None:
         raise IntegrationUnavailableError()
-    llm: LLMProvider | None = app.state.llm_provider
-    light: LLMProvider | None = None
-    owned: tuple[LLMProvider, ...] = ()
-    account = "platform"
+    substitute: LLMProvider | None = app.state.llm_provider
+    models: ModelSet | None
     if llm_connection is not None:
-        key, config = llm_connection.secret("api_key"), dict(llm_connection.config)
-        llm = llm_from_connection(llm_connection.provider, key, config, voice=True)
-        light = llm_from_connection(llm_connection.provider, key, config, light=True, voice=True)
-        owned, account = (llm, light), str(llm_connection.integration_id)
-    elif llm is None and settings.platform_llm_key.get_secret_value():
-        llm = build_llm_provider(settings, voice=True)
-        light = build_llm_provider(settings, light=True, voice=True)
-        owned = (llm, light)
-    if llm is None:
+        models = open_models(
+            llm_connection.provider,
+            llm_connection.secret("api_key"),
+            dict(llm_connection.config),
+            str(llm_connection.integration_id),
+            voice=True,
+        )
+    elif substitute is not None:
+        models = ModelSet(substitute, substitute, substitute, "platform", owned_by_caller=True)
+    else:
+        models = platform_models(settings, voice=True)
+    if models is None:
         raise IntegrationUnavailableError()
     return CallProviders(
-        stt_connection,
-        tts,
-        llm,
-        light,
-        owned,
-        account,
-        follows_caller_language(settings, stt_connection),
+        stt_connection, tts, models, follows_caller_language(settings, stt_connection)
     )
 
 
@@ -703,7 +694,8 @@ async def run_media(
         providers = await resolve_call_providers(
             socket.app, settings, tenant_id, configuration.receptionist.languages
         )
-        owned, llm, multilingual = providers.owned, providers.llm, providers.multilingual
+        models, multilingual = providers.models, providers.multilingual
+        owned, llm = models.owned, models.reply
         tts = providers.tts
         conv_store = socket.app.state.conversation_store or build_conversation_store(
             settings, redis_dep
@@ -743,8 +735,8 @@ async def run_media(
         engine = Engine(
             ModelGateway(
                 llm,
-                fallback=providers.light_llm,
-                breaker=breaker_for(circuit_registry(socket.app), tenant_id, providers.account),
+                fallback=None if models.backup is llm else models.backup,
+                breaker=breaker_for(circuit_registry(socket.app), tenant_id, models.account),
                 slot=turn_limits(socket.app).slot(tenant_id),
                 # A caller is waiting on the line: a slow start gets a second request
                 # beside it, which stands in for the retries a text reply would get.
@@ -757,15 +749,14 @@ async def run_media(
             # The model's own reading of the risk uses the quicker model and runs beside
             # the reply; the rules always run first.
             SafetyEngine(
-                LLMSafetyClassifier(providers.light_llm or llm)
-                if settings.safety_semantic_enabled
-                else None,
+                LLMSafetyClassifier(models.quick) if settings.safety_semantic_enabled else None,
                 transfer_available=bool(configuration.calls.transfer_targets),
                 ask_first=True,
             ),
             identity,
             history,
-            ConsentReader(providers.light_llm or llm),
+            ConsentReader(models.quick),
+            meter=models.meter,
         )
         receptionist = CallReceptionist(
             engine=engine,
@@ -788,7 +779,7 @@ async def run_media(
             settings=settings,
             account=account,
             metrics=voice_metrics,
-            summarizer=providers.light_llm or llm,
+            summarizer=models.quick,
         )
 
         async def send_frame(msg: dict[str, Any]) -> None:

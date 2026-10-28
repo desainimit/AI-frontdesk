@@ -88,8 +88,6 @@ class PlatformSettings(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
     product_name: Mapped[str] = mapped_column(String(100), default="AI Frontdesk")
     support_email: Mapped[str] = mapped_column(String(254), default="", server_default="")
-    # AI models a clinic's own connection may choose from.
-    allowed_llm_models: Mapped[list[str]] = mapped_column(JSONB)
     # How long a platform administrator stays signed in.
     session_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     # How fast the receptionist speaks on every clinic's calls.

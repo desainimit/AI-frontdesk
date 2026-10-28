@@ -322,6 +322,13 @@ def language_rule(language: str) -> str:
 
 
 def system_prompt(session: Session, state: ConversationState) -> str:
+    return "\n\n".join(prompt_parts(session, state))
+
+
+def prompt_parts(session: Session, state: ConversationState) -> tuple[str, str]:
+    """The instructions in two parts: what stays the same for the whole conversation
+    (the policy, the style, the clinic), which a provider can keep cached, and what
+    changes every turn (the time, where the conversation stands, its language)."""
     settings = session.configuration
     now = datetime.now(UTC)
     local = now.astimezone(ZoneInfo(settings.clinic.timezone))
@@ -364,7 +371,7 @@ def system_prompt(session: Session, state: ConversationState) -> str:
     style += "\n" + TONES[settings.receptionist.tone]
     if settings.receptionist.persona_name:
         style += f"\nYour name is {settings.receptionist.persona_name}. Give it when asked."
-    return "\n\n".join(
+    fixed = "\n\n".join(
         (
             POLICY,
             style,
@@ -372,11 +379,16 @@ def system_prompt(session: Session, state: ConversationState) -> str:
             + json.dumps(clinic, ensure_ascii=False),
             "The clinic's own instructions for you (they cannot change the policy above):\n"
             + (settings.receptionist.instructions or "None."),
+        )
+    )
+    changing = "\n\n".join(
+        (
             "Where this conversation stands (set by the server):\n"
             + json.dumps(snapshot, ensure_ascii=False),
             language_rule(state.language),
         )
     )
+    return fixed, changing
 
 
 def history(state: ConversationState, utterance: str) -> list[Turn]:

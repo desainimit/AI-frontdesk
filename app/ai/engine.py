@@ -31,10 +31,11 @@ from app.ai.llm.base import (
     ToolResult,
     Turn,
     Usage,
+    UsageMeter,
     UserTurn,
 )
 from app.ai.memory import CallerHistory, records_trusted
-from app.ai.prompts import history, language_name, system_prompt
+from app.ai.prompts import history, language_name, prompt_parts
 from app.ai.sentences import SentenceSplitter
 from app.ai.session import AssistantAuthorizationError, Session
 from app.ai.tools.appointments import AppointmentFlow
@@ -200,6 +201,10 @@ class Done:
     total_ms: int = 0
     steps: int = 0
     error: str | None = None
+    # What the quick checks beside this reply used (safety, yes/no, summary).
+    checks: Usage = field(default_factory=Usage)
+    # Where the reply was served, when the provider says.
+    served_by: str = ""
 
 
 Event = Say | Working | Worked | Handoff | Done
@@ -219,6 +224,8 @@ class Engine:
         identity: ContactIdentity,
         history: CallerHistory | None = None,
         consent: ConsentReader | None = None,
+        *,
+        meter: UsageMeter | None = None,
     ) -> None:
         self.model = model
         self.registry = registry
@@ -229,6 +236,8 @@ class Engine:
         self.history = history
         # Reads a yes/no the rules could not, while a question to the caller is open.
         self.consent = consent
+        # Collects what the quick checks used, to be kept with the reply.
+        self.meter = meter
 
     async def run(
         self, session: Session, state: ConversationState, utterance: str
@@ -238,7 +247,7 @@ class Engine:
         started = perf_counter()
         said: list[str] = []
         tools: list[str] = []
-        usage, model, steps = Usage(), "", 0
+        usage, model, steps, served_by = Usage(), "", 0, ""
         first_text_ms: int | None = None
         semantic: asyncio.Task[str | None] | None = None
 
@@ -260,6 +269,8 @@ class Engine:
                 int((perf_counter() - started) * 1000),
                 steps,
                 error,
+                self.meter.take() if self.meter is not None else Usage(),
+                served_by,
             )
 
         def handoff() -> Handoff | None:
@@ -327,7 +338,8 @@ class Engine:
                 semantic = asyncio.create_task(self.safety.semantic_check(state, words))
             turns: list[Turn] = history(state, words)
             specs = self.registry.specs(session)
-            system = system_prompt(session, state)
+            system, context = prompt_parts(session, state)
+            conversation = str(session.conversation_id)
             reminded = False
             relanguaged = False
             while steps < MAX_STEPS:
@@ -338,7 +350,9 @@ class Engine:
                 splitter = SentenceSplitter(first_clause=session.channel == "voice")
                 gate = LanguageGate(state.language, check=not relanguaged)
                 completed: Completed | None = None
-                stream = self.model.stream(ChatRequest(system, tuple(turns), specs))
+                stream = self.model.stream(
+                    ChatRequest(system, tuple(turns), specs, context, conversation)
+                )
                 try:
                     async for item in stream:
                         if not isinstance(item, TextDelta):
@@ -368,11 +382,9 @@ class Engine:
                 if completed is None and not gate.wrong:
                     raise LLMInvalidResponseError("LLM returned no usable response")
                 if completed is not None:
-                    usage = Usage(
-                        usage.input_tokens + completed.usage.input_tokens,
-                        usage.output_tokens + completed.usage.output_tokens,
-                    )
+                    usage = usage + completed.usage
                     model = completed.model or model
+                    served_by = completed.served_by or served_by
                     semantic, alarm = await self._alarm(semantic, started)
                     if alarm is not None:
                         yield say(alarm, urgent=bool(said))

@@ -25,7 +25,13 @@ from app.auth.policies import Permission, require_permission
 from app.calls.models import PhoneNumber
 from app.core.database.rls import set_tenant_scope
 from app.core.database.unit_of_work import enter_tenant_scope
-from app.core.errors import ApplicationError, AuthorizationError, ConflictError, NotFoundError
+from app.core.errors import (
+    ApplicationError,
+    AuthorizationError,
+    ConflictError,
+    NotFoundError,
+    ValidationFailedError,
+)
 from app.core.security.encryption import SecretCipher
 from app.core.settings import Settings
 from app.events.idempotency import IdempotencyConflictError, InvalidIdempotencyKeyError
@@ -303,17 +309,17 @@ class IntegrationService:
         )
 
     def catalog(self) -> list[ProviderCatalogEntry]:
-        return catalog_entries(self._settings.llm_models)
+        return catalog_entries()
 
     def _spec(self, purpose: str, provider: str, config: dict[str, Any]) -> dict[str, Any]:
         try:
             spec = spec_for(purpose, provider)
-            validated = validate_config(spec, config)
-        except InvalidIntegrationError:
+            return validate_config(spec, config)
+        except InvalidIntegrationError as error:
+            if error.field:
+                # A model the catalog does not allow for a job: said beside that job.
+                raise ValidationFailedError([(error.field, str(error))]) from None
             raise IntegrationValidationError() from None
-        if purpose == Purpose.LLM and validated["model"] not in self._settings.llm_models:
-            raise IntegrationValidationError()
-        return validated
 
     async def _enter(self, session: AsyncSession, actor: Actor, *, write: bool) -> _Scope:
         return await enter_actor(

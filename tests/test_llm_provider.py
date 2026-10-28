@@ -267,6 +267,7 @@ async def test_openrouter_adapter_contract(outcome: str) -> None:
     # Never an endpoint that keeps the conversation or ignores the schema; cheapest first.
     assert body["provider"] == {
         "data_collection": "deny",
+        "zdr": True,
         "require_parameters": True,
         "sort": "price",
     }

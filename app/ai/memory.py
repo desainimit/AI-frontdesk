@@ -12,7 +12,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -37,6 +37,8 @@ PAST_VISITS = 2
 
 
 class Summary(BaseModel):
+    # Strict JSON schemas need every object closed.
+    model_config = ConfigDict(extra="forbid")
     summary: str = Field(max_length=1500)
 
 

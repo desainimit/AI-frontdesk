@@ -54,6 +54,8 @@ class Scenario:
     before: Callable[["EvalClinic"], Awaitable[None]] | None = None
     # Cannot be produced on demand with a real model.
     offline_only: bool = False
+    # The language the patient writes in, to run one language's scenarios on their own.
+    language: str = "en"
 
 
 def in_three_days(clinic: "EvalClinic") -> Step:
@@ -241,6 +243,16 @@ SCENARIOS: tuple[Scenario, ...] = (
         Expect(outcome=("answered",), says=(r"[ऀ-ॿ]{3,}",)),
         lambda _: ("नमस्ते। शनिवार को क्लिनिक सुबह 9 बजे खुलता है।",),
         before=lambda clinic: clinic.offer_languages("en", "hi"),
+        language="hi",
+    ),
+    Scenario(
+        "answers in Gujarati when the clinic offers it",
+        ("નમસ્તે, શનિવારે ક્લિનિક કેટલા વાગ્યે ખુલે છે?",),
+        # The reply is in Gujarati script.
+        Expect(outcome=("answered",), says=(r"[઀-૿]{3,}",)),
+        lambda _: ("નમસ્તે. શનિવારે ક્લિનિક સવારે 9 વાગ્યે ખુલે છે.",),
+        before=lambda clinic: clinic.offer_languages("en", "gu"),
+        language="gu",
     ),
     Scenario(
         "the model is down",

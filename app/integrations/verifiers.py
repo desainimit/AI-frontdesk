@@ -13,7 +13,17 @@ from urllib.parse import quote
 
 import httpx
 
+from app.ai.llm.models import DEFAULTS, JOB_FIELDS, JOBS, Job
 from app.integrations.catalog import Purpose
+
+OPENROUTER = "https://openrouter.ai/api/v1"
+# What each job needs of a model's endpoints.
+_NEEDS: dict[Job, str] = {
+    "text": "tools",
+    "voice": "tools",
+    "backup": "tools",
+    "quick": "structured_outputs",
+}
 
 Outcome = Literal["verified", "invalid", "unavailable"]
 
@@ -126,15 +136,25 @@ class HttpProviderVerifier:
                     )
                     return _classify(response.status_code)
                 if provider == "gemini" and purpose in {Purpose.LLM, Purpose.EMBEDDINGS}:
-                    response = await client.get(
-                        "https://generativelanguage.googleapis.com/v1beta/models/"
-                        + quote(str(config["model"]), safe=""),
-                        headers={"x-goog-api-key": secrets["api_key"]},
+                    # Every model the connection will use, each looked up once.
+                    models = (
+                        {_job_model("gemini", config, job) for job in JOBS}
+                        if purpose == Purpose.LLM
+                        else {str(config["model"])}
                     )
-                    # Google answers 400, not 401, for a key it does not recognise.
-                    if response.status_code == 400:
-                        return Verification("invalid", "credentials_rejected")
-                    return _classify(response.status_code, missing="model_unavailable")
+                    for model in sorted(models):
+                        response = await client.get(
+                            "https://generativelanguage.googleapis.com/v1beta/models/"
+                            + quote(model, safe=""),
+                            headers={"x-goog-api-key": secrets["api_key"]},
+                        )
+                        # Google answers 400, not 401, for a key it does not recognise.
+                        if response.status_code == 400:
+                            return Verification("invalid", "credentials_rejected")
+                        checked = _classify(response.status_code, missing="model_unavailable")
+                        if checked is not VERIFIED:
+                            return checked
+                    return VERIFIED
                 if provider == "openrouter" and purpose in {Purpose.LLM, Purpose.EMBEDDINGS}:
                     # Key information only: this request generates nothing and costs nothing.
                     response = await client.get(
@@ -144,12 +164,7 @@ class HttpProviderVerifier:
                     accepted = _classify(response.status_code)
                     if accepted is not VERIFIED or purpose == Purpose.EMBEDDINGS:
                         return accepted
-                    author, _, slug = str(config["model"]).partition("/")
-                    response = await client.get(
-                        "https://openrouter.ai/api/v1/models/"
-                        f"{quote(author, safe='')}/{quote(slug, safe='')}/endpoints"
-                    )
-                    return _classify(response.status_code, missing="model_unavailable")
+                    return await _openrouter_models(client, config)
         except (httpx.HTTPError, KeyError, ValueError):
             return Verification("unavailable", "provider_unavailable")
         return Verification("invalid", "unsupported_provider")
@@ -208,3 +223,53 @@ class HttpProviderVerifier:
             ):
                 numbers.append(ProviderNumber(sid, value))
         return numbers
+
+
+async def _openrouter_models(client: httpx.AsyncClient, config: Mapping[str, Any]) -> Verification:
+    """Every job's model can be used as the receptionist sends it: it is listed, takes
+    what the job needs (tools, or a JSON schema for quick checks), and has an endpoint
+    that keeps nothing of the conversation. Public lists only: nothing is generated or
+    billed."""
+    needs: dict[str, set[str]] = {}
+    for job in JOBS:
+        needs.setdefault(_job_model("openrouter", config, job), set()).add(_NEEDS[job])
+    private = await client.get(f"{OPENROUTER}/endpoints/zdr")
+    if private.status_code != 200:
+        return Verification("unavailable", "provider_unavailable")
+    zero_retention = {str(item.get("model_id")) for item in _items(_data(private.json())) if item}
+    for model, wanted in sorted(needs.items()):
+        author, _, slug = model.partition("/")
+        response = await client.get(
+            f"{OPENROUTER}/models/{quote(author, safe='')}/{quote(slug, safe='')}/endpoints"
+        )
+        checked = _classify(response.status_code, missing="model_unavailable")
+        if checked is not VERIFIED:
+            return checked
+        listing: object = _data(response.json())
+        endpoints = _items(
+            cast(dict[str, Any], listing).get("endpoints") if isinstance(listing, dict) else None
+        )
+        supported: set[str] = set()
+        for endpoint in endpoints:
+            supported |= {str(name) for name in _items(endpoint.get("supported_parameters"))}
+        if not endpoints:
+            return Verification("invalid", "model_unavailable")
+        if not wanted <= supported:
+            return Verification("invalid", "model_missing_features")
+        if model not in zero_retention:
+            return Verification("invalid", "model_not_private")
+    return VERIFIED
+
+
+def _job_model(provider: str, config: Mapping[str, Any], job: Job) -> str:
+    """The model a job will use: the one chosen, or the default for a job not chosen."""
+    return str(config.get(JOB_FIELDS[job]) or DEFAULTS[provider][job])
+
+
+def _data(body: object) -> Any:
+    return cast(dict[str, Any], body).get("data") if isinstance(body, dict) else body
+
+
+def _items(value: object) -> list[Any]:
+    """A list from a provider's response, or empty for anything else."""
+    return cast(list[Any], value) if isinstance(value, list) else []

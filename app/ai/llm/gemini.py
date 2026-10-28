@@ -26,8 +26,10 @@ from app.ai.llm.base import (
     ToolCall,
     ToolResult,
     Usage,
+    UsageMeter,
     UserTurn,
 )
+from app.ai.llm.models import profile
 from app.ai.llm.schema import wire_schema
 
 logger = logging.getLogger(__name__)
@@ -58,7 +60,7 @@ def _failure(status: int) -> LLMProviderError:
     return LLMRejectedError("LLM rejected the request")
 
 
-def _contents(request: ChatRequest) -> list[types.Content]:
+def _contents(request: ChatRequest, model: str) -> list[types.Content]:
     contents: list[types.Content] = []
     for turn in request.turns:
         if isinstance(turn, UserTurn):
@@ -80,7 +82,7 @@ def _contents(request: ChatRequest) -> list[types.Content]:
                 previous.parts.append(part)
             else:
                 contents.append(types.Content(role="user", parts=[part]))
-        elif turn.provider_state:
+        elif turn.provider_state and turn.state_model == model:
             # The model's own parts, thought signatures included, exactly as it sent them.
             contents.append(
                 types.Content(role="model", parts=cast(list[types.Part], turn.provider_state))
@@ -110,6 +112,7 @@ class GeminiLLMProvider:
         thinking_level: ThinkingLevel | None = "low",
         http_client: httpx.AsyncClient | None = None,
         priority: bool = False,
+        meter: UsageMeter | None = None,
     ) -> None:
         if not api_key.get_secret_value():
             raise LLMCredentialsError("LLM credentials are not configured")
@@ -123,6 +126,8 @@ class GeminiLLMProvider:
             ),
         )
         self.model = model or DEFAULT_MODEL
+        self._profile = profile(self.model)
+        self._meter = meter
         # On a call: Google's priority lane, answered ahead of standard traffic. Only
         # Tier 2 and 3 accounts get it; any other is served as standard, without error.
         self._tier = types.ServiceTier.PRIORITY if priority else None
@@ -153,7 +158,7 @@ class GeminiLLMProvider:
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[ModelEvent]:
         config = types.GenerateContentConfig(
-            system_instruction=request.system,
+            system_instruction=request.instructions,
             max_output_tokens=self._max_output_tokens,
             thinking_config=self._thinking,
             service_tier=self._tier,
@@ -181,15 +186,12 @@ class GeminiLLMProvider:
         usage = Usage()
         try:
             chunks = await self._client.aio.models.generate_content_stream(
-                model=self.model, contents=cast(Any, _contents(request)), config=config
+                model=self.model, contents=cast(Any, _contents(request, self.model)), config=config
             )
             async for chunk in chunks:
                 counts = chunk.usage_metadata
                 if counts is not None:
-                    usage = Usage(
-                        counts.prompt_token_count or 0,
-                        (counts.candidates_token_count or 0) + (counts.thoughts_token_count or 0),
-                    )
+                    usage = self._usage(counts)
                 candidate = chunk.candidates[0] if chunk.candidates else None
                 if candidate is None:
                     continue
@@ -218,7 +220,7 @@ class GeminiLLMProvider:
         ):
             raise LLMInvalidResponseError("LLM returned no usable response")
         yield Completed(
-            AssistantTurn("".join(text), tuple(calls), parts),
+            AssistantTurn("".join(text), tuple(calls), parts, self.model),
             "tool_calls"
             if calls
             else "length"
@@ -248,6 +250,8 @@ class GeminiLLMProvider:
             )
         except (errors.APIError, httpx.HTTPError, OSError) as error:
             raise self._failed(error) from None
+        if self._meter is not None and response.usage_metadata is not None:
+            self._meter.add(self._usage(response.usage_metadata))
         candidate = response.candidates[0] if response.candidates else None
         if candidate is None or candidate.finish_reason in _BLOCKED:
             raise LLMBlockedError("LLM returned no usable response")
@@ -263,6 +267,14 @@ class GeminiLLMProvider:
             return schema.model_validate_json(text)
         except (ValidationError, ValueError):
             raise LLMInvalidResponseError("LLM returned no valid structured response") from None
+
+    def _usage(self, counts: types.GenerateContentResponseUsageMetadata) -> Usage:
+        input_tokens = counts.prompt_token_count or 0
+        output_tokens = (counts.candidates_token_count or 0) + (counts.thoughts_token_count or 0)
+        cached = counts.cached_content_token_count or 0
+        # Google reports no price; the catalog's is used.
+        cost = self._profile.cost(input_tokens, output_tokens, cached) if self._profile else 0.0
+        return Usage(input_tokens, output_tokens, cached, cost)
 
     async def close(self) -> None:
         await self._client.aio.aclose()

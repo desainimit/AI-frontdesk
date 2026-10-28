@@ -23,7 +23,6 @@ class Environment(StrEnum):
 # app.platform.connections). The environment is not read for these.
 PLATFORM_MANAGED = frozenset(
     {
-        "tenant_llm_models",
         "smtp_host",
         "smtp_port",
         "smtp_tls_mode",
@@ -58,7 +57,7 @@ PLATFORM_MANAGED = frozenset(
         "llm_provider",
         "gemini_api_key",
         "openrouter_api_key",
-        "llm_model",
+        "llm_config",
         "product_name",
         "support_email",
         "google_calendar_client_id",
@@ -116,10 +115,6 @@ class Settings(BaseSettings):
     secret_encryption_keys: SecretStr = SecretStr("")
     secret_encryption_active_key: str = ""
     stream_token_key: SecretStr = SecretStr("")
-    tenant_llm_models: str = (
-        "gemini-3.8-flash,gemini-3.5-flash-lite,"
-        "google/gemini-3.8-flash,google/gemini-3.5-flash-lite"
-    )
     smtp_host: str = ""
     smtp_port: int = Field(default=587, ge=1, le=65535)
     smtp_tls_mode: Literal["starttls", "tls", "plain"] = "starttls"
@@ -178,8 +173,9 @@ class Settings(BaseSettings):
     llm_provider: Literal["gemini", "openrouter"] = "gemini"
     gemini_api_key: SecretStr = SecretStr("")
     openrouter_api_key: SecretStr = SecretStr("")
-    # Empty uses the selected provider's default model.
-    llm_model: str = ""
+    # The platform model connection's settings: a model per job (app.ai.llm.models)
+    # and how much the text model thinks. Empty uses the catalog defaults.
+    llm_config: dict[str, Any] = Field(default_factory=dict)
     safety_semantic_enabled: bool = True
     product_name: str = "AI Frontdesk"
     support_email: str = ""
@@ -226,8 +222,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Configure an independent random STREAM_TOKEN_KEY of at least 43 characters"
             )
-        if not self.llm_models:
-            raise ValueError("Configure at least one TENANT_LLM_MODELS entry")
         return self
 
     @property
@@ -243,10 +237,6 @@ class Settings(BaseSettings):
     def platform_llm_key(self) -> SecretStr:
         """The platform account key for the selected provider; empty when unset."""
         return self.openrouter_api_key if self.llm_provider == "openrouter" else self.gemini_api_key
-
-    @property
-    def llm_models(self) -> tuple[str, ...]:
-        return tuple(item.strip() for item in self.tenant_llm_models.split(",") if item.strip())
 
     @classmethod
     def from_environment(cls, env_file: str | None = ".env", **overrides: Any) -> Self:

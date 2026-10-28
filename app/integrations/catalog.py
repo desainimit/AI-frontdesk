@@ -7,9 +7,11 @@ URLs, hosts or headers: every outbound provider address is derived from typed fi
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal, Self
+from typing import Any, ClassVar, Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
+
+from app.ai.llm.models import DEFAULTS, JOB_FIELDS, JOBS, ModelChoiceError, model_jobs, models_for
 
 
 class Purpose(StrEnum):
@@ -113,10 +115,36 @@ class RoutedRecognitionConfig(_Config):
     language: Literal["en-US", "hi-IN", "gu-IN", "es-ES", "fr-FR", "de-DE", "pt-BR"] = "en-US"
 
 
-class GeminiChatConfig(_Config):
-    # The platform allowlist (TENANT_LLM_MODELS) is enforced by the service.
-    model: str = Field(pattern=r"^[a-z0-9][a-z0-9.\-]{1,62}$")
-    # Lower levels answer sooner; None omits it for models that do not accept one.
+class _ChatConfig(_Config):
+    """A model per job, each from the catalog (app.ai.llm.models)."""
+
+    PROVIDER: ClassVar[str] = ""
+    model: str = Field(default="", max_length=120)
+    voice_model: str = Field(default="", max_length=120)
+    quick_model: str = Field(default="", max_length=120)
+    backup_model: str = Field(default="", max_length=120)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_models(cls, data: Any) -> Any:
+        """A job left empty, or saved before it could be chosen, gets the default."""
+        if not isinstance(data, dict):
+            return data
+        filled = dict(cast(dict[str, Any], data))
+        for job in JOBS:
+            filled[JOB_FIELDS[job]] = filled.get(JOB_FIELDS[job]) or DEFAULTS[cls.PROVIDER][job]
+        return filled
+
+    @model_validator(mode="after")
+    def known_models(self) -> Self:
+        # A ModelChoiceError says which job and why; validate_config passes it on.
+        model_jobs(self.PROVIDER, self.model_dump())
+        return self
+
+
+class GeminiChatConfig(_ChatConfig):
+    PROVIDER = "gemini"
+    # How much the text model thinks; calls and quick checks always think least.
     thinking_level: Literal["low", "medium", "high"] | None = "low"
 
 
@@ -125,9 +153,8 @@ class GeminiEmbeddingsConfig(_Config):
     model: Literal["gemini-embedding-2"] = "gemini-embedding-2"
 
 
-class OpenRouterChatConfig(_Config):
-    # An OpenRouter slug such as google/gemini-3.8-flash; the allowlist still applies.
-    model: str = Field(pattern=r"^[a-z0-9][a-z0-9.\-]{0,40}/[a-z0-9][a-z0-9.\-:]{1,80}$")
+class OpenRouterChatConfig(_ChatConfig):
+    PROVIDER = "openrouter"
     thinking_level: Literal["minimal", "low", "medium", "high"] | None = "low"
 
 
@@ -331,6 +358,11 @@ CATALOG: dict[tuple[Purpose, str], ProviderSpec] = {
 class InvalidIntegrationError(ValueError):
     """Static, secret-free reason; safe to map to a 422."""
 
+    def __init__(self, message: str, field: str | None = None) -> None:
+        super().__init__(message)
+        # Set when the reason is about one setting and can be shown beside it.
+        self.field = field
+
 
 def spec_for(purpose: str, provider: str) -> ProviderSpec:
     try:
@@ -349,7 +381,11 @@ def platform_spec(purpose: str, provider: str) -> ProviderSpec:
 def validate_config(spec: ProviderSpec, config: dict[str, Any]) -> dict[str, Any]:
     try:
         return spec.config.model_validate(config).model_dump(mode="json")
-    except ValidationError:
+    except ValidationError as failure:
+        for error in failure.errors():
+            reason = error.get("ctx", {}).get("error")
+            if isinstance(reason, ModelChoiceError):
+                raise InvalidIntegrationError(str(reason), f"config.{reason.field}") from None
         raise InvalidIntegrationError("Invalid provider configuration") from None
 
 
@@ -378,16 +414,34 @@ class ProviderCatalogEntry(BaseModel):
     required_secret_fields: list[str]
 
 
-def catalog_entries(
-    llm_models: tuple[str, ...], *, platform: bool = False
-) -> list[ProviderCatalogEntry]:
+def _model_choices(schema: dict[str, Any], provider: str) -> None:
+    """Offer each job only the catalog models that may do it, with their names."""
+    for job in JOBS:
+        field = schema["properties"][JOB_FIELDS[job]]
+        models = [model for model in models_for(provider) if job in model.jobs]
+        field["enum"] = [model.slug for model in models]
+        field["default"] = DEFAULTS[provider][job]
+        # What a form shows for each choice: its name, price and whether it is tried
+        # on calls. Prices are US dollars per million tokens in and out.
+        field["x-options"] = [
+            {
+                "value": model.slug,
+                "label": model.label,
+                "tier": model.tier,
+                "price_in": model.price_in,
+                "price_out": model.price_out,
+                "call_tested": model.call_tested,
+            }
+            for model in models
+        ]
+
+
+def catalog_entries(*, platform: bool = False) -> list[ProviderCatalogEntry]:
     entries: list[ProviderCatalogEntry] = []
     for spec in PLATFORM_CATALOG.values() if platform else _SPECS:
         schema = spec.config.model_json_schema()
         if spec.purpose == Purpose.LLM:
-            # Each provider is offered only the allowed models written in its own form.
-            pattern = re.compile(str(schema["properties"]["model"]["pattern"]))
-            schema["properties"]["model"]["enum"] = [m for m in llm_models if pattern.fullmatch(m)]
+            _model_choices(schema, spec.provider)
         entries.append(
             ProviderCatalogEntry(
                 provider=spec.provider,

@@ -222,6 +222,9 @@ class TurnView(BaseModel):
     interrupted: bool = False
     total_ms: int
     error: str | None
+    model: str = ""
+    # US dollars: the reply and the quick checks beside it.
+    cost_usd: float = 0.0
 
 
 class DailyUsage(BaseModel):
@@ -235,6 +238,10 @@ class DailyUsage(BaseModel):
     first_audio_ms: int | None = None
     handed_over: int
     failed: int
+    # US dollars for the model: replies and the quick checks beside them.
+    cost_usd: float = 0.0
+    # Of input_tokens, those read from the provider's cache at a lower price.
+    cached_tokens: int = 0
 
 
 @router.get("/calls/{call_id}/turns")
@@ -263,6 +270,8 @@ async def call_turns(
                 interrupted=row.interrupted,
                 total_ms=row.total_ms,
                 error=row.error,
+                model=row.model,
+                cost_usd=round(float(row.cost_usd) + float(row.checks_cost_usd), 6),
             )
             for row in rows
         ]
@@ -291,6 +300,8 @@ async def assistant_usage(
                 func.count().filter(AiTurn.outcome == "handoff"),
                 func.count().filter(AiTurn.outcome.in_(("unavailable", "blocked", "interrupted"))),
                 func.avg(AiTurn.first_audio_ms),
+                func.coalesce(func.sum(AiTurn.cost_usd + AiTurn.checks_cost_usd), 0),
+                func.coalesce(func.sum(AiTurn.cached_tokens), 0),
             )
             .where(
                 AiTurn.tenant_id == context.tenant_id,
@@ -311,6 +322,8 @@ async def assistant_usage(
                 first_audio_ms=int(row[7]) if row[7] is not None else None,
                 handed_over=row[5],
                 failed=row[6],
+                cost_usd=round(float(row[8]), 4),
+                cached_tokens=int(row[9]),
             )
             for row in rows
         ]

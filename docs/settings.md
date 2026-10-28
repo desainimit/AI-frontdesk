@@ -64,7 +64,7 @@ A platform administrator manages these under `/api/v1/platform`:
 | `PUT /connections/{purpose}` | Save the account and check it with the provider in the same step. Leaving `secrets` out keeps the saved secret. |
 | `POST /connections/{purpose}/verify`, `DELETE /connections/{purpose}` | Check again, or remove. |
 | `POST /connections/email/test` | Send a test email. |
-| `GET`/`PUT /settings` | Product name, support email, allowed AI models, administrator sign-in length. |
+| `GET`/`PUT /settings` | Product name, support email, administrator sign-in length, speaking speed. The AI models each job may use come from the catalog in `app/ai/llm/models.py`. |
 | `GET`/`POST /phone-numbers`, `DELETE /phone-numbers/{number}` | Numbers on the platform phone account. Assigning one proves ownership and points its call webhooks at this application. |
 | `GET /checklist` | What is still missing before clinics can be invited and take calls. |
 

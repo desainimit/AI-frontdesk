@@ -229,7 +229,7 @@ async def platform_providers(
     request: Request, context: PlatformIdentity
 ) -> list[ProviderCatalogEntry]:
     require_platform_permission(context, PlatformPermission.TENANT_READ)
-    return catalog_entries(request.app.state.settings.llm_models, platform=True)
+    return catalog_entries(platform=True)
 
 
 @router.put("/connections/{purpose}")

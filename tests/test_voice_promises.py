@@ -13,7 +13,7 @@ from pydantic import SecretStr
 
 from app.ai.engine import KEEP_PROMISE
 from app.ai.llm.base import LLMInvalidResponseError, UserTurn
-from app.ai.llm.factory import llm_from_connection
+from app.ai.llm.factory import open_models
 from app.ai.memory import first_name
 from app.ai.prompts import system_prompt
 from app.ai.speech_time import spoken_when
@@ -123,7 +123,7 @@ async def test_free_times_come_already_said() -> None:
 
 def test_calls_are_answered_by_flash_lite_and_chat_keeps_the_main_model() -> None:
     key, config = SecretStr("test-key"), {"model": "google/gemini-3.8-flash"}
-    voice = llm_from_connection("openrouter", key, config, voice=True)
-    chat = llm_from_connection("openrouter", key, config)
+    voice = open_models("openrouter", key, config, "platform", voice=True).reply
+    chat = open_models("openrouter", key, config, "platform", voice=False).reply
     assert voice.model == "google/gemini-3.5-flash-lite"  # type: ignore[attr-defined]
     assert chat.model == "google/gemini-3.8-flash"  # type: ignore[attr-defined]

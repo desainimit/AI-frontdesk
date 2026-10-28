@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import AsyncIterator
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import httpx
 from pydantic import BaseModel, SecretStr, ValidationError
@@ -26,19 +26,23 @@ from app.ai.llm.base import (
     ToolCall,
     ToolResult,
     Usage,
+    UsageMeter,
     UserTurn,
 )
+from app.ai.llm.models import Effort, ModelProfile, profile
 from app.ai.llm.schema import wire_schema
 
 CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "google/gemini-3.8-flash"
-ReasoningEffort = Literal["minimal", "low", "medium", "high"]
+CACHED = {"type": "ephemeral"}
 
-# Applied to every request: never route to an endpoint that keeps or trains on the
-# conversation, never to one that would ignore the output schema or the tools, and
-# prefer the cheapest endpoint so a pricier service tier is not picked by default.
+# Applied to every request: only endpoints that keep nothing of the conversation (zero
+# data retention; these are patients) and that honour every parameter sent, so a model
+# never silently ignores the tools or the output schema. The cheapest such endpoint is
+# preferred, so a pricier service tier is not picked by default.
 ROUTING: dict[str, Any] = {
     "data_collection": "deny",
+    "zdr": True,
     "require_parameters": True,
     "sort": "price",
 }
@@ -55,11 +59,25 @@ def _failure(status: int) -> LLMProviderError:
         return LLMCreditsError("LLM account has no remaining credit")
     if status >= 500:
         return LLMUnavailableError("LLM is unavailable")
+    # 404 included: no endpoint left for this model under the routing above.
     return LLMRejectedError("LLM rejected the request")
 
 
-def _messages(request: ChatRequest) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = [{"role": "system", "content": request.system}]
+def _system(request: ChatRequest, caching: str) -> list[dict[str, Any]]:
+    """The fixed instructions first and what changed this turn after them, so the
+    fixed part is a prefix every turn shares. A model that caches only on request is
+    asked to keep the fixed part."""
+    fixed: dict[str, Any] = {"type": "text", "text": request.system}
+    if caching == "explicit":
+        fixed["cache_control"] = CACHED
+    messages: list[dict[str, Any]] = [{"role": "system", "content": [fixed]}]
+    if request.context:
+        messages.append({"role": "system", "content": request.context})
+    return messages
+
+
+def _messages(request: ChatRequest, model: str, caching: str) -> list[dict[str, Any]]:
+    messages = _system(request, caching)
     for turn in request.turns:
         if isinstance(turn, UserTurn):
             messages.append({"role": "user", "content": turn.text})
@@ -85,11 +103,25 @@ def _messages(request: ChatRequest) -> list[dict[str, Any]]:
                     }
                     for call in turn.tool_calls
                 ]
-            if turn.provider_state:
-                # The model's own reasoning record, which it needs back to go on.
+            if turn.provider_state and turn.state_model == model:
+                # The model's own reasoning record, which it needs back to go on. A
+                # record written by another model (the backup took over) is left out.
                 message["reasoning_details"] = turn.provider_state
             messages.append(message)
     return messages
+
+
+def _usage(counts: dict[str, Any], model: ModelProfile | None) -> Usage:
+    details = cast(dict[str, Any], counts.get("prompt_tokens_details") or {})
+    input_tokens = int(counts.get("prompt_tokens") or 0)
+    output_tokens = int(counts.get("completion_tokens") or 0)
+    cached = int(details.get("cached_tokens") or 0)
+    reported = counts.get("cost")
+    if isinstance(reported, int | float) and not isinstance(reported, bool):
+        cost = float(reported)
+    else:
+        cost = model.cost(input_tokens, output_tokens, cached) if model else 0.0
+    return Usage(input_tokens, output_tokens, cached, cost)
 
 
 class OpenRouterLLMProvider:
@@ -100,22 +132,28 @@ class OpenRouterLLMProvider:
         timeout_seconds: float,
         max_output_tokens: int,
         *,
-        reasoning_effort: ReasoningEffort | None = "low",
+        reasoning_effort: Effort | None = "low",
         http_client: httpx.AsyncClient | None = None,
         fastest: bool = False,
+        meter: UsageMeter | None = None,
     ) -> None:
         if not api_key.get_secret_value():
             raise LLMCredentialsError("LLM credentials are not configured")
         self._key = api_key
         self._http = http_client or httpx.AsyncClient(timeout=timeout_seconds)
         self.model = model or DEFAULT_MODEL
+        self._profile = profile(self.model)
         self._max_output_tokens = max_output_tokens
         self._effort = reasoning_effort
         # On a call the quickest endpoint matters more than the cheapest.
         self._routing = ROUTING | {"sort": "latency"} if fastest else ROUTING
-        self._fastest = fastest
+        # The provider's priority lane, where the model has one: answered first when it
+        # is busy, for a little more per token.
+        self._priority = fastest and self._profile is not None and self._profile.priority_tier
+        self._caching = self._profile.caching if self._profile else "implicit"
+        self._meter = meter
 
-    def _body(self) -> dict[str, Any]:
+    def _body(self, session_id: str = "") -> dict[str, Any]:
         body: dict[str, Any] = {
             "model": self.model,
             # Reasoning is billed as output and counts against this limit.
@@ -124,18 +162,19 @@ class OpenRouterLLMProvider:
         }
         if self._effort:
             body["reasoning"] = {"effort": self._effort}
-        if self._fastest:
-            # The provider's priority lane: answered first when it is busy, for a little
-            # more per token. Where there is none, the request is served as usual.
+        if self._priority:
             body["service_tier"] = "priority"
+        if session_id:
+            # Keeps a conversation on the endpoint that holds its cached instructions.
+            body["session_id"] = session_id[:256]
         return body
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._key.get_secret_value()}"}
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[ModelEvent]:
-        body = self._body() | {
-            "messages": _messages(request),
+        body = self._body(request.session_id) | {
+            "messages": _messages(request, self.model, self._caching),
             "stream": True,
             "usage": {"include": True},
         }
@@ -156,6 +195,7 @@ class OpenRouterLLMProvider:
         reasoning: list[Any] = []
         finish: str | None = None
         usage = Usage()
+        served_by = ""
         try:
             async with self._http.stream(
                 "POST", CHAT_URL, json=body, headers=self._headers()
@@ -177,13 +217,10 @@ class OpenRouterLLMProvider:
                     # A generation failure can arrive inside a 200 response.
                     if "error" in payload:
                         raise LLMUnavailableError("LLM is unavailable")
+                    served_by = served_by or str(payload.get("provider") or "")[:60]
                     reported = payload.get("usage")
                     if isinstance(reported, dict):
-                        counts = cast(dict[str, Any], reported)
-                        usage = Usage(
-                            int(counts.get("prompt_tokens") or 0),
-                            int(counts.get("completion_tokens") or 0),
-                        )
+                        usage = _usage(cast(dict[str, Any], reported), self._profile)
                     choices = cast(list[dict[str, Any]], payload.get("choices") or [])
                     if not choices:
                         continue
@@ -220,10 +257,11 @@ class OpenRouterLLMProvider:
         if not tool_calls and not "".join(text).strip():
             raise LLMInvalidResponseError("LLM returned no usable response")
         yield Completed(
-            AssistantTurn("".join(text), tool_calls, reasoning or None),
+            AssistantTurn("".join(text), tool_calls, reasoning or None, self.model),
             "tool_calls" if tool_calls else "length" if finish == "length" else "stop",
             usage,
             self.model,
+            served_by,
         )
 
     async def generate_structured[T: BaseModel](self, request: LLMRequest, schema: type[T]) -> T:
@@ -244,6 +282,7 @@ class OpenRouterLLMProvider:
                     "schema": wire_schema(schema.model_json_schema()),
                 },
             },
+            "usage": {"include": True},
         }
         if self._effort:
             body["reasoning"] = {"effort": self._effort, "exclude": True}
@@ -260,6 +299,9 @@ class OpenRouterLLMProvider:
             choices = cast(list[dict[str, Any]], payload.get("choices") or [])
         except ValueError:
             raise LLMInvalidResponseError("LLM returned no complete response") from None
+        reported = payload.get("usage")
+        if self._meter is not None and isinstance(reported, dict):
+            self._meter.add(_usage(cast(dict[str, Any], reported), self._profile))
         if "error" in payload or not choices or "error" in choices[0]:
             raise LLMUnavailableError("LLM is unavailable")
         choice = choices[0]

@@ -110,9 +110,8 @@ async def test_a_patient_books_by_text_and_staff_take_the_thread_over(
     assert [(row.patient_id, row.provider_id, row.status) for row in booked] == [
         (clinic.patient_id, clinic.provider_id, "booked")
     ]
-    assert "booked for" in (await clinic.rows(OutboundMessage))[-3].body or any(
-        "booked for" in row.body for row in await clinic.rows(OutboundMessage)
-    )
+    # The confirmation text goes out as the clinic's template words it.
+    assert any("you're booked" in row.body for row in await clinic.rows(OutboundMessage))
     turns = await clinic.rows(AiTurn)
     assert [(row.channel, row.outcome) for row in turns] == [
         ("sms", "confirmation"),

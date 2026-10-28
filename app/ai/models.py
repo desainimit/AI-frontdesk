@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, Index, Integer, String, false
+from sqlalchemy import Boolean, CheckConstraint, Index, Integer, Numeric, String, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,3 +41,10 @@ class AiTurn(IdentityMixin, Base):
     # answered, confirmation, safety, handoff, unavailable, blocked, interrupted
     outcome: Mapped[str] = mapped_column(String(20))
     error: Mapped[str | None] = mapped_column(String(40))
+    # Of input_tokens, those read from the provider's cache at a lower price.
+    cached_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # US dollars for the reply, and for the quick checks that ran beside it.
+    cost_usd: Mapped[float] = mapped_column(Numeric(12, 6), default=0, server_default="0")
+    checks_cost_usd: Mapped[float] = mapped_column(Numeric(12, 6), default=0, server_default="0")
+    # The endpoint that served the reply, when the provider says (such as "Google").
+    served_by: Mapped[str] = mapped_column(String(60), default="", server_default="")

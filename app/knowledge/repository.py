@@ -2,7 +2,7 @@
 
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.search import contains
@@ -109,7 +109,7 @@ class KnowledgeRepository:
         )
 
     async def retrieve(
-        self, tenant_id: UUID, vector: list[float], limit: int
+        self, tenant_id: UUID, vector: list[float], limit: int, model: str
     ) -> list[tuple[DocumentChunk, Document, float]]:
         distance = DocumentChunk.embedding.cosine_distance(vector)
         rows = await self.session.execute(
@@ -130,8 +130,53 @@ class KnowledgeRepository:
                 Document.status == "approved",
                 DocumentVersion.status == "ready",
                 Document.active_version == DocumentVersion.version,
+                # Only vectors from the model that made the question's vector compare.
+                # Chunks from before the model was recorded count as matching.
+                DocumentChunk.embedding_model.in_((model, "")),
             )
             .order_by(distance)
             .limit(limit)
         )
         return [(chunk, document, float(score)) for chunk, document, score in rows.all()]
+
+    async def reindex_other_models(self, tenant_id: UUID, model: str) -> int:
+        """Queue every live document whose chunks another model made, once, so it is
+        searchable again after the embedding model changed. Returns how many."""
+        stale = (
+            await self.session.scalars(
+                select(DocumentVersion.id)
+                .join(
+                    Document,
+                    (Document.tenant_id == DocumentVersion.tenant_id)
+                    & (Document.id == DocumentVersion.document_id)
+                    & (Document.active_version == DocumentVersion.version),
+                )
+                .where(
+                    DocumentVersion.tenant_id == tenant_id,
+                    DocumentVersion.status == "ready",
+                    exists().where(
+                        DocumentChunk.tenant_id == tenant_id,
+                        DocumentChunk.document_version_id == DocumentVersion.id,
+                        DocumentChunk.embedding_model.not_in((model, "")),
+                    ),
+                    ~exists().where(
+                        KnowledgeJob.tenant_id == tenant_id,
+                        KnowledgeJob.document_version_id == DocumentVersion.id,
+                        KnowledgeJob.status.in_(("pending", "processing")),
+                    ),
+                )
+                .limit(50)
+            )
+        ).all()
+        for version_id in stale:
+            self.session.add(
+                KnowledgeJob(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    document_version_id=version_id,
+                    status="pending",
+                    attempts=0,
+                )
+            )
+        await self.session.flush()
+        return len(stale)
