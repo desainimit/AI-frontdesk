@@ -534,13 +534,19 @@ async def call_status(request: Request, database: DatabaseDependency) -> Respons
     }:
         raise HTTPException(400, "Invalid call status")
     if status in {"completed", "busy", "failed", "no-answer", "canceled"}:
-        await service.provider_status(
-            params.get("To", ""),
-            params["CallSid"],
-            status,
-            UUID(request.state.request_id),
-            credentials.integration_id,
-        )
+        try:
+            await service.provider_status(
+                params.get("To", ""),
+                params["CallSid"],
+                status,
+                UUID(request.state.request_id),
+                credentials.integration_id,
+            )
+        except NotFoundError:
+            # A call this service never answered (the number pointed elsewhere, or the
+            # call ended before it reached us): nothing to finish. Answering 404 would
+            # only fill the Twilio console with warnings.
+            logger.warning("status_for_unknown_call", extra={"call_status": status})
     return Response(status_code=204)
 
 
