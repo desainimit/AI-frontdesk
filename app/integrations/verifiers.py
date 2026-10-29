@@ -116,6 +116,8 @@ class HttpProviderVerifier:
                         headers={"Authorization": f"Token {secrets['api_key']}"},
                     )
                     return _classify(response.status_code)
+                if provider == "sarvam":
+                    return await _sarvam(secrets["api_key"])
                 if provider == "elevenlabs":
                     response = await client.get(
                         f"https://api.elevenlabs.io/v1/voices/{config['voice_id']}",
@@ -258,6 +260,30 @@ async def _openrouter_models(client: httpx.AsyncClient, config: Mapping[str, Any
             return Verification("invalid", "model_missing_features")
         if model not in zero_retention:
             return Verification("invalid", "model_not_private")
+    return VERIFIED
+
+
+async def _sarvam(api_key: str) -> Verification:
+    """Open Sarvam's live recognition and close it before any audio is sent: the key is
+    checked, nothing is transcribed or billed."""
+    from websockets.asyncio.client import connect
+    from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
+
+    url = "wss://api.sarvam.ai/speech-to-text-realtime/ws?language_code=hi-IN&sample_rate=8000"
+    try:
+        async with connect(
+            url, additional_headers={"api-subscription-key": api_key}, open_timeout=8
+        ) as socket:
+            await socket.send('{"event": "end"}')
+    except InvalidStatus as error:
+        return _classify(error.response.status_code)
+    except ConnectionClosed as error:
+        # 1003: the key was refused or has no quota left.
+        if error.rcvd is not None and error.rcvd.code == 1003:
+            return Verification("invalid", "credentials_rejected")
+        return VERIFIED
+    except (WebSocketException, OSError, TimeoutError):
+        return Verification("unavailable", "provider_unavailable")
     return VERIFIED
 
 

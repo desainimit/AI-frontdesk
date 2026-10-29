@@ -27,6 +27,7 @@ from app.conversation.state import ConversationState, SafetyDecision
 from app.core.database.rls import set_tenant_scope, verify_runtime_role
 from app.core.database.unit_of_work import enter_tenant_scope
 from app.core.errors import ApplicationError, NotFoundError
+from app.languages import all_packs
 from app.messaging.models import Conversation, ConversationMessage
 from app.notifications.models import OutboundMessage
 from app.notifications.repository import MessageRepository
@@ -39,8 +40,10 @@ from app.users.models import User
 logger = logging.getLogger(__name__)
 
 # The words carriers treat as "stop texting me" and "start again".
-STOP_WORDS = frozenset({"STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"})
-START_WORDS = frozenset({"START", "UNSTOP", "YES START"})
+# Texts that stop and restart messages: the carriers' English words, which work in
+# every language, and each language's own.
+STOP_WORDS = frozenset[str]().union(*(item.stop_words for item in all_packs()))
+START_WORDS = frozenset[str]().union(*(item.start_words for item in all_packs()))
 # One turn may take this long before another process may pick the thread up.
 LEASE = timedelta(seconds=90)
 # After this long without a word the assistant starts the thread afresh.

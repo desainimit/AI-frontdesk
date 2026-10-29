@@ -9,7 +9,8 @@ from typing import Any, cast
 import httpx
 from pydantic import SecretStr
 
-from app.conversation.locales import LOCALES, normalize_language
+from app.conversation.locales import normalize_language
+from app.languages import LANGUAGES
 from app.voice.codec import double_rate
 from app.voice.http import retry_after_seconds
 from app.voice.stt.base import (
@@ -41,7 +42,7 @@ class AzureSTTProvider:
         self.region = region
         self.language = language
         self.language_resolver = language_resolver
-        supported = {locale.speech_locale for locale in LOCALES.values()}
+        supported = {locale for entry in LANGUAGES.values() for locale in entry.azure_voices}
         if candidate_languages and (
             not 2 <= len(candidate_languages) <= 10
             or len(set(candidate_languages)) != len(candidate_languages)

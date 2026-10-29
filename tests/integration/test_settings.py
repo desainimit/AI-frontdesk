@@ -89,8 +89,10 @@ async def test_http_rejects_incompatible_gujarati_voice_without_saving(
             },
         )
         assert rejected.status_code == 422
-        field = rejected.json()["error"]["fields"][0]
-        assert field["field"] == "speech_connections.tts" and "Azure Speech" in field["message"]
+        # Both connections are named, each with what would work for Gujarati.
+        fields = {item["field"]: item["message"] for item in rejected.json()["error"]["fields"]}
+        assert set(fields) == {"speech_connections.stt", "speech_connections.tts"}
+        assert "Azure Speech" in fields["speech_connections.tts"]
         after = (await client.get("/api/v1/settings")).json()
         assert after["version"] == before["version"]
         assert after["settings"]["receptionist"] == receptionist

@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 from app.ai.catalog import APPOINTMENT_TOOLS, SAFE_READ_TOOLS, SUPPORT_TOOLS
 from app.calls.verification import VerificationPolicy
 from app.conversation.locales import LanguagePolicy
+from app.languages import family, known, normalize, pack
 
 TEMPLATE_VARIABLES = frozenset(
     {
@@ -94,6 +95,34 @@ class ReceptionistSettings(Section):
     languages: LanguagePolicy = Field(
         default_factory=lambda: LanguagePolicy(default_language="en", enabled_languages=["en"])
     )
+    # The greeting and the "I don't know" line in the clinic's other languages, by
+    # language code. `greeting` and `unknown_answer` are in its main language; a
+    # language without its own here uses the product's wording for it.
+    greetings: dict[str, str] = Field(default_factory=dict[str, str], max_length=8)
+    unknown_answers: dict[str, str] = Field(default_factory=dict[str, str], max_length=8)
+
+    @field_validator("greetings", "unknown_answers")
+    @classmethod
+    def by_language(cls, values: dict[str, str]) -> dict[str, str]:
+        return _by_language(values)
+
+    def greeting_in(self, language: str, clinic_name: str) -> str:
+        return self._in(language, self.greeting, self.greetings, "greeting", clinic_name)
+
+    def unknown_answer_in(self, language: str, clinic_name: str) -> str:
+        return self._in(
+            language, self.unknown_answer, self.unknown_answers, "unknown_answer", clinic_name
+        )
+
+    def _in(self, language: str, main: str, own: dict[str, str], key: str, clinic_name: str) -> str:
+        code = normalize(language)
+        if own.get(code):
+            return own[code]
+        if family(code) == family(self.languages.default_language) and code == normalize(
+            self.languages.default_language
+        ):
+            return main
+        return pack(code).clinic_texts[key].format(clinic=clinic_name)
 
     @property
     def allowed_tools(self) -> frozenset[str]:
@@ -156,6 +185,21 @@ class SchedulingSettings(Section):
     rescheduling_enabled: bool = True
 
 
+def _by_language(values: dict[str, str]) -> dict[str, str]:
+    cleaned: dict[str, str] = {}
+    for code, text in values.items():
+        if not known(code):
+            raise ValueError(f"Unknown language: {code}")
+        if len(text) > 1000:
+            raise ValueError("Keep each text under 1000 characters")
+        if text.strip():
+            cleaned[normalize(code)] = text.strip()
+    return cleaned
+
+
+MessageKind = Literal["confirmation_text", "reminder_text", "cancellation_text"]
+
+
 class NotificationSettings(Section):
     recipients: list[str] = Field(default_factory=list[str], max_length=20)
     confirmations_enabled: bool = True
@@ -179,12 +223,53 @@ class NotificationSettings(Section):
             raise ValueError("Each address can be listed once")
         return values
 
+    # Send texts through this Twilio Messaging Service (MG...) instead of from the
+    # clinic's number: needed for an Indian DLT-registered sender ID or a short code.
+    messaging_service_sid: str = Field(default="", pattern=r"^(MG[0-9a-fA-F]{32})?$")
+    # The three texts in the clinic's other languages: language -> kind -> text. The
+    # texts above are in its main language; a language without its own here uses the
+    # product's wording for it.
+    translations: dict[str, dict[MessageKind, str]] = Field(
+        default_factory=dict[str, dict[MessageKind, str]], max_length=8
+    )
+
     @field_validator("confirmation_text", "reminder_text", "cancellation_text")
     @classmethod
     def valid_variables(cls, value: str) -> str:
         if not set(re.findall(r"\{\{\s*([^}]+?)\s*\}\}", value)) <= TEMPLATE_VARIABLES:
             raise ValueError("Use only: " + ", ".join(sorted(TEMPLATE_VARIABLES)))
         return value
+
+    @field_validator("translations")
+    @classmethod
+    def valid_translations(
+        cls, values: dict[str, dict[MessageKind, str]]
+    ) -> dict[str, dict[MessageKind, str]]:
+        cleaned: dict[str, dict[MessageKind, str]] = {}
+        for code, texts in values.items():
+            if not known(code):
+                raise ValueError(f"Unknown language: {code}")
+            kept: dict[MessageKind, str] = {
+                kind: cls.valid_variables(text.strip())
+                for kind, text in texts.items()
+                if text.strip()
+            }
+            if any(len(text) > 1000 for text in kept.values()):
+                raise ValueError("Keep each text under 1000 characters")
+            if kept:
+                cleaned[normalize(code)] = kept
+        return cleaned
+
+    def text(self, kind: MessageKind, language: str, main_language: str) -> str:
+        """The clinic's wording of a message in a language: its own, its main-language
+        text when that is the language, or the product's wording for that language."""
+        code = normalize(language)
+        own = self.translations.get(code, {}).get(kind)
+        if own:
+            return own
+        if code == normalize(main_language):
+            return getattr(self, kind)
+        return pack(code).clinic_texts[kind]
 
 
 class PrivacySettings(Section):

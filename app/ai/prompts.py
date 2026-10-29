@@ -7,8 +7,9 @@ from zoneinfo import ZoneInfo
 from app.ai.llm.base import AssistantTurn, Turn, UserTurn
 from app.ai.memory import records_trusted
 from app.ai.session import Session
-from app.conversation.locales import LOCALES, base_language
 from app.conversation.state import ConversationState
+from app.languages import CODES, known, pack
+from app.languages import language as registry_language
 from app.safety import handover
 
 # Turns shown word for word; older ones reach the model as a summary.
@@ -283,35 +284,19 @@ TONES = {
 }
 
 
-# How each conversation language is written. Hindi mixed with English is how people
-# speak it; a whole English sentence is not.
-SCRIPTS = {
-    "hi": (
-        "Hindi in Devanagari script, the everyday spoken Hindi of a receptionist. English "
-        "words people use in Hindi (appointment, time, doctor) are fine, but never a whole "
-        'English sentence, and never English written in Devanagari (not "लेट मी चेक")'
-    ),
-    "hinglish": (
-        "Hinglish: Hindi with English words mixed in the way they speak, written in Latin "
-        'letters ("Ji, kal shaam saadhe paanch baje khaali hai."). Never plain English, never '
-        "Devanagari"
-    ),
-    "gu": (
-        "Gujarati in Gujarati script. Keep names, codes and appointment facts as they are; "
-        "understand Gujarati digits as well as 0-9. If a spoken date, time or number is "
-        "unclear, ask; never guess a booking time"
-    ),
-}
+# How each conversation language is written, from its language pack. Hindi mixed with
+# English is how people speak it; a whole English sentence is not.
+SCRIPTS = {code: pack(code).script_rule for code in CODES}
 
 
 def language_name(language: str) -> str:
-    return "Hinglish" if language == "hinglish" else LOCALES[base_language(language)].name
+    return registry_language(language).name if known(language) else "English"
 
 
 def language_rule(language: str) -> str:
     """The one rule on language, said last so that nothing above outweighs it."""
     name = language_name(language)
-    how = SCRIPTS.get(language, f"everyday spoken {name}")
+    how = pack(language).script_rule
     return (
         f"Language: reply only in {name}, every sentence: {how}. The server chose it from "
         "how they speak and changes it when they switch language or ask to, so keep to it "
@@ -347,6 +332,13 @@ def prompt_parts(session: Session, state: ConversationState) -> tuple[str, str]:
         "earlier_in_this_call": state.earlier_summary,
         "your_recent_lookups": state.recent_lookups or None,
         "you_offered_to_put_them_through": handover.pending(state),
+        # A provider's or a location's own number: theirs unless the caller asks for
+        # someone else, and the rest of the clinic is still there for them.
+        "they_called_the_line_of": (
+            {**session.line, "how": "book with them unless the caller asks for someone else"}
+            if session.line
+            else None
+        ),
         "people_you_can_put_them_through_to": [
             {"name": target.name, "for": target.description}
             for target in handover.targets_now(settings, state)
@@ -363,7 +355,9 @@ def prompt_parts(session: Session, state: ConversationState) -> tuple[str, str]:
         "facts": settings.clinic.model_dump(mode="json"),
         "opening_hours": settings.hours.model_dump(mode="json"),
         "tone": settings.receptionist.tone,
-        "if_you_do_not_know_say": settings.receptionist.unknown_answer,
+        "if_you_do_not_know_say": settings.receptionist.unknown_answer_in(
+            state.language, settings.clinic.name
+        ),
         # With ids, so a diary can be checked at once instead of after a lookup.
         **(session.directory or {}),
     }

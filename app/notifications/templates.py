@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app.conversation.locales import base_language
+from app.languages import pack
 
 _VARIABLE = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
 # Twilio splits longer texts into several billed parts; keep patient messages short.
@@ -17,40 +17,35 @@ def render(text: str, values: dict[str, str]) -> str:
 
 
 def when(instant: datetime, timezone: str, language: str = "en") -> str:
-    """An appointment time as the patient reads it: `Mon 12 Oct, 10:30 AM`."""
+    """An appointment time as the patient reads it, in their language: `Mon 12 Oct,
+    10:30 AM`, `lunes 12 de octubre, 10:30`, `सोमवार, 12 अक्टूबर, सुबह 10:30`."""
     local = instant.astimezone(ZoneInfo(timezone))
+    words = pack(language)
     hour = local.hour % 12 or 12
-    if base_language(language) == "gu":
-        weekdays = ("સોમવાર", "મંગળવાર", "બુધવાર", "ગુરુવાર", "શુક્રવાર", "શનિવાર", "રવિવાર")
-        months = (
-            "જાન્યુઆરી",
-            "ફેબ્રુઆરી",
-            "માર્ચ",
-            "એપ્રિલ",
-            "મે",
-            "જૂન",
-            "જુલાઈ",
-            "ઑગસ્ટ",
-            "સપ્ટેમ્બર",
-            "ઑક્ટોબર",
-            "નવેમ્બર",
-            "ડિસેમ્બર",
-        )
+    clock = words.clock
+    period = ""
+    if clock is not None:
         period = (
-            "સવારે"
-            if 5 <= local.hour < 12
-            else "બપોરે"
-            if 12 <= local.hour < 17
-            else "સાંજે"
-            if 17 <= local.hour < 20
-            else "રાત્રે"
+            clock.morning
+            if 4 <= local.hour < 12
+            else clock.afternoon
+            if 12 <= local.hour < 16
+            else clock.evening
+            if 16 <= local.hour < 20
+            else clock.night
         )
-        return (
-            f"{weekdays[local.weekday()]}, {local.day} {months[local.month - 1]} "
-            f"{local.year}, {period} {hour}:{local:%M}"
-        )
-    return (
-        f"{local:%a} {local.day} {local:%b}, {hour}:{local:%M} {'AM' if local.hour < 12 else 'PM'}"
+    weekday, month = words.weekdays[local.weekday()], words.months[local.month - 1]
+    return words.clinic_texts["date"].format(
+        weekday=weekday,
+        weekday3=weekday[:3],
+        month=month,
+        month3=month[:3],
+        day=local.day,
+        year=local.year,
+        time12=f"{hour}:{local:%M}",
+        time24=f"{local:%H:%M}",
+        ampm="AM" if local.hour < 12 else "PM",
+        period=period,
     )
 
 

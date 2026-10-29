@@ -1,7 +1,7 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from app.api.dependencies import SessionToken, get_resources
@@ -22,7 +22,14 @@ from app.platform.connections import (
 )
 from app.platform.defaults import DefaultsView, WorkspaceDefaults, WorkspaceDefaultsService
 from app.platform.health import SystemHealth, SystemHealthService
-from app.platform.phones import AssignNumber, PlatformNumber, PlatformPhoneService
+from app.platform.phones import (
+    AssignNumber,
+    AvailableNumber,
+    BuyNumber,
+    FindNumbers,
+    PlatformNumber,
+    PlatformPhoneService,
+)
 from app.platform.policies import PlatformContext, PlatformPermission, require_platform_permission
 from app.platform.tenants import PlatformTenantService, TenantStatusCommand
 from app.platform.workspaces import (
@@ -287,6 +294,30 @@ async def assign_number(
 ) -> PlatformNumber:
     """Give a number to a clinic and point its call webhooks at this application."""
     return await _phones(request, database).assign(context, command)
+
+
+@router.get("/phone-numbers/available")
+async def available_numbers(
+    request: Request,
+    context: PlatformIdentity,
+    database: DatabaseDependency,
+    country: str = "IN",
+    contains: str = "",
+) -> list[AvailableNumber]:
+    """Numbers the platform's phone account can buy, with their monthly price."""
+    try:
+        query = FindNumbers(country=country.upper(), contains=contains)
+    except ValueError:
+        raise HTTPException(422, "Use a two-letter country code and digits only") from None
+    return await _phones(request, database).available(context, query)
+
+
+@router.post("/phone-numbers/purchase", status_code=201)
+async def buy_number(
+    command: BuyNumber, request: Request, context: PlatformIdentity, database: DatabaseDependency
+) -> PlatformNumber:
+    """Buy a number and give it to a clinic. Billed by the phone service each month."""
+    return await _phones(request, database).buy(context, command)
 
 
 @router.post("/phone-numbers/{number}/address")

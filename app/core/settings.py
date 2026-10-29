@@ -39,6 +39,12 @@ PLATFORM_MANAGED = frozenset(
         "routed_tts_config",
         "routed_tts_secrets",
         "deepgram_api_key",
+        "sarvam_stt_key",
+        "sarvam_stt_model",
+        "sarvam_stream_type",
+        "sarvam_tts_key",
+        "sarvam_tts_model",
+        "sarvam_speaker",
         "deepgram_model",
         "deepgram_language",
         "elevenlabs_api_key",
@@ -132,8 +138,8 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: SecretStr = SecretStr("")
     telephony_public_base_url: str = ""
-    stt_provider: Literal["deepgram", "azure", "language_router"] = "deepgram"
-    tts_provider: Literal["elevenlabs", "azure", "language_router"] = "elevenlabs"
+    stt_provider: Literal["deepgram", "azure", "language_router", "sarvam"] = "deepgram"
+    tts_provider: Literal["elevenlabs", "azure", "language_router", "sarvam"] = "elevenlabs"
     routed_stt_config: dict[str, Any] = Field(default_factory=dict)
     routed_stt_secrets: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
     routed_tts_config: dict[str, Any] = Field(default_factory=dict)
@@ -144,6 +150,14 @@ class Settings(BaseSettings):
     # "multi" follows a caller who mixes languages; set one language code to fix it.
     deepgram_model: str = "flux"
     deepgram_language: str = "multi"
+
+    # Sarvam, for Indian languages: recognition and voice may be saved apart.
+    sarvam_stt_key: SecretStr = Field(default=SecretStr(""), repr=False)
+    sarvam_stt_model: str = "saaras:v3-realtime"
+    sarvam_stream_type: str = "fast"
+    sarvam_tts_key: SecretStr = Field(default=SecretStr(""), repr=False)
+    sarvam_tts_model: str = "bulbul:v3"
+    sarvam_speaker: str = "priya"
 
     # ElevenLabs TTS
     elevenlabs_api_key: SecretStr = SecretStr("")

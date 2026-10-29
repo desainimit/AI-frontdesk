@@ -23,13 +23,13 @@ from app.platform.connections import platform_values
 from app.platform.models import PlatformConnection
 from app.tenants.readiness import _stt_key, _tts_key  # pyright: ignore[reportPrivateUsage]
 from app.voice.factory import (
-    GujaratiVoiceConfigurationError,
+    VoiceLanguageError,
     follows_caller_language,
     platform_stt,
     platform_tts,
     stt_from_connection,
     tts_from_connection,
-    validate_gujarati_voice,
+    validate_voices,
 )
 from app.voice.routing import RoutedSTTProvider, RoutedTTSProvider
 from app.voice.stt.azure import AzureSTTProvider
@@ -95,9 +95,9 @@ async def test_same_call_routes_into_gujarati_and_back_from_audio(
                 },
             )
         locale, text = next(detections)
-        from app.conversation.locales import LOCALES
+        from app.languages import language as registry_language
 
-        locale = "gu-IN" if locale == "gu-IN" else LOCALES[other].speech_locale
+        locale = "gu-IN" if locale == "gu-IN" else registry_language(other).default_locale
         return httpx.Response(
             200, json={"phrases": [{"text": text, "locale": locale, "confidence": 0.97}]}
         )
@@ -296,7 +296,7 @@ def test_platform_profiles_remain_separate_and_tenant_profiles_do_not_mutate_the
     assert isinstance(recognition, RoutedSTTProvider) and isinstance(voice, RoutedTTSProvider)
     assert recognition.azure.region == "centralindia"  # type: ignore[attr-defined]
     assert voice.azure.region == "eastus"  # type: ignore[attr-defined]
-    validate_gujarati_voice(configured, policy("en", "gu"), None, None)
+    validate_voices(configured, policy("en", "gu"), None, None)
     assert follows_caller_language(configured, None)
     assert _stt_key(configured) and _tts_key(configured)
     other = stt_from_connection(
@@ -354,16 +354,16 @@ def test_reports_both_speech_problems_without_blame_on_main_language(settings: S
             "elevenlabs_model_id": "eleven_turbo_v2_5",
         }
     )
-    with pytest.raises(GujaratiVoiceConfigurationError) as error:
-        validate_gujarati_voice(configured, policy("en", "gu"), None, None)
+    with pytest.raises(VoiceLanguageError) as error:
+        validate_voices(configured, policy("en", "gu"), None, None)
     issues = dict(error.value.issues)
     assert set(issues) == {"speech_connections.stt", "speech_connections.tts"}
-    assert "platform recognition" in issues["speech_connections.stt"]
-    assert "multilingual mode does not include Gujarati" in issues["speech_connections.stt"]
-    assert "Eleven v3" in issues["speech_connections.tts"]
+    assert "platform speech recognition" in issues["speech_connections.stt"]
+    assert "cannot understand Gujarati" in issues["speech_connections.stt"]
+    assert "ElevenLabs v3" in issues["speech_connections.tts"]
     # A compatible workspace connection replaces only its own purpose.
-    with pytest.raises(GujaratiVoiceConfigurationError) as error:
-        validate_gujarati_voice(configured, policy("en", "gu"), connection("stt"), None)
+    with pytest.raises(VoiceLanguageError) as error:
+        validate_voices(configured, policy("en", "gu"), connection("stt"), None)
     assert [field for field, _ in error.value.issues] == ["speech_connections.tts"]
 
 

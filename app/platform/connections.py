@@ -225,6 +225,20 @@ def platform_values(
                 deepgram_model=config["model"],
                 deepgram_language=config["language"],
             )
+        elif row.provider == "sarvam" and row.purpose == Purpose.STT:
+            values.update(
+                stt_provider="sarvam",
+                sarvam_stt_key=SecretStr(secrets["api_key"]),
+                sarvam_stt_model=config["model"],
+                sarvam_stream_type=config["stream_type"],
+            )
+        elif row.provider == "sarvam":
+            values.update(
+                tts_provider="sarvam",
+                sarvam_tts_key=SecretStr(secrets["api_key"]),
+                sarvam_tts_model=config["model"],
+                sarvam_speaker=config["speaker"],
+            )
         elif row.provider == "elevenlabs":
             values.update(
                 tts_provider="elevenlabs",

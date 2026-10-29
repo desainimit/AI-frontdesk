@@ -8,18 +8,30 @@ Every move or cancellation also sends a message to the patient's own phone.
 """
 
 import re
+import unicodedata
 from difflib import SequenceMatcher
 
 from app.ai.romanize import latin_fold, sound_fold
+from app.languages import pack
 
 # Not part of a name when said aloud.
 _TITLES = frozenset(
     {"mr", "mrs", "ms", "miss", "dr", "doctor", "shri", "smt", "ji", "sir", "madam"}
 )
-_SPOKEN_DIGITS = {
-    "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "4",
-    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
-}  # fmt: skip
+
+
+def _spoken_digits(language: str) -> dict[str, str]:
+    """Digits as English and the call's language say them ("three", "teen", "ત્રણ").
+
+    Only those two: "um" is "one" in Portuguese and a pause in English.
+    """
+    digits: dict[str, str] = {}
+    for item in (pack("en"), pack(language)):
+        for value, words in enumerate(item.digit_words):
+            digits |= dict.fromkeys(words, str(value))
+    return digits
+
+
 # Close enough to be the same name misheard ("Nimith" for "Nimit").
 SIMILAR = 0.8
 
@@ -64,11 +76,18 @@ def names_match(said: str, on_file: str) -> bool:
     return _close(given[0], filed[0]) and _close(given[-1], filed[-1])
 
 
-def appointment_number(said: str) -> int | None:
-    """The number in "A-3", "a 3", "A three" or "3"; None when there is none."""
-    words = re.findall(r"[a-z]+|\d+", said.casefold())
+def appointment_number(said: str, language: str = "en") -> int | None:
+    """The number in "A-3", "a 3", "A three", "A teen", "A-३" or "3"; None when there
+    is none. Digits of any script count."""
+    spoken = _spoken_digits(language)
+    # Indic vowel signs are not word characters to `\w`; they belong to the word.
+    words = re.findall(r"[\wऀ-૿]+", unicodedata.normalize("NFC", said.casefold()))
     digits = "".join(
-        word if word.isdigit() else _SPOKEN_DIGITS.get(word, "") for word in words if word != "a"
+        "".join(str(unicodedata.decimal(c)) for c in word)
+        if word.isdecimal()
+        else spoken.get(word, "")
+        for word in words
+        if word != "a"
     )
     if not digits or len(digits) > 7:
         return None

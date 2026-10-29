@@ -18,6 +18,7 @@ from app.api.health import router as health_router
 from app.api.integrations import router as integrations_router
 from app.api.knowledge import router as knowledge_router
 from app.api.middleware import RequestTelemetryMiddleware
+from app.api.numbers import router as numbers_router
 from app.api.platform import router as platform_router
 from app.api.postcall import router as postcall_router
 from app.api.settings import router as settings_router
@@ -137,4 +138,5 @@ def create_app(
     app.include_router(settings_router)
     app.include_router(calendar_router)
     app.include_router(assistant_router)
+    app.include_router(numbers_router)
     return app

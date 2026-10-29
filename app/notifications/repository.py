@@ -7,7 +7,6 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.context import RequestContext
-from app.calls.models import PhoneNumber
 from app.notifications.models import OutboundMessage
 
 
@@ -18,14 +17,14 @@ class MessageRepository:
         self._session = session
         self._tenant_id = context.tenant_id
 
-    async def sender_number(self) -> str | None:
-        """The clinic's number texts are sent from, when it has one."""
-        return await self._session.scalar(
-            select(PhoneNumber.number)
-            .where(PhoneNumber.tenant_id == self._tenant_id, PhoneNumber.is_active.is_(True))
-            .order_by(PhoneNumber.created_at)
-            .limit(1)
-        )
+    async def sender_number(
+        self, provider_id: UUID | None = None, location_id: UUID | None = None
+    ) -> str | None:
+        """The clinic's number a text is sent from, when it has one: the provider's own
+        line, else the location's, else the clinic's main number."""
+        from app.calls.numbers import sender_for
+
+        return await sender_for(self._session, self._tenant_id, provider_id, location_id)
 
     async def enqueue(
         self,
@@ -57,6 +56,11 @@ class MessageRepository:
         }
         if available_at is not None:
             values["available_at"] = available_at
+        if channel == "sms":
+            from app.settings.store import load_settings
+
+            service = (await load_settings(self._session, self._tenant_id)).notifications
+            values["messaging_service"] = service.messaging_service_sid or None
         return await self._session.scalar(
             insert(OutboundMessage)
             .values(**values)

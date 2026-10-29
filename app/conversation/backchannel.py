@@ -8,74 +8,11 @@ not a new question.
 import re
 import unicodedata
 
-from app.conversation.locales import base_language
+from app.languages import CODES, all_packs, normalize, pack
 
-_COMMON = {
-    "mm",
-    "mmm",
-    "mhm",
-    "mmhmm",
-    "mm-hmm",
-    "mm-hm",
-    "uh-huh",
-    "uhhuh",
-    "uh",
-    "um",
-    "hmm",
-    "hm",
-    "ah",
-    "oh",
-    "ok",
-    "okay",
-}
-_WORDS: dict[str, set[str]] = {
-    "en": {
-        "yeah",
-        "yes",
-        "yep",
-        "yup",
-        "right",
-        "sure",
-        "alright",
-        "all",
-        "got",
-        "it",
-        "i",
-        "see",
-        "cool",
-        "great",
-        "fine",
-        "good",
-        "uh",
-    },
-    "hi": {
-        "haan",
-        "han",
-        "ha",
-        "ji",
-        "jee",
-        "accha",
-        "acha",
-        "achha",
-        "theek",
-        "thik",
-        "hai",
-        "हाँ",
-        "हां",
-        "जी",
-        "अच्छा",
-        "ठीक",
-        "है",
-        "हम्म",
-    },
-    "gu": {"હા", "હાં", "જી", "બરાબર", "સારું", "હમ્મ", "હં"},
-    "es": {"sí", "si", "vale", "claro", "ajá", "aja", "ya", "bueno"},
-    "fr": {"oui", "ouais", "daccord", "d'accord", "voilà", "bien"},
-    "de": {"ja", "genau", "gut", "klar", "stimmt"},
-    "pt": {"sim", "tá", "ta", "certo", "uhum", "claro", "beleza"},
-}
+_WORDS: dict[str, frozenset[str]] = {code: pack(code).backchannel for code in CODES}
 # Hindi and English are mixed on the same call so often that both always count.
-_ALWAYS = _COMMON | _WORDS["en"] | _WORDS["hi"]
+_ALWAYS = _WORDS["en"] | _WORDS["hi"] | _WORDS["hi-Latn"]
 MAX_WORDS = 3
 
 
@@ -86,66 +23,10 @@ def _words(text: str) -> list[str]:
     return [word.strip(edges) for word in cleaned.split() if word.strip(edges)]
 
 
-# Said to end a call: "bye", "thank you", "you can cut the call", "rakh do".
-_CLOSING = {
-    "bye",
-    "byebye",
-    "bye-bye",
-    "goodbye",
-    "thanks",
-    "thank",
-    "cut",
-    "hang",
-    "disconnect",
-    "namaste",
-    "namaskar",
-    "dhanyavaad",
-    "dhanyawad",
-    "shukriya",
-    "rakh",
-    "rakho",
-    "band",
-    "नमस्ते",
-    "नमस्कार",
-    "धन्यवाद",
-    "शुक्रिया",
-    "रख",
-    "रखो",
-    "बंद",
-    "बाय",
-    "कट",
-    "આવજો",
-    "આભાર",
-    "બાય",
-    "ok",
-    "okay",
-    "theek",
-    "ठीक",
-    "alright",
-    "fine",
-}
-# The caller is not done after all.
-_CARRY_ON = {
-    "wait",
-    "one",
-    "more",
-    "also",
-    "but",
-    "question",
-    "sorry",
-    "ruko",
-    "rukiye",
-    "aur",
-    "ek",
-    "रुको",
-    "रुकिए",
-    "और",
-    "एक",
-    "लेकिन",
-    "પણ",
-    "રાહ",
-    "બીજું",
-}
+# Said to end a call ("bye", "thank you", "you can cut the call", "rakh do"), and the
+# caller not being done after all ("wait", "one more"), in any language.
+_CLOSING = frozenset[str]().union(*(item.closing for item in all_packs()))
+_CARRY_ON = frozenset[str]().union(*(item.carry_on for item in all_packs()))
 MAX_CLOSING_WORDS = 6
 
 
@@ -162,27 +43,12 @@ def is_closing(text: str, language: str = "en") -> bool:
 
 # The caller is ending the call: "bye", "you can cut the call", "that's all",
 # "phone rakhta hoon". Said with nothing else to ask, it needs no reply but a goodbye.
-_ENDING = re.compile(
-    r"\b(?:bye|bye-bye|goodbye|good bye|cut the call|cut the phone|hang up|disconnect"
-    r"|that'?s all|that is all|that'?s it|nothing else|nothing more|i'?m done"
-    r"|rakh(?:ta|ti|te)? (?:hoon|hu|hun|do|dijiye|rahe)|phone rakh\w*|band kar\w*"
-    r"|bas itna|aur kuch nahi)\b"
-    r"|बाय|फ़ोन रख|फोन रख|रखता हूँ|रखती हूँ|बस इतना|और कुछ नहीं|આવજો|ફોન મૂકું",
-    re.IGNORECASE,
-)
+_ENDING = re.compile("|".join(item.ending for item in all_packs()), re.IGNORECASE)
 # The receptionist's "anything else?", after which "no, thanks" means goodbye.
-_ANYTHING_ELSE = re.compile(
-    r"anything else|kuch aur|कुछ और|બીજું કંઈ|algo más|autre chose|noch etwas|mais alguma",
-    re.IGNORECASE,
-)
+_ANYTHING_ELSE = re.compile("|".join(item.anything_else for item in all_packs()), re.IGNORECASE)
 # All a caller says to "anything else?" when they are done: "no, thanks", "that's all",
 # "nahi bas", "thank you so much".
-_DONE_WORDS = {
-    "no", "nope", "nah", "nahi", "nahin", "thanks", "thank", "you", "so", "much", "very",
-    "that's", "thats", "all", "it", "i'm", "im", "good", "fine", "ok", "okay", "nothing",
-    "else", "bas", "ji", "dhanyavaad", "dhanyawad", "shukriya", "नहीं", "बस", "जी",
-    "धन्यवाद", "शुक्रिया", "ना", "આભાર",
-}  # fmt: skip
+_DONE_WORDS = frozenset[str]().union(*(item.done for item in all_packs()))
 # An explicit goodbye inside a longer request ("I need to cancel, bye") is not one.
 MAX_ENDING_WORDS = 10
 
@@ -208,5 +74,5 @@ def is_backchannel(text: str, language: str = "en") -> bool:
     words = _words(text)
     if not words or len(words) > MAX_WORDS:
         return False
-    known = _ALWAYS | _WORDS.get(base_language(language), set())
+    known = _ALWAYS | _WORDS.get(normalize(language), frozenset())
     return all(word in known for word in words)

@@ -87,6 +87,26 @@ class DeepgramConfig(_Config):
         return self
 
 
+class SarvamRecognitionConfig(_Config):
+    # Saaras: built for Indian languages and Indian English; "fast" answers soonest.
+    model: Literal["saaras:v3-realtime", "saaras:v4"] = "saaras:v3-realtime"
+    stream_type: Literal["fast", "balanced"] = "fast"
+
+
+# Bulbul v3's voices, as Sarvam names them.
+SarvamSpeaker = Literal[
+    "priya", "ritu", "neha", "pooja", "simran", "kavya", "ishita", "shreya", "roopa",
+    "tanya", "shruti", "suhani", "kavitha", "rupali", "shubh", "aditya", "rahul", "rohan",
+    "amit", "dev", "ratan", "varun", "manan", "sumit", "kabir", "aayan", "ashutosh",
+    "advait", "anand", "tarun", "sunny", "mani", "gokul", "vijay", "mohit", "rehan", "soham",
+]  # fmt: skip
+
+
+class SarvamVoiceConfig(_Config):
+    model: Literal["bulbul:v3"] = "bulbul:v3"
+    speaker: SarvamSpeaker = "priya"
+
+
 class AzureSpeechToTextConfig(_Config):
     region: AzureRegion = "eastus"
     language: str = Field(default="en-US", pattern=r"^[a-z]{2,3}-[A-Z]{2}$")
@@ -291,6 +311,7 @@ _SPECS = (
         suffix_field="auth_token",
     ),
     ProviderSpec("deepgram", Purpose.STT, "Deepgram", DeepgramConfig, ApiKeySecrets),
+    ProviderSpec("sarvam", Purpose.STT, "Sarvam", SarvamRecognitionConfig, ApiKeySecrets),
     ProviderSpec(
         "azure_speech",
         Purpose.STT,
@@ -301,6 +322,7 @@ _SPECS = (
         suffix_field="speech_key",
     ),
     ProviderSpec("elevenlabs", Purpose.TTS, "ElevenLabs", ElevenLabsConfig, ApiKeySecrets),
+    ProviderSpec("sarvam", Purpose.TTS, "Sarvam", SarvamVoiceConfig, ApiKeySecrets),
     ProviderSpec(
         "azure_speech",
         Purpose.TTS,

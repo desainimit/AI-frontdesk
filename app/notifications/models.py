@@ -57,5 +57,13 @@ class OutboundMessage(TenantRecord):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # A short code for why it could not be sent; never the provider's own text.
     last_error: Mapped[str | None] = mapped_column(String(40))
+    # A text: the phone service's ID for it, and what it last said about delivery
+    # (sent, delivered, undelivered, failed). "sent" above means handed over.
+    provider_message_id: Mapped[str | None] = mapped_column(String(40))
+    delivery_status: Mapped[str | None] = mapped_column(String(12))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The clinic's Messaging Service (an Indian DLT sender ID, a short code): sent
+    # through it instead of from `sender` when set.
+    messaging_service: Mapped[str | None] = mapped_column(String(34))
     appointment_id: Mapped[UUID | None]
     dedupe_key: Mapped[str] = mapped_column(String(120))

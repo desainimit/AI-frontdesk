@@ -8,25 +8,17 @@ receptionist waits a moment for the rest instead of answering the fragment.
 
 import re
 
-_ENGLISH = {
-    "a", "an", "the", "to", "for", "of", "and", "or", "but", "with", "my", "your", "his",
-    "her", "our", "their", "about", "from", "at", "by", "because", "if", "than", "into",
-    "i", "i'm", "we're", "it's", "there's", "very", "um", "uh", "er", "erm", "like",
-}  # fmt: skip
-_HINDI = {
-    "aur", "ki", "ke", "ka", "ko", "se", "mein", "par", "toh", "lekin", "kyunki",
-    "agar", "matlab", "jo", "ek", "और", "कि", "के", "की", "का", "को", "से", "में", "पर",
-    "तो", "लेकिन", "या", "क्योंकि", "अगर", "मतलब", "जो", "एक",
-}  # fmt: skip
-# Callers mix languages within a sentence, so both lists apply whatever the call's
-# language ("ya" is left out: in English it is "yeah").
-_WORDS = _ENGLISH | _HINDI
+from app.languages import pack
+
+# Callers mix languages within a sentence, so English and Hindi words always count
+# besides the call's own language ("ya" is left out: in English it is "yeah").
+_ALWAYS = pack("en").unfinished | pack("hi").unfinished | pack("hi-Latn").unfinished
 # "I was thinking...", "so, um," or "and -": trailing off, not finished.
 _TRAILING = re.compile(r"(?:\.\.\.|…|,|-|—)\s*$")
-_LAST_WORD = re.compile(r"([\w'ऀ-ॿ]+)[\s\"')\]]*$")
+_LAST_WORD = re.compile(r"([\w'ऀ-ॿ઀-૿]+)[\s\"')\]]*$")
 
 
-def sounds_unfinished(text: str) -> bool:
+def sounds_unfinished(text: str, language: str = "en") -> bool:
     text = text.strip()
     if not text or text.endswith(("?", "!", "?")):
         return False
@@ -35,4 +27,4 @@ def sounds_unfinished(text: str) -> bool:
     match = _LAST_WORD.search(text.rstrip(".।"))
     if match is None:
         return False
-    return match[1].lower() in _WORDS
+    return match[1].lower() in _ALWAYS | pack(language).unfinished

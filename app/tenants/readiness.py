@@ -29,9 +29,9 @@ from app.settings.store import load_settings
 from app.tenants.models import Tenant
 from app.users.models import User
 from app.voice.factory import (
-    GujaratiVoiceConfigurationError,
     SpeechProfile,
-    validate_gujarati_voice,
+    VoiceLanguageError,
+    validate_voices,
 )
 
 
@@ -201,17 +201,31 @@ class TenantReadinessService:
                 )
             )
         configuration = await load_settings(session, tenant_id)
+        notices = configuration.notifications
+        if notices.confirmations_enabled or notices.reminders_enabled:
+            # Confirmations and reminders also go out by email: without an email server
+            # they would fail one by one, unseen, after the clinic went live.
+            checks.append(
+                _ready("email")
+                if settings.mail_enabled
+                else _blocking(
+                    "email",
+                    "Appointment emails cannot be sent: no email server is set up.",
+                    "Ask your platform administrator to connect the email server, or turn "
+                    "confirmations and reminders off under Notifications.",
+                )
+            )
         if configuration.calls.enabled:
             stt = integrations.get((Purpose.STT, "primary"))
             tts = integrations.get((Purpose.TTS, "primary"))
             try:
-                validate_gujarati_voice(
+                validate_voices(
                     settings,
                     configuration.receptionist.languages,
                     SpeechProfile(stt.provider, stt.config) if stt is not None else None,
                     SpeechProfile(tts.provider, tts.config) if tts is not None else None,
                 )
-            except GujaratiVoiceConfigurationError as failure:
+            except VoiceLanguageError as failure:
                 checks.append(
                     _blocking(
                         "speech_languages",

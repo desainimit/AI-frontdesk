@@ -40,6 +40,7 @@ from app.ai.tools.toolbox import build_tools
 from app.ai.wording import spoken
 from app.api.tenancy import Context, Cursor, DatabaseDependency, Limit, Since, Until
 from app.calls.access import CallPatientAccess, IssuePatientAccess, PatientAccessCode
+from app.calls.numbers import Line
 from app.calls.service import (
     CallBinding,
     CallContext,
@@ -47,7 +48,7 @@ from app.calls.service import (
     CallView,
 )
 from app.conversation import ConversationStateManager, build_conversation_store
-from app.conversation.locales import LOCALES, LanguagePolicy, base_language
+from app.conversation.locales import LanguagePolicy
 from app.conversation.state import CallStatus, ConversationState, SafetyDecision
 from app.conversation.store import ConversationStateStore
 from app.core.database.pages import Page, decode_cursor, page
@@ -62,12 +63,16 @@ from app.integrations.resolver import (
     ResolvedIntegration,
     TenantIntegrationResolver,
 )
+from app.languages import family, known
+from app.languages import language as registry_language
 from app.messaging.recovery import answer_soon
 from app.messaging.service import InboundTexts
+from app.notifications.delivery import record_delivery
 from app.postcall.schemas import PostCallInput
 from app.safety.classifier import LLMSafetyClassifier
 from app.safety.engine import SafetyEngine
 from app.safety.handover_messages import handover_message
+from app.safety.numbers import clinic_country
 from app.safety.transfer import whisper_twiml
 from app.settings.schemas import ClinicConfiguration
 from app.tickets.service import open_ticket
@@ -78,7 +83,7 @@ from app.voice.factory import (
     platform_tts,
     stt_from_connection,
     tts_from_connection,
-    validate_gujarati_voice,
+    validate_voices,
 )
 from app.voice.keyterms import clinic_directory
 from app.voice.metrics import VoiceMetrics
@@ -370,6 +375,41 @@ async def incoming_text(request: Request, database: DatabaseDependency) -> Respo
     )
 
 
+@router.post("/webhooks/v1/twilio/{tenant_id}/messages/{message_id}/status", status_code=204)
+async def text_status(
+    tenant_id: UUID, message_id: UUID, request: Request, database: DatabaseDependency
+) -> Response:
+    """Twilio's report on whether a text reached the phone. Signed by the clinic's own
+    account or the platform's; anything else is refused."""
+    params = await read_form(request)
+    await authenticate_form(
+        request, params, await tenant_candidates(request.app, tenant_id), text=True
+    )
+    status = params.get("MessageStatus", "")
+    if status not in {
+        "accepted",
+        "queued",
+        "sending",
+        "sent",
+        "delivered",
+        "read",
+        "undelivered",
+        "failed",
+    }:
+        # Statuses Twilio adds later are acknowledged and ignored.
+        return Response(status_code=204)
+    error = params.get("ErrorCode", "")
+    await record_delivery(
+        database.session_factory,
+        tenant_id,
+        message_id,
+        params["MessageSid"],
+        status,
+        error if error.isdigit() else None,
+    )
+    return Response(status_code=204)
+
+
 @router.post("/webhooks/v1/twilio/{tenant_id}/{call_id}/status", status_code=204)
 async def stream_status(
     tenant_id: UUID, call_id: UUID, request: Request, database: DatabaseDependency
@@ -553,7 +593,7 @@ async def resolve_call_providers(
         tts_connection = await resolver.active(tenant_id, "tts")
         llm_connection = await resolver.active(tenant_id, "llm")
     if language_policy is not None:
-        validate_gujarati_voice(settings, language_policy, stt_connection, tts_connection)
+        validate_voices(settings, language_policy, stt_connection, tts_connection)
     if stt_connection is None and app.state.stt_provider is None and platform_stt(settings) is None:
         raise IntegrationUnavailableError()
     tts: TextToSpeechProvider | None = (
@@ -584,6 +624,27 @@ async def resolve_call_providers(
     )
 
 
+async def _dialled_line(service: CallService, context: CallContext) -> Line:
+    """Whose line was dialled; the clinic's own when that cannot be read, so a slow or
+    failed lookup never costs the caller their call."""
+    try:
+        async with asyncio.timeout(1.5):
+            return await service.line(context)
+    except Exception:
+        logger.warning("dialled_line_unavailable", extra={"call_id": str(context.call_id)})
+        return Line()
+
+
+def _line_for_model(line: Line) -> dict[str, str] | None:
+    """The dialled line as the receptionist is told it; None for the clinic's own."""
+    told = {
+        key: value
+        for key, value in (("provider", line.provider_name), ("location", line.location_name))
+        if value
+    }
+    return told or None
+
+
 async def caller_name(
     receptionist: CallReceptionist, identity: ContactIdentity, history: CallerHistory
 ) -> str | None:
@@ -597,10 +658,19 @@ async def caller_name(
             if not await identity.recognise(session, state):
                 return None
             name = await history.name(session, state)
+            language = await history.preferred_language(session, state)
     except (TimeoutError, SQLAlchemyError, ApplicationError):
         logger.warning("caller_name_unavailable", extra={"call_id": str(session.conversation_id)})
         return None
     state.caller_name = name or ""
+    # A returning caller is answered in their language from the first word, when the
+    # clinic still offers it; their words can still change it.
+    if (
+        language
+        and known(language)
+        and family(language) in state.language_state.policy.enabled_languages
+    ):
+        state.language_state.establish(language, 0.9)
     return name
 
 
@@ -716,8 +786,11 @@ async def run_media(
             returned.safety_state.decision = SafetyDecision.CONTINUE
             returned.active_flow_state.reset()
 
+        # English in India is recognised and spoken as Indian English, and so on.
+        country = clinic_country(configuration.clinic.phone, configuration.clinic.timezone)
+
         def speech_locale() -> str:
-            return LOCALES[base_language(initial_conv_state.language)].speech_locale
+            return registry_language(initial_conv_state.language).locale(country)
 
         stt = providers.speech_to_text(
             socket.app,
@@ -770,6 +843,7 @@ async def run_media(
                 provider_call_id=sid,
                 contact=caller_number,
                 directory=directory.for_model,
+                line=_line_for_model(await _dialled_line(service, context)),
             ),
             state=initial_conv_state,
             store=conv_store,
@@ -820,14 +894,16 @@ async def run_media(
                         voice_metrics.record_human_transfer("no_answer")
                         await pipeline.speak(handover_message(returned.language, "no_answer"))
                     else:
-                        language = initial_conv_state.language
                         name = await caller_name(receptionist, identity, history)
+                        language = initial_conv_state.language
                         # In a receptionist's order: a caller the clinic trusts by their
                         # number by name, the greeting, that the clinic is closed, and
                         # the greeting's question last.
                         await pipeline.speak_lines(
                             opening(
-                                configuration.receptionist.greeting,
+                                configuration.receptionist.greeting_in(
+                                    language, configuration.clinic.name
+                                ),
                                 hello=spoken(language, "hello_name", name=name) if name else None,
                                 closed=None
                                 if opened_while_open

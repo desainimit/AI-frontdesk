@@ -1,7 +1,8 @@
-"""The emergency and crisis numbers a caller is told, for the country the clinic is in.
+"""The country a clinic is in, and the emergency and crisis numbers a caller is told.
 
-Found from the clinic's own phone number (its country code), or else from its time
-zone. A country not listed gets "your local emergency number" and no crisis line.
+The country is found from the clinic's own phone number (its calling code), or else
+from its time zone. It also picks the accent of the voice (English in India sounds
+Indian). A country not listed gets "your local emergency number" and no crisis line.
 """
 
 from dataclasses import dataclass
@@ -14,33 +15,93 @@ class EmergencyLines:
     crisis: str = ""
 
 
-# Calling code -> (emergency, crisis line).
-_BY_CODE: dict[str, EmergencyLines] = {
+# Calling code -> ISO country.
+_COUNTRIES: dict[str, str] = {
+    "91": "IN",
+    "1": "US",
+    "44": "GB",
+    "61": "AU",
+    "34": "ES",
+    "33": "FR",
+    "49": "DE",
+    "43": "AT",
+    "41": "CH",
+    "351": "PT",
+    "55": "BR",
+    "52": "MX",
+    "39": "IT",
+    "31": "NL",
+    "353": "IE",
+}
+# Country -> (emergency, crisis line). Crisis lines are free national lines open day
+# and night.
+_LINES: dict[str, EmergencyLines] = {
     # India: national emergency number; Tele-MANAS, the national mental health line.
-    "91": EmergencyLines("1 1 2", "1 4 4 1 6"),
+    "IN": EmergencyLines("1 1 2", "1 4 4 1 6"),
     # United States and Canada: 911; the 988 Suicide and Crisis Lifeline.
-    "1": EmergencyLines("9 1 1", "9 8 8"),
-    # United Kingdom: 999; Samaritans.
-    "44": EmergencyLines("9 9 9", "1 1 6, 1 2 3"),
+    "US": EmergencyLines("9 1 1", "9 8 8"),
+    # United Kingdom and Ireland: Samaritans.
+    "GB": EmergencyLines("9 9 9", "1 1 6, 1 2 3"),
+    "IE": EmergencyLines("1 1 2", "1 1 6, 1 2 3"),
     # Australia: Triple Zero; Lifeline.
-    "61": EmergencyLines("0 0 0", "13, 11, 14"),
-    # The European emergency number.
-    **{code: EmergencyLines("1 1 2") for code in ("33", "34", "39", "49", "31", "351", "353")},
+    "AU": EmergencyLines("0 0 0", "13, 11, 14"),
+    # Spain: Línea 024; France: 3114; Germany: TelefonSeelsorge; Portugal: SNS 24.
+    "ES": EmergencyLines("1 1 2", "0 2 4"),
+    "FR": EmergencyLines("1 1 2", "3 1 1 4"),
+    "DE": EmergencyLines("1 1 2", "0 8 0 0, 1 1 1 0, 1 1 1"),
+    "PT": EmergencyLines("1 1 2", "8 0 8, 2 4, 2 4, 2 4"),
+    # Brazil: SAMU 192; CVV 188. Mexico: 911; Línea de la Vida.
+    "BR": EmergencyLines("1 9 2", "1 8 8"),
+    "MX": EmergencyLines("9 1 1", "8 0 0, 9 1 1, 2 0 0 0"),
+    # The European emergency number, and the Netherlands' 113 line.
+    "NL": EmergencyLines("1 1 2", "1 1 3"),
+    "IT": EmergencyLines("1 1 2"),
+    "AT": EmergencyLines("1 1 2"),
+    "CH": EmergencyLines("1 1 2"),
 }
-_BY_ZONE: dict[str, str] = {
-    "Asia/Kolkata": "91",
-    "Asia/Calcutta": "91",
-    "Europe/London": "44",
+_ZONES: dict[str, str] = {
+    "Asia/Kolkata": "IN",
+    "Asia/Calcutta": "IN",
+    "Europe/London": "GB",
+    "Europe/Dublin": "IE",
+    "Europe/Madrid": "ES",
+    "Europe/Paris": "FR",
+    "Europe/Berlin": "DE",
+    "Europe/Vienna": "AT",
+    "Europe/Zurich": "CH",
+    "Europe/Lisbon": "PT",
+    "Europe/Rome": "IT",
+    "Europe/Amsterdam": "NL",
+    "America/Sao_Paulo": "BR",
+    "America/Mexico_City": "MX",
 }
-_ZONE_PREFIX: dict[str, str] = {"America/": "1", "Australia/": "61"}
+# Checked after the exact zones above: most of the Americas' zones are not the US.
+_ZONE_PREFIX: dict[str, str] = {
+    "America/New_York": "US",
+    "America/Chicago": "US",
+    "America/Denver": "US",
+    "America/Los_Angeles": "US",
+    "America/Phoenix": "US",
+    "America/Anchorage": "US",
+    "America/Toronto": "US",
+    "America/Vancouver": "US",
+    "Australia/": "AU",
+}
+
+
+def clinic_country(phone: str, timezone: str) -> str | None:
+    """The clinic's country (ISO 3166 alpha-2), or None when it cannot be told."""
+    digits = phone.lstrip("+") if phone.startswith("+") else ""
+    for size in (3, 2, 1):
+        if digits[:size] in _COUNTRIES:
+            return _COUNTRIES[digits[:size]]
+    if timezone in _ZONES:
+        return _ZONES[timezone]
+    return next(
+        (country for prefix, country in _ZONE_PREFIX.items() if timezone.startswith(prefix)),
+        None,
+    )
 
 
 def emergency_lines(phone: str, timezone: str) -> EmergencyLines:
-    digits = phone.lstrip("+") if phone.startswith("+") else ""
-    for size in (3, 2, 1):
-        if digits[:size] in _BY_CODE:
-            return _BY_CODE[digits[:size]]
-    code = _BY_ZONE.get(timezone) or next(
-        (code for prefix, code in _ZONE_PREFIX.items() if timezone.startswith(prefix)), None
-    )
-    return _BY_CODE.get(code or "", EmergencyLines())
+    return _LINES.get(clinic_country(phone, timezone) or "", EmergencyLines())

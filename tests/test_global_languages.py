@@ -11,9 +11,11 @@ from pydantic import SecretStr, ValidationError
 from app.ai.wording import MESSAGES, spoken
 from app.conversation.confirmation import confirmation_answer
 from app.conversation.language import observe_language
-from app.conversation.locales import LOCALES, LanguagePolicy
+from app.conversation.locales import LanguagePolicy
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConfirmationStatus
+from app.languages import CODES
+from app.languages import language as registry_language
 from app.voice.stt.azure import AzureSTTProvider
 from app.voice.stt.base import TranscriptionResult
 from app.voice.stt.deepgram import DeepgramSTTProvider
@@ -51,7 +53,7 @@ def test_provider_evidence_policy_and_short_replies() -> None:
     english = observe_language("The main entrance is on the left")
     assert english is not None and english.language == "en"
     mixed = observe_language("Mujhe kal appointment chahiye", provider_languages=("hi", "en"))
-    assert mixed is not None and mixed.language == "hinglish" and mixed.code_switching
+    assert mixed is not None and mixed.language == "hi-Latn" and mixed.code_switching
     assert observe_language("Dr Shah", "en") is None
     assert observe_language("12345678", "en") is None
     assert observe_language("yes yes yes", "en") is None
@@ -127,9 +129,9 @@ def test_translation_keys_and_placeholders_match() -> None:
     def placeholders(value: str) -> set[str]:
         return {name for _, name, _, _ in Formatter().parse(value) if name}
 
-    for code in (*LOCALES, "hinglish"):
-        # A sentence may wait for its translation; it is then said in English.
-        assert MESSAGES[code].keys() <= MESSAGES["en"].keys()
+    for code in CODES:
+        # Every language has every line: none is said in English instead.
+        assert MESSAGES[code].keys() == MESSAGES["en"].keys()
         for key, template in MESSAGES[code].items():
             assert placeholders(template) == placeholders(MESSAGES["en"][key])
         booked = spoken(code, "booked", time="10:00", reference="A-7")
@@ -220,7 +222,7 @@ async def test_six_language_speech_requests(code: str, sentence: str) -> None:
         assert [chunk async for chunk in eleven.synthesize(sentence, language=code)]
         assert [chunk async for chunk in azure.synthesize(sentence, language=code)]
     assert json.loads(requests[0].content)["language_code"] == code
-    assert LOCALES[code].azure_voice in requests[1].content.decode()
+    assert registry_language(code).azure_voice() in requests[1].content.decode()
 
 
 async def test_azure_stt_language_is_dynamic_and_call_local() -> None:

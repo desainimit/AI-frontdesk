@@ -108,13 +108,15 @@ async def provision_runtime_role(settings: Settings) -> None:
                 "GRANT SELECT, DELETE ON calendar_busy_blocks, appointment_calendar_links "
                 f"TO {quoted_role}"
             )
-            # The API queues messages and may stop ones not yet sent; the worker sends.
+            # The API queues messages, may stop ones not yet sent, and records what the
+            # phone service reports about delivery; the worker sends.
             await connection.exec_driver_sql(f"REVOKE ALL ON outbound_messages FROM {quoted_role}")
             await connection.exec_driver_sql(
                 f"GRANT SELECT, INSERT ON outbound_messages TO {quoted_role}"
             )
             await connection.exec_driver_sql(
-                f"GRANT UPDATE (status, updated_at) ON outbound_messages TO {quoted_role}"
+                "GRANT UPDATE (status, updated_at, last_error, provider_message_id, "
+                f"delivery_status, delivered_at) ON outbound_messages TO {quoted_role}"
             )
             # Platform provider accounts hold ciphertext only; the keyring is not here.
             await connection.exec_driver_sql(

@@ -11,20 +11,19 @@ import re
 from datetime import UTC, datetime
 
 from app.conversation.state import ConversationState, SafetyDecision
+from app.languages import all_packs
 from app.safety.rules import HUMAN_REQUEST
 from app.settings.schemas import ClinicConfiguration, TransferTarget
 
 OFFER_TURNS = 2
+# "Yes, put me through", in any language.
 _AGREE = re.compile(
-    r"\b(?:put me through|connect me|transfer me|go ahead|yes please|please do|do it|"
-    r"(?:haan|ha|ji)\s+(?:kar|jod|connect)\w*|(?:jod|connect)\s+(?:kar|kijiye|karo|do|dijiye)\w*)\b|"
-    r"(?:जोड़|कनेक्ट)\s*(?:दो|दीजिए|कर\s*दो|कर\s*दीजिए)|જોડી\s*(?:દો|આપો)",
-    re.IGNORECASE,
+    "|".join(item.transfer_agree for item in all_packs() if item.transfer_agree), re.IGNORECASE
 )
 
 # A reply that starts with "no" is a no, whatever follows ("No, can you do it again?").
 _LEADING_NO = re.compile(
-    r"^\W*(?:no|nope|nah|nahi|nahin|na|not now|नहीं|ना|ના)(?![\w\u0900-\u0AFF])",
+    r"^\W*(?:" + "|".join(item.transfer_no for item in all_packs()) + r")(?![\wऀ-૿])",
     re.IGNORECASE,
 )
 

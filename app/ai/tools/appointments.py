@@ -186,7 +186,7 @@ class AppointmentFlow:
             return Outcome(status="too_many_tries", next="offer_to_take_a_message")
         number = None
         if command.appointment_number:
-            number = appointment_number(command.appointment_number)
+            number = appointment_number(command.appointment_number, state.language)
             if number is None:
                 return Outcome(status="unclear_number", next="ask_for_the_appointment_number")
         own_number = identity.is_verified and identity.identifier_type == IdentifierType.PHONE

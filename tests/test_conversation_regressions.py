@@ -81,9 +81,9 @@ def test_language_single_high_confidence_word_and_hinglish_normalization() -> No
     assert language.primary_language == "en"
     language.record_utterance("hi-Latn", 0.9)
     language.record_utterance("hi-Latn", 0.9)
-    assert language.primary_language == "hinglish"
+    assert language.primary_language == "hi-Latn"
     language.record_utterance("en", 0.1, threshold=0.8)
-    assert language.primary_language == "hinglish"
+    assert language.primary_language == "hi-Latn"
 
 
 def test_nested_call_scope_is_validated() -> None:

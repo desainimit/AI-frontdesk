@@ -12,6 +12,7 @@ from app.audit.models import AuditEvent
 from app.auth.context import ActorType, RequestContext
 from app.auth.policies import Permission, require_permission
 from app.calls.models import Call, PhoneNumber
+from app.calls.numbers import Line, line_for
 from app.core.database.rls import set_tenant_scope, verify_runtime_role
 from app.core.errors import AuthorizationError, ConflictError, NotFoundError
 from app.postcall.models import CallTranscript
@@ -59,6 +60,19 @@ class CallBinding:
 RESUME_WITHIN = timedelta(minutes=3)
 
 
+async def _line_location(session: AsyncSession, phone: PhoneNumber) -> UUID | None:
+    """The location a number serves: its own, or that of its provider."""
+    if phone.location_id is not None or phone.provider_id is None:
+        return phone.location_id
+    from app.providers.models import Provider
+
+    return await session.scalar(
+        select(Provider.location_id).where(
+            Provider.tenant_id == phone.tenant_id, Provider.id == phone.provider_id
+        )
+    )
+
+
 def audit(session: AsyncSession, context: CallContext, action: str) -> None:
     session.add(
         AuditEvent(
@@ -87,7 +101,9 @@ class CallService:
                 text("SELECT set_config('app.inbound_number', :n, true)"), {"n": number}
             )
             return await session.scalar(
-                select(PhoneNumber.tenant_id).where(PhoneNumber.number == number)
+                select(PhoneNumber.tenant_id).where(
+                    PhoneNumber.number == number, PhoneNumber.is_active.is_(True)
+                )
             )
 
     async def binding(self, tenant_id: UUID, call_id: UUID) -> CallBinding | None:
@@ -142,6 +158,8 @@ class CallService:
                     id=uuid4(),
                     tenant_id=phone.tenant_id,
                     phone_number_id=phone.id,
+                    # The line's location, so the call is the location's from the start.
+                    location_id=await _line_location(session, phone),
                     provider_call_id=sid,
                     integration_id=pinned.integration_id,
                     credential_version_id=pinned.credential_version_id,
@@ -160,6 +178,18 @@ class CallService:
             ):
                 raise ConflictError("Call is no longer awaiting a stream")
             return CallContext(call.tenant_id, call.id, sid, request_id)
+
+    async def line(self, context: CallContext) -> Line:
+        """Whose line the call came in on: a provider's, a location's or the clinic's."""
+        async with self.sessions.begin() as session:
+            await verify_runtime_role(session)
+            await set_tenant_scope(session, context.tenant_id)
+            phone_id = await session.scalar(
+                select(Call.phone_number_id).where(
+                    Call.tenant_id == context.tenant_id, Call.id == context.call_id
+                )
+            )
+            return await line_for(session, context.tenant_id, phone_id) if phone_id else Line()
 
     async def settings(self, context: CallContext) -> ClinicConfiguration:
         """The clinic's settings as this call starts; the call keeps them until it ends."""
@@ -296,7 +326,17 @@ class CallService:
             await session.execute(
                 text("SELECT set_config('app.inbound_number', :n, true)"), {"n": number}
             )
-            phone = await session.scalar(select(PhoneNumber).where(PhoneNumber.number == number))
+            # A status for a call that began before the number was released and given
+            # to another clinic still belongs to the old row: the call decides.
+            call_number = (
+                select(Call.phone_number_id).where(Call.provider_call_id == sid).scalar_subquery()
+            )
+            phone = await session.scalar(
+                select(PhoneNumber)
+                .where(PhoneNumber.number == number)
+                .order_by((PhoneNumber.id == call_number).desc(), PhoneNumber.is_active.desc())
+                .limit(1)
+            )
             if phone is None:
                 raise NotFoundError()
             await set_tenant_scope(session, phone.tenant_id)

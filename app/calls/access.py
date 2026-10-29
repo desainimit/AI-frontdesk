@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import secrets
+import unicodedata
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
@@ -38,8 +39,9 @@ class PatientAccessCode(BaseModel):
 
 
 def normalize_access_code(value: str) -> str:
-    """Gujarati decimal digits denote the same code; length and syntax stay strict."""
-    return value.translate(str.maketrans("૦૧૨૩૪૫૬૭૮૯", "0123456789"))
+    """Digits of any script (Devanagari ३, Gujarati ૩) denote the same code; length
+    and syntax stay strict."""
+    return "".join(str(unicodedata.decimal(c)) if c.isdecimal() else c for c in value)
 
 
 class IdentifyPatient(BaseModel):

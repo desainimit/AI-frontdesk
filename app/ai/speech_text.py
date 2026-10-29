@@ -89,7 +89,7 @@ def speakable(text: str, language: str | None = None) -> str:
     code = normalize_language(language or "en")
     text = _REFERENCE.sub(lambda match: "A, " + " ".join(match[1]), text)
     text = _DIGITS.sub(_digits, text)
-    if code in {"en", "hinglish"}:
+    if code in {"en", "hi-Latn"}:
         text = _TIME.sub(_time, text).replace(".m..", ".m.")
         text = _TITLES.sub(lambda match: _TITLE_WORDS[match[1]] + " ", text)
         text = text.replace(" & ", " and ")

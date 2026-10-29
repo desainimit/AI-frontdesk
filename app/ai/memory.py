@@ -121,6 +121,20 @@ class CallerHistory:
             )
         return first_name(name or "")
 
+    async def preferred_language(self, session: Session, state: ConversationState) -> str | None:
+        """The language on file for the patient this number belongs to, to answer a
+        returning caller in it from the first word. Off with remember_callers."""
+        patient_id = state.identity_state.patient_id
+        if patient_id is None or not session.configuration.privacy.remember_callers:
+            return None
+        async with self._sessions.begin() as database:
+            await enter_tenant_scope(database, session.request(state))
+            return await database.scalar(
+                select(Patient.language).where(
+                    Patient.tenant_id == session.tenant_id, Patient.id == patient_id
+                )
+            )
+
     async def load(self, session: Session, state: ConversationState) -> str:
         """A few lines about this person's last calls and coming appointments; empty
         when there is nothing to tell or the clinic turned this off."""

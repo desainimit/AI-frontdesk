@@ -58,10 +58,10 @@ def test_the_caller_switching_or_asking_is_followed() -> None:
 def test_hindi_and_hinglish_are_one_language_for_a_call() -> None:
     state = fresh()
     say(state, "Mujhe kal ka appointment chahiye")
-    assert state.language == "hinglish"
+    assert state.language == "hi-Latn"
     say(state, "मुझे सुबह का समय चाहिए")
     say(state, "दस बजे का ठीक रहेगा")
-    assert state.language == "hinglish"
+    assert state.language == "hi-Latn"
 
 
 @pytest.mark.parametrize(

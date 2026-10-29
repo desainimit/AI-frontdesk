@@ -1,7 +1,17 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKeyConstraint, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    UniqueConstraint,
+    false,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database.domain import TenantRecord
@@ -21,12 +31,53 @@ class PhoneNumber(TenantRecord):
             "provider_number_sid IS NULL OR provider_number_sid ~ '^PN[0-9a-fA-F]{32}$'",
             name="provider_number_sid",
         ),
+        # A released number keeps its row for the call history; the same number can then
+        # serve another clinic, under a row of its own.
+        Index(
+            "uq_phone_numbers_active_number",
+            "number",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
+        # One number per provider, and one main number per clinic.
+        Index(
+            "uq_phone_numbers_provider",
+            "tenant_id",
+            "provider_id",
+            unique=True,
+            postgresql_where=text("provider_id IS NOT NULL AND is_active"),
+        ),
+        Index(
+            "uq_phone_numbers_main",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("is_main AND is_active"),
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "location_id"],
+            ["locations.tenant_id", "locations.id"],
+            name="fk_phone_numbers_location",
+            ondelete="SET NULL (location_id)",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "provider_id"],
+            ["providers.tenant_id", "providers.id"],
+            name="fk_phone_numbers_provider",
+            ondelete="SET NULL (provider_id)",
+        ),
     )
-    number: Mapped[str] = mapped_column(String(16), unique=True)
+    number: Mapped[str] = mapped_column(String(16))
     is_active: Mapped[bool] = mapped_column(default=True)
     # Set when ownership was proven against the tenant's own provider connection.
     integration_id: Mapped[UUID | None]
     provider_number_sid: Mapped[str | None] = mapped_column(String(34))
+    # Set by the clinic: what the number is called and whose line it is. A provider's
+    # number is also its location's; neither set, the number is the whole clinic's.
+    label: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    location_id: Mapped[UUID | None]
+    provider_id: Mapped[UUID | None]
+    # The clinic's main number: texts go out from it when no line is more specific.
+    is_main: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
 
 class Call(TenantRecord):

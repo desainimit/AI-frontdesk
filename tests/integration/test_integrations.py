@@ -71,6 +71,10 @@ def integration_settings(base: Settings, **overrides: object) -> Settings:
             "telephony_public_base_url": "https://voice.example.test",
             "twilio_account_sid": "",
             "twilio_auth_token": SecretStr(""),
+            # Appointment emails need an email server before a clinic can go live; no
+            # mail is sent here.
+            "smtp_host": "127.0.0.1",
+            "smtp_sender": "clinic@example.test",
             **overrides,
         }
     )
@@ -676,6 +680,7 @@ async def test_two_twilio_accounts_route_to_two_tenants_over_http(
             "elevenlabs",
             "gemini",
             "openrouter",
+            "sarvam",
         }
         readiness = await client.get("/api/v1/tenants/current/readiness", headers=headers)
         assert readiness.status_code == 200 and readiness.json()["ready"] is True

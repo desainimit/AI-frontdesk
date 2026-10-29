@@ -10,16 +10,19 @@ from typing import Any
 
 from pydantic import SecretStr
 
-from app.conversation.locales import LOCALES, LanguagePolicy
+from app.conversation.locales import LanguagePolicy
 from app.core.settings import Settings, SpeakingSpeed
 from app.integrations.resolver import IntegrationUnavailableError, ResolvedIntegration
+from app.languages import language as registry_language
 from app.voice.routing import RoutedSTTProvider, RoutedTTSProvider
 from app.voice.stt.azure import AzureSTTProvider
 from app.voice.stt.base import SpeechToTextProvider
 from app.voice.stt.deepgram import DeepgramSTTProvider
+from app.voice.stt.sarvam import SarvamSTTProvider
 from app.voice.tts.azure import AzureTTSProvider
 from app.voice.tts.base import TextToSpeechProvider
 from app.voice.tts.elevenlabs import ElevenLabsTTSProvider
+from app.voice.tts.sarvam import SarvamTTSProvider
 
 LanguageResolver = Callable[[], str]
 
@@ -32,8 +35,8 @@ class SpeechProfile:
     config: Mapping[str, Any]
 
 
-class GujaratiVoiceConfigurationError(IntegrationUnavailableError):
-    code = "gujarati_voice_not_ready"
+class VoiceLanguageError(IntegrationUnavailableError):
+    code = "voice_languages_not_ready"
     public_message = "The speech connections do not support the selected languages."
 
     def __init__(self, issues: list[tuple[str, str]]) -> None:
@@ -42,74 +45,120 @@ class GujaratiVoiceConfigurationError(IntegrationUnavailableError):
         super().__init__(self.public_message)
 
 
-def validate_gujarati_voice(
+# What Deepgram Nova 3 understands in its multilingual mode.
+_NOVA_MULTI = frozenset({"en", "es", "fr", "de", "hi", "pt"})
+
+
+def _understands(provider: str, config: Mapping[str, Any], code: str, alone: bool) -> bool:
+    entry = registry_language(code)
+    if provider in {"azure", "azure_speech", "language_router"}:
+        return True
+    if provider == "sarvam":
+        return entry.sarvam is not None
+    if provider == "deepgram":
+        language = str(config.get("language") or "multi")
+        if language != "multi":
+            # One fixed language: right only for a clinic speaking just that one, and
+            # Gujarati only on Nova 3.
+            model_ok = language != "gu" or str(config.get("model") or "") == "nova-3"
+            return alone and model_ok and language == entry.family
+        if str(config.get("model") or "") == "flux":
+            return entry.flux
+        return entry.family in _NOVA_MULTI
+    return False
+
+
+def _speaks(provider: str, config: Mapping[str, Any], code: str) -> bool:
+    entry = registry_language(code)
+    if provider in {"azure", "azure_speech"}:
+        return True
+    if provider == "language_router":
+        # Gujarati goes to Azure; every other language to the ElevenLabs voice.
+        return entry.family == "gu" or str(config.get("model_id")) in entry.elevenlabs_models
+    if provider == "elevenlabs":
+        return str(config.get("model_id")) in entry.elevenlabs_models
+    if provider == "sarvam":
+        return entry.sarvam is not None
+    return False
+
+
+def validate_voices(
     settings: Settings,
     policy: LanguagePolicy,
     stt: ResolvedIntegration | SpeechProfile | None,
     tts: ResolvedIntegration | SpeechProfile | None,
 ) -> None:
-    """Check speech capabilities, independently of the tenant's main language."""
-    spoken_languages = (
+    """Every language the clinic offers can be understood and spoken by the speech
+    connections in use, the clinic's own or the platform's. Raises VoiceLanguageError
+    with one plain reason per connection that cannot."""
+    spoken = sorted(
         set(policy.enabled_languages) if policy.auto_detect else {policy.default_language}
     )
-    if "gu" not in spoken_languages:
-        return
     stt_provider = stt.provider if stt else settings.stt_provider
+    stt_config: Mapping[str, Any] = (
+        stt.config
+        if stt
+        else {"model": settings.deepgram_model, "language": settings.deepgram_language}
+    )
     tts_provider = tts.provider if tts else settings.tts_provider
-    tts_model = tts.config.get("model_id") if tts else settings.elevenlabs_model_id
+    tts_config: Mapping[str, Any] = (
+        tts.config if tts else {"model_id": settings.elevenlabs_model_id}
+    )
+    unheard = [
+        code
+        for code in spoken
+        if not _understands(stt_provider, stt_config, code, len(spoken) == 1)
+    ]
+    unspoken = [code for code in spoken if not _speaks(tts_provider, tts_config, code)]
     issues: list[tuple[str, str]] = []
-    stt_source = "workspace" if stt else "platform"
-    tts_source = "workspace" if tts else "platform"
-    if tts_provider not in {"azure", "azure_speech", "language_router"} and not (
-        tts_provider == "elevenlabs" and tts_model == "eleven_v3"
-    ):
+
+    def names(codes: list[str]) -> str:
+        return ", ".join(registry_language(code).name for code in codes)
+
+    def indian(codes: list[str]) -> bool:
+        return all(registry_language(code).sarvam for code in codes)
+
+    if unheard:
+        source = "clinic's own" if stt else "platform"
+        better = "Sarvam or Azure Speech" if indian(unheard) else "Deepgram Flux or Azure Speech"
+        issues.append(
+            (
+                "speech_connections.stt",
+                f"The {source} speech recognition connection cannot understand "
+                f"{names(unheard)}. Choose {better} for speech recognition, or stop "
+                "offering that language.",
+            )
+        )
+    if unspoken:
+        source = "clinic's own" if tts else "platform"
+        better = (
+            "Sarvam, Azure Speech or ElevenLabs v3"
+            if indian(unspoken)
+            else "Azure Speech or ElevenLabs"
+        )
         issues.append(
             (
                 "speech_connections.tts",
-                f"The {tts_source} voice connection does not support Gujarati. "
-                "For ElevenLabs, select Eleven v3; or use Azure Speech or "
-                "Automatic: ElevenLabs + Azure Speech in the voice connection settings.",
+                f"The {source} voice connection cannot speak {names(unspoken)}. "
+                f"Choose {better} for the voice, or stop offering that language.",
             )
         )
-    model = stt.config.get("model") if stt else settings.deepgram_model
-    language = stt.config.get("language") if stt else settings.deepgram_language
-    if stt_provider not in {"azure", "azure_speech", "language_router"}:
-        if len(spoken_languages) > 1:
-            issues.append(
-                (
-                    "speech_connections.stt",
-                    f"The {stt_source} recognition connection cannot automatically "
-                    "switch to Gujarati. "
-                    "Deepgram Nova 3 supports Gujarati with language=gu, but its multilingual mode "
-                    "does not include Gujarati. Choose Automatic: Deepgram + Azure Speech "
-                    "with Gujarati recognition set to Deepgram Nova 3, or Azure Speech. "
-                    "Your main language can stay unchanged.",
-                )
-            )
-        elif stt_provider != "deepgram" or model != "nova-3" or language != "gu":
-            issues.append(
-                (
-                    "speech_connections.stt",
-                    f"Set the {stt_source} recognition connection to Deepgram Nova 3 with "
-                    "recognition language Gujarati, Azure Speech, or "
-                    "Automatic: Deepgram + Azure Speech.",
-                )
-            )
     if issues:
-        raise GujaratiVoiceConfigurationError(issues)
+        raise VoiceLanguageError(issues)
 
 
 def recognition_locales(policy: LanguagePolicy | None) -> tuple[str, ...]:
     """Audio candidates are call-local and include only tenant-enabled languages."""
     if policy is None or not policy.auto_detect or len(policy.enabled_languages) < 2:
         return ()
-    return tuple(LOCALES[code].speech_locale for code in policy.enabled_languages)
+    return tuple(registry_language(code).default_locale for code in policy.enabled_languages)
 
 
 def _routed_stt(
     config: Mapping[str, Any],
     secrets: Mapping[str, SecretStr],
     policy: LanguagePolicy | None,
+    keyterms: tuple[str, ...] = (),
 ) -> RoutedSTTProvider:
     # Provider instances and locale candidates belong to this call only.
     language = policy.default_language if policy else str(config["language"]).split("-")[0]
@@ -119,16 +168,23 @@ def _routed_stt(
         AzureSTTProvider(
             speech_key=secrets["speech_key"],
             region=str(config["region"]),
-            language=LOCALES[language].speech_locale,
+            language=registry_language(language).default_locale,
             candidate_languages=recognition_locales(policy),
         ),
         DeepgramSTTProvider(
             api_key=secrets["deepgram_api_key"],
             model="nova-3",
             language="multi" if auto else language,
+            # The names a caller is likely to say, as on a single-provider call.
+            keyterms=keyterms,
         ),
         gujarati=(
-            DeepgramSTTProvider(api_key=secrets["deepgram_api_key"], model="nova-3", language="gu")
+            DeepgramSTTProvider(
+                api_key=secrets["deepgram_api_key"],
+                model="nova-3",
+                language="gu",
+                keyterms=keyterms,
+            )
             if config.get("gujarati_recognition", "deepgram") == "deepgram"
             else None
         ),
@@ -154,6 +210,15 @@ def _routed_tts(
     )
 
 
+def _sarvam_language(policy: LanguagePolicy | None) -> str | None:
+    """The one language Sarvam listens for, or None to let it tell which Indian language
+    is spoken (a clinic offering several)."""
+    if policy is None:
+        return None
+    spoken = set(policy.enabled_languages) if policy.auto_detect else {policy.default_language}
+    return policy.default_language if len(spoken) == 1 else None
+
+
 def _hints(policy: LanguagePolicy | None) -> tuple[str, ...]:
     return tuple(policy.enabled_languages) if policy is not None else ()
 
@@ -167,7 +232,7 @@ def stt_from_connection(
 ) -> SpeechToTextProvider:
     config = connection.config
     if connection.provider == "language_router":
-        return _routed_stt(config, connection.secrets, language_policy)
+        return _routed_stt(config, connection.secrets, language_policy, keyterms)
     if connection.provider == "deepgram":
         return DeepgramSTTProvider(
             api_key=connection.secret("api_key"),
@@ -175,6 +240,13 @@ def stt_from_connection(
             language=str(config["language"]),
             keyterms=keyterms,
             language_hints=_hints(language_policy),
+        )
+    if connection.provider == "sarvam":
+        return SarvamSTTProvider(
+            connection.secret("api_key"),
+            str(config["model"]),
+            _sarvam_language(language_policy),
+            stream_type=str(config["stream_type"]),
         )
     if connection.provider == "azure_speech":
         return AzureSTTProvider(
@@ -198,6 +270,13 @@ def tts_from_connection(
             api_key=connection.secret("api_key"),
             default_voice_id=str(config["voice_id"]),
             model_id=str(config["model_id"]),
+            speed=settings.speaking_speed,
+        )
+    if connection.provider == "sarvam":
+        return SarvamTTSProvider(
+            connection.secret("api_key"),
+            model=str(config["model"]),
+            speaker=str(config["speaker"]),
             speed=settings.speaking_speed,
         )
     if connection.provider == "azure_speech":
@@ -224,9 +303,16 @@ def platform_stt(
             for name in ("speech_key", "deepgram_api_key")
         ):
             return _routed_stt(
-                settings.routed_stt_config, settings.routed_stt_secrets, language_policy
+                settings.routed_stt_config, settings.routed_stt_secrets, language_policy, keyterms
             )
         return None
+    if settings.stt_provider == "sarvam" and settings.sarvam_stt_key.get_secret_value():
+        return SarvamSTTProvider(
+            settings.sarvam_stt_key,
+            settings.sarvam_stt_model,
+            _sarvam_language(language_policy),
+            stream_type=settings.sarvam_stream_type,
+        )
     if settings.stt_provider == "deepgram" and settings.deepgram_api_key.get_secret_value():
         return DeepgramSTTProvider(
             api_key=settings.deepgram_api_key,
@@ -266,6 +352,13 @@ def platform_tts(settings: Settings) -> TextToSpeechProvider | None:
                 settings.routed_tts_config, settings.routed_tts_secrets, settings.speaking_speed
             )
         return None
+    if settings.tts_provider == "sarvam" and settings.sarvam_tts_key.get_secret_value():
+        return SarvamTTSProvider(
+            settings.sarvam_tts_key,
+            model=settings.sarvam_tts_model,
+            speaker=settings.sarvam_speaker,
+            speed=settings.speaking_speed,
+        )
     if settings.tts_provider == "elevenlabs" and settings.elevenlabs_api_key.get_secret_value():
         return ElevenLabsTTSProvider(
             api_key=settings.elevenlabs_api_key,

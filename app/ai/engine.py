@@ -440,7 +440,12 @@ class Engine:
                         yield done("confirmation")
                         return
                     if call.name == "get_knowledge" and result.get("status") == "not_found":
-                        yield say(session.configuration.receptionist.unknown_answer)
+                        configured = session.configuration
+                        yield say(
+                            configured.receptionist.unknown_answer_in(
+                                state.language, configured.clinic.name
+                            )
+                        )
                         yield done("answered")
                         return
             raise ToolValidationError("Step budget exhausted")

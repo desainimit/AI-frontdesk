@@ -35,11 +35,11 @@ from app.safety.normalization import normalize_transcript
 from app.safety.rules import deterministic_rule
 from app.settings.defaults import default_settings
 from app.voice.factory import (
-    GujaratiVoiceConfigurationError,
+    VoiceLanguageError,
     platform_stt,
     recognition_locales,
     stt_from_connection,
-    validate_gujarati_voice,
+    validate_voices,
 )
 from app.voice.pipeline import VoicePipeline
 from app.voice.stt.azure import AzureSTTProvider
@@ -90,21 +90,21 @@ def test_automatic_gujarati_provider_capability_depends_on_providers_not_main_la
 ) -> None:
     config = settings.model_copy(update={"stt_provider": "azure", "tts_provider": "azure"})
     policy = multilingual_policy()
-    validate_gujarati_voice(config, policy, None, None)
+    validate_voices(config, policy, None, None)
     eleven = config.model_copy(
         update={"tts_provider": "elevenlabs", "elevenlabs_model_id": "eleven_v3"}
     )
-    validate_gujarati_voice(eleven, policy, None, None)
+    validate_voices(eleven, policy, None, None)
     assert ElevenLabsConfig(model_id="eleven_v3").model_id == "eleven_v3"
-    with pytest.raises(GujaratiVoiceConfigurationError):
-        validate_gujarati_voice(
+    with pytest.raises(VoiceLanguageError):
+        validate_voices(
             config.model_copy(update={"stt_provider": "deepgram", "deepgram_language": "multi"}),
             policy,
             None,
             None,
         )
     # An optional disabled language must not block fixed English calls.
-    validate_gujarati_voice(settings, policy.model_copy(update={"auto_detect": False}), None, None)
+    validate_voices(settings, policy.model_copy(update={"auto_detect": False}), None, None)
 
 
 def test_recognition_candidate_lists_are_call_local(settings: Settings) -> None:
@@ -352,18 +352,16 @@ def test_gujarati_provider_configuration_validation(settings: Settings) -> None:
             "tts_provider": "azure",
         }
     )
-    validate_gujarati_voice(config, gujarati_policy(), None, None)
+    validate_voices(config, gujarati_policy(), None, None)
     for overrides in (
         {"deepgram_language": "multi"},
         {"deepgram_model": "nova-2"},
         {"tts_provider": "elevenlabs"},
     ):
-        with pytest.raises(GujaratiVoiceConfigurationError):
-            validate_gujarati_voice(
-                config.model_copy(update=overrides), gujarati_policy(), None, None
-            )
-    with pytest.raises(GujaratiVoiceConfigurationError):
-        validate_gujarati_voice(
+        with pytest.raises(VoiceLanguageError):
+            validate_voices(config.model_copy(update=overrides), gujarati_policy(), None, None)
+    with pytest.raises(VoiceLanguageError):
+        validate_voices(
             config,
             LanguagePolicy(default_language="gu", enabled_languages=["gu", "hi"]),
             None,
@@ -473,10 +471,10 @@ def test_effective_tenant_providers_override_platform_and_do_not_mutate_it(
         {"region": "eastus", "voice": "en-US-JennyNeural", "hindi_voice": "hi-IN-SwaraNeural"},
         {"speech_key": SecretStr("test")},
     )
-    validate_gujarati_voice(config, gujarati_policy(), stt, tts)
+    validate_voices(config, gujarati_policy(), stt, tts)
     assert config.stt_provider == "deepgram" and config.tts_provider == "elevenlabs"
-    with pytest.raises(GujaratiVoiceConfigurationError):
-        validate_gujarati_voice(config, gujarati_policy(), stt, None)
+    with pytest.raises(VoiceLanguageError):
+        validate_voices(config, gujarati_policy(), stt, None)
 
 
 async def test_gujarati_speech_http_contracts_and_unsupported_voice() -> None:

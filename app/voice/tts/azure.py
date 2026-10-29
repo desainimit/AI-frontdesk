@@ -5,8 +5,9 @@ from xml.sax.saxutils import escape, quoteattr
 import httpx
 from pydantic import SecretStr
 
-from app.conversation.locales import LOCALES, base_language
 from app.core.settings import SpeakingSpeed
+from app.languages import known
+from app.languages import language as registry_language
 from app.voice.http import retry_after_seconds
 from app.voice.tts.base import (
     TTSPermanentError,
@@ -71,15 +72,17 @@ class AzureTTSProvider:
         if not text.strip():
             return
 
-        code = base_language(language) if language else "en"
-        if code not in LOCALES:
+        if language and not known(language):
             raise TTSPermanentError("No speech voice is configured for this language")
+        entry = registry_language(language or "en")
+        # The connection's own voices for English and Hindi; the registry's natural
+        # voice for every other language, in the accent of the English voice's country.
         selected_voice = (
             self.default_voice
-            if code == "en"
+            if entry.family == "en"
             else self.hindi_voice
-            if code == "hi"
-            else LOCALES[code].azure_voice
+            if entry.family == "hi"
+            else entry.azure_voice()
         )
         target_voice = voice_id or selected_voice
         match = re.match(r"^([a-z]{2,3}-[A-Z]{2})-", target_voice)

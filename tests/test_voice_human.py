@@ -65,7 +65,7 @@ def test_times_are_said_the_way_people_say_them() -> None:
         return spoken_when(moment, "Asia/Kolkata", language, sunday_night)
 
     assert at(12, 0, "hi") == "कल शाम साढ़े पाँच बजे"
-    assert at(12, 0, "hinglish") == "kal shaam saadhe paanch baje"
+    assert at(12, 0, "hi-Latn") == "kal shaam saadhe paanch baje"
     assert at(12, 0, "en") == "tomorrow at 5:30 p.m."
     assert at(3, 45, "hi") == "कल सुबह सवा नौ बजे"
     assert at(4, 15, "hi") == "कल सुबह पौने दस बजे"

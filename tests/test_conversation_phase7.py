@@ -54,7 +54,7 @@ def test_language_state_stability_and_code_switching() -> None:
     assert lang_state.recent_languages[-1] == "hi"
 
     # Turn 2: Caller uses Hinglish (mixing Hindi and English terms)
-    lang_state.record_utterance("hinglish", confidence=0.85)
+    lang_state.record_utterance("hi-Latn", confidence=0.85)
     assert lang_state.code_switching is True
 
     # Turn 3: Caller uses a single English phrase ("Actually Monday is better")

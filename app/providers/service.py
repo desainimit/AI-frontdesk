@@ -52,6 +52,7 @@ class ProviderService:
             for field, value in command.model_dump().items():
                 setattr(entity, field, value)
             await tx.providers.flush()
+            await tx.providers.follow_lines(entity)
             AuditService(tx.audit).record(
                 context, AuditAction.PROVIDER_UPDATED, "provider", entity.id
             )

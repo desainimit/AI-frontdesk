@@ -54,6 +54,7 @@ class _Claimed:
     body: str
     attempts: int
     lease: UUID
+    messaging_service: str | None = None
 
 
 class MessageDelivery:
@@ -108,6 +109,7 @@ class MessageDelivery:
                 row.body,
                 row.attempts,
                 lease,
+                row.messaging_service,
             )
 
     async def _send_email(self, message: _Claimed) -> None:
@@ -121,7 +123,8 @@ class MessageDelivery:
         except (smtplib.SMTPException, OSError):
             raise TransientProviderError() from None
 
-    async def _send_sms(self, message: _Claimed) -> None:
+    async def _send_sms(self, message: _Claimed) -> str | None:
+        """Hand a text to the phone service; its ID for the text, when it gives one."""
         connection = await self._resolver.active(message.tenant_id, "telephony")
         if connection is not None and connection.account_identifier:
             account = connection.account_identifier
@@ -131,15 +134,27 @@ class MessageDelivery:
             token = self._settings.twilio_auth_token.get_secret_value()
         else:
             raise NotConfiguredError()
-        if not message.sender:
+        if not message.sender and not message.messaging_service:
             raise NotConfiguredError()
+        data = {"To": message.recipient, "Body": message.body}
+        if message.messaging_service:
+            # Twilio picks the registered sender (a DLT header, a short code) itself.
+            data["MessagingServiceSid"] = message.messaging_service
+        else:
+            data["From"] = message.sender or ""
+        base = self._settings.telephony_public_base_url
+        if base:
+            # Twilio says here whether the text reached the phone.
+            data["StatusCallback"] = (
+                f"{base}/webhooks/v1/twilio/{message.tenant_id}/messages/{message.id}/status"
+            )
         try:
             async with httpx.AsyncClient(
                 timeout=SMS_TIMEOUT_SECONDS, follow_redirects=False, transport=self._transport
             ) as client:
                 response = await client.post(
                     f"https://api.twilio.com/2010-04-01/Accounts/{account}/Messages.json",
-                    data={"To": message.recipient, "From": message.sender, "Body": message.body},
+                    data=data,
                     auth=httpx.BasicAuth(account, token),
                 )
         except httpx.HTTPError:
@@ -151,6 +166,11 @@ class MessageDelivery:
         if response.status_code not in {200, 201}:
             # Wrong number, a number that cannot receive texts, or rejected credentials.
             raise PermanentProviderError()
+        try:
+            sid = str(response.json().get("sid") or "")
+        except (ValueError, AttributeError):
+            return None
+        return sid[:40] if sid.startswith(("SM", "MM")) else None
 
     async def deliver_one(self) -> bool:
         """Send one due message. False when nothing is waiting."""
@@ -158,11 +178,12 @@ class MessageDelivery:
         if message is None:
             return taken
         failure: ProviderError | None = None
+        provider_id: str | None = None
         try:
             if message.channel == "email":
                 await self._send_email(message)
             else:
-                await self._send_sms(message)
+                provider_id = await self._send_sms(message)
         except ProviderError as error:
             failure = error
         except Exception as error:
@@ -184,6 +205,8 @@ class MessageDelivery:
             row.lease_token, row.lease_until = None, None
             if failure is None:
                 row.status, row.sent_at, row.last_error = "sent", datetime.now(UTC), None
+                # A delivery report may already have set it; it is the same text.
+                row.provider_message_id = row.provider_message_id or provider_id
             elif retry_in is None:
                 row.status, row.last_error = "failed", failure.code
             else:
@@ -195,3 +218,50 @@ class MessageDelivery:
                 extra={"message_id": str(message.id), "error_code": failure.code},
             )
         return True
+
+
+# How far along a text is; a report never moves it back (they arrive out of order).
+_PROGRESS = {"accepted": 1, "queued": 1, "sending": 2, "sent": 3, "delivered": 4, "read": 4}
+_FINAL_FAILURES = {"undelivered", "failed"}
+
+
+async def record_delivery(
+    sessions: async_sessionmaker[AsyncSession],
+    tenant_id: UUID,
+    message_id: UUID,
+    provider_message_id: str,
+    status: str,
+    error_code: str | None,
+) -> None:
+    """What the phone service said about one text. A report for a text it does not
+    match (another ID), or one older than what is known, changes nothing."""
+    from app.core.database.rls import set_tenant_scope
+
+    async with sessions.begin() as session:
+        await set_tenant_scope(session, tenant_id)
+        row = await session.scalar(
+            select(OutboundMessage)
+            .where(
+                OutboundMessage.tenant_id == tenant_id,
+                OutboundMessage.id == message_id,
+                OutboundMessage.channel == "sms",
+            )
+            .with_for_update()
+        )
+        if row is None or row.provider_message_id not in {None, provider_message_id}:
+            return
+        row.provider_message_id = provider_message_id
+        known = row.delivery_status
+        if known in _FINAL_FAILURES or known == "delivered":
+            return
+        if status in _FINAL_FAILURES:
+            row.delivery_status, row.status = status, "failed"
+            row.last_error = f"carrier_{error_code}"[:40] if error_code else "undelivered"
+            logger.warning(
+                "message_not_delivered",
+                extra={"message_id": str(message_id), "error_code": row.last_error},
+            )
+        elif _PROGRESS.get(status, 0) > _PROGRESS.get(known or "", 0):
+            row.delivery_status = "delivered" if status == "read" else status
+            if row.delivery_status == "delivered":
+                row.delivered_at = datetime.now(UTC)

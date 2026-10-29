@@ -183,7 +183,7 @@ async def test_words_after_a_noise_mean_no_resume(monkeypatch: Any) -> None:
         ("Mm-hmm.", "en", True),
         ("okay", "en", True),
         ("Yeah, right", "en", True),
-        ("haan ji", "hinglish", True),
+        ("haan ji", "hi-Latn", True),
         ("जी", "hi", True),
         ("હા", "gu", True),
         ("d'accord", "fr", True),

@@ -381,7 +381,7 @@ class VoicePipeline:
                         # play answers the old question.
                         self._stop_playback()
                 result = self._joined(result)
-                if sounds_unfinished(result.text):
+                if sounds_unfinished(result.text, self._language or "en"):
                     self._hold(result)
                     continue
                 self._turns.put_nowait(result)
@@ -481,7 +481,7 @@ class VoicePipeline:
         voice = str(getattr(self.tts, "voice_key", self.tts.name)) + ":" + (voice_id or "")
         # Said the way a person reads it; the transcript keeps the written form.
         spoken = speakable(text, language)
-        if language in {None, "en", "hinglish"} and DEVANAGARI.search(text):
+        if language in {None, "en", "hi-Latn"} and DEVANAGARI.search(text):
             # Hindi script in an English or Hinglish call (a name, a phrase): read with
             # Hindi pronunciation rather than spelled out by the English voice.
             language = "hi"

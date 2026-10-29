@@ -22,7 +22,7 @@ class CreatePatient(BaseModel):
         default=None, min_length=4, max_length=64, pattern=r"^[A-Za-z0-9._-]+$"
     )
     email: str | None = Field(default=None, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-    language: str | None = Field(default=None, pattern=r"^[a-z]{2}$")
+    language: str | None = Field(default=None, pattern=r"^[a-z]{2}(-Latn)?$")
     sms_opt_out: bool = False
 
 
@@ -33,7 +33,7 @@ class UpdatePatient(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
     phone: str = Field(pattern=r"^\+[1-9][0-9]{7,14}$", max_length=16)
     email: str | None = Field(default=None, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-    language: str | None = Field(default=None, pattern=r"^[a-z]{2}$")
+    language: str | None = Field(default=None, pattern=r"^[a-z]{2}(-Latn)?$")
     sms_opt_out: bool = False
 
 

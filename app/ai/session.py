@@ -31,6 +31,8 @@ class Session:
     contact: str | None = None
     # The clinic's doctors and services with their ids, read as the call started.
     directory: dict[str, Any] | None = None
+    # Whose line the call came in on (a provider's or a location's), when not the clinic's.
+    line: dict[str, str] | None = None
 
     @property
     def call(self) -> CallContext:

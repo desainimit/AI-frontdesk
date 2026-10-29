@@ -4,6 +4,7 @@ Assigning a number proves the account owns it, routes it to the clinic and point
 number's call webhooks at this application, so nobody pastes URLs into the provider.
 """
 
+from typing import Any, cast
 from uuid import UUID
 
 import httpx
@@ -58,6 +59,53 @@ class AssignNumber(BaseModel):
     number: str = Field(pattern=r"^\+[1-9][0-9]{7,14}$")
 
 
+class NumberUnavailableError(ConflictError):
+    code = "number_unavailable"
+    public_message = "That number was just taken by someone else. Search again and pick another."
+
+
+class NumberNeedsRegistrationError(ApplicationError):
+    status_code = 422
+    code = "number_needs_registration"
+    public_message = (
+        "The phone service needs an address or a regulatory registration for numbers in this "
+        "country before it sells one. Complete it in the Twilio console, then try again."
+    )
+
+
+class NumberRefusedError(ApplicationError):
+    status_code = 422
+    code = "number_refused"
+    public_message = "The phone service would not sell this number. Try another one."
+
+
+# Twilio's error codes for a number that cannot be bought as asked.
+_NEEDS_REGISTRATION = {21631, 21649, 21612, 21615, 21628}
+_UNAVAILABLE = {21422, 21452}
+
+
+class FindNumbers(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    country: str = Field(default="IN", pattern=r"^[A-Z]{2}$")
+    # Digits the number should contain, such as an area code.
+    contains: str = Field(default="", pattern=r"^[0-9]{0,10}$")
+
+
+class AvailableNumber(BaseModel):
+    number: str
+    locality: str = ""
+    region: str = ""
+    # What the number costs each month, as the phone service prices it; empty when it
+    # does not say.
+    monthly_price: str = ""
+    currency: str = ""
+
+
+class BuyNumber(AssignNumber):
+    # The monthly price the administrator was shown and agreed to.
+    monthly_price: str = Field(default="", max_length=20)
+
+
 class PlatformNumber(BaseModel):
     number: str
     # The clinic this number serves; empty while it is free.
@@ -66,6 +114,35 @@ class PlatformNumber(BaseModel):
     is_active: bool = False
     # False when the provider still has to be pointed at this application by hand.
     webhooks_configured: bool | None = None
+
+
+async def _has_main(session: AsyncSession, tenant_id: UUID, other_than: UUID) -> bool:
+    return (
+        await session.scalar(
+            select(PhoneNumber.id).where(
+                PhoneNumber.tenant_id == tenant_id,
+                PhoneNumber.is_active.is_(True),
+                PhoneNumber.is_main.is_(True),
+                PhoneNumber.id != other_than,
+            )
+        )
+        is not None
+    )
+
+
+async def promote_main(session: AsyncSession, tenant_id: UUID) -> None:
+    """Make the clinic's oldest active number its main one, when it has none."""
+    numbers = (
+        await session.scalars(
+            select(PhoneNumber)
+            .where(PhoneNumber.tenant_id == tenant_id, PhoneNumber.is_active.is_(True))
+            .order_by(PhoneNumber.created_at)
+            .with_for_update()
+        )
+    ).all()
+    if numbers and not any(number.is_main for number in numbers):
+        numbers[0].is_main = True
+        await session.flush()
 
 
 class PlatformPhoneService:
@@ -103,6 +180,8 @@ class PlatformPhoneService:
                     select(PhoneNumber, Tenant.name)
                     .join(Tenant, Tenant.id == PhoneNumber.tenant_id)
                     .where(PhoneNumber.number.in_([item.number for item in owned]))
+                    # A released number's old rows first, so the active row is kept.
+                    .order_by(PhoneNumber.is_active, PhoneNumber.created_at)
                 )
             }
         result: list[PlatformNumber] = []
@@ -117,6 +196,111 @@ class PlatformPhoneService:
                 )
             )
         return result
+
+    def _auth(self) -> httpx.BasicAuth:
+        account, secrets = self._account()
+        return httpx.BasicAuth(account, secrets["auth_token"])
+
+    async def available(
+        self, context: PlatformContext, query: FindNumbers
+    ) -> list[AvailableNumber]:
+        """Numbers the phone service can sell now, that take calls and texts, with their
+        monthly price. Looking costs nothing."""
+        require_platform_permission(context, PlatformPermission.TENANT_UPDATE)
+        account, _ = self._account()
+        params = {"VoiceEnabled": "true", "SmsEnabled": "true", "PageSize": "20"}
+        if query.contains:
+            params["Contains"] = query.contains
+        base = f"https://api.twilio.com/2010-04-01/Accounts/{account}"
+        try:
+            async with httpx.AsyncClient(
+                timeout=TWILIO_TIMEOUT_SECONDS, transport=self._transport
+            ) as client:
+                found = await client.get(
+                    f"{base}/AvailablePhoneNumbers/{query.country}/Local.json",
+                    params=params,
+                    auth=self._auth(),
+                )
+                priced = await client.get(
+                    f"https://pricing.twilio.com/v1/PhoneNumbers/Countries/{query.country}",
+                    auth=self._auth(),
+                )
+        except httpx.HTTPError:
+            raise PhoneServiceUnavailableError() from None
+        if found.status_code == 404:
+            return []
+        if found.status_code != 200:
+            raise PhoneServiceUnavailableError()
+        price, currency = "", ""
+        if priced.status_code == 200:
+            body = cast(dict[str, Any], priced.json())
+            currency = str(body.get("price_unit") or "")
+            prices = cast(list[dict[str, Any]], body.get("phone_number_prices") or [])
+            local = next((item for item in prices if item.get("number_type") == "local"), None)
+            price = str((local or {}).get("current_price") or "")
+        listed = cast(
+            list[dict[str, Any]],
+            cast(dict[str, Any], found.json()).get("available_phone_numbers") or [],
+        )
+        return [
+            AvailableNumber(
+                number=str(item.get("phone_number")),
+                locality=str(item.get("locality") or ""),
+                region=str(item.get("region") or ""),
+                monthly_price=price,
+                currency=currency,
+            )
+            for item in listed
+            if item.get("phone_number")
+        ]
+
+    async def buy(self, context: PlatformContext, command: BuyNumber) -> PlatformNumber:
+        """Buy a number on the platform's phone account and give it to a clinic.
+
+        Asking twice buys once: a number the account already owns is only assigned.
+        """
+        require_platform_permission(context, PlatformPermission.TENANT_UPDATE)
+        try:
+            await self.prove(command.number)
+        except NumberNotOwnedError:
+            await self._purchase(command.number)
+            async with self._sessions.begin() as session:
+                await platform_scope(session, context)
+                session.add(
+                    PlatformAuditEvent(
+                        user_id=context.user_id,
+                        action="phone_number_bought",
+                        request_id=context.request_id,
+                        tenant_id=command.tenant_id,
+                    )
+                )
+        return await self.assign(
+            context, AssignNumber(tenant_id=command.tenant_id, number=command.number)
+        )
+
+    async def _purchase(self, number: str) -> None:
+        account, _ = self._account()
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{account}/IncomingPhoneNumbers.json"
+        try:
+            async with httpx.AsyncClient(
+                timeout=TWILIO_TIMEOUT_SECONDS, transport=self._transport
+            ) as client:
+                response = await client.post(url, data={"PhoneNumber": number}, auth=self._auth())
+        except httpx.HTTPError:
+            raise PhoneServiceUnavailableError() from None
+        if response.status_code in (200, 201):
+            return
+        try:
+            code = int(response.json().get("code") or 0)
+        except (ValueError, AttributeError):
+            code = 0
+        if code in _NEEDS_REGISTRATION:
+            raise NumberNeedsRegistrationError()
+        if code in _UNAVAILABLE:
+            raise NumberUnavailableError()
+        if response.status_code >= 500 or response.status_code == 429:
+            raise PhoneServiceUnavailableError()
+        raise NumberRefusedError()
 
     async def prove(self, number: str) -> ProviderNumber:
         """Ask the phone service whether the platform account owns this number."""
@@ -135,13 +319,23 @@ class PlatformPhoneService:
 
     @staticmethod
     async def attach(session: AsyncSession, tenant_id: UUID, match: ProviderNumber) -> PhoneNumber:
-        """Route a proven number to a clinic. Needs the clinic's scope on the session."""
+        """Route a proven number to a clinic. Needs the clinic's scope on the session.
+
+        A number released by another clinic can be given to this one: its old row stays
+        with the old clinic's calls, and this clinic gets a row of its own.
+        """
         try:
-            phone = await session.scalar(
-                select(PhoneNumber).where(PhoneNumber.number == match.number).with_for_update()
-            )
-            if phone is not None and phone.tenant_id != tenant_id:
+            rows = (
+                await session.scalars(
+                    select(PhoneNumber)
+                    .where(PhoneNumber.number == match.number)
+                    .order_by(PhoneNumber.created_at.desc())
+                    .with_for_update()
+                )
+            ).all()
+            if any(row.is_active and row.tenant_id != tenant_id for row in rows):
                 raise NumberTakenError()
+            phone = next((row for row in rows if row.tenant_id == tenant_id), None)
             if phone is None:
                 phone = PhoneNumber(tenant_id=tenant_id, number=match.number)
                 session.add(phone)
@@ -149,6 +343,10 @@ class PlatformPhoneService:
             # A number on the platform account is not tied to a clinic's own connection.
             phone.integration_id = None
             await session.flush()
+            # A clinic's first number is its main one.
+            if not await _has_main(session, tenant_id, phone.id):
+                phone.is_main = True
+                await session.flush()
         except IntegrityError:
             raise NumberTakenError() from None
         return phone
@@ -189,11 +387,19 @@ class PlatformPhoneService:
         async with self._sessions.begin() as session:
             await platform_scope(session, context)
             phone = await session.scalar(
-                select(PhoneNumber).where(PhoneNumber.number == number).with_for_update()
+                select(PhoneNumber)
+                .where(PhoneNumber.number == number, PhoneNumber.is_active.is_(True))
+                .with_for_update()
             )
             if phone is None:
                 raise NotFoundError()
-            phone.is_active = False
+            was_main = phone.is_main
+            # Free for another clinic; whose line it was goes with the release.
+            phone.is_active, phone.is_main = False, False
+            phone.location_id = phone.provider_id = None
+            await session.flush()
+            if was_main:
+                await promote_main(session, phone.tenant_id)
             session.add(
                 PlatformAuditEvent(
                     user_id=context.user_id,

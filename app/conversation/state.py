@@ -22,7 +22,7 @@ class SupportedLanguage(StrEnum):
     DE = "de"
     PT = "pt"
     HI = "hi"
-    HINGLISH = "hinglish"
+    HINGLISH = "hi-Latn"
 
 
 # Sentences in a row, in another language, that make it the call's language.
@@ -66,7 +66,7 @@ class LanguageState(BaseModel):
             self.recent_languages.pop(0)
         self.code_switching = (
             code_switching
-            or "hinglish" in self.recent_languages
+            or "hi-Latn" in self.recent_languages
             or len({base_language(code) for code in self.recent_languages}) > 1
         )
         if base_language(normalized) == base_language(self.primary_language):

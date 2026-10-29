@@ -7,8 +7,9 @@ from urllib.parse import quote
 import httpx
 from pydantic import SecretStr
 
-from app.conversation.locales import LOCALES, normalize_language
 from app.core.settings import SpeakingSpeed
+from app.languages import known
+from app.languages import language as registry_language
 from app.voice.http import retry_after_seconds
 from app.voice.tts.base import (
     TTSError,
@@ -89,14 +90,13 @@ class ElevenLabsTTSProvider:
     def _language_code(self, language: str | None) -> str | None:
         if not language:
             return None
-        code = normalize_language(language)
-        if code == "gu" and self.model_id != "eleven_v3":
-            raise TTSPermanentError("Gujarati requires ElevenLabs v3 or Azure Speech voice")
-        if code in LOCALES:
-            return code
-        if code != "hinglish":
+        if not known(language):
             raise TTSPermanentError("Unsupported speech language")
-        return None
+        entry = registry_language(language)
+        if self.model_id not in entry.elevenlabs_models:
+            raise TTSPermanentError(f"{entry.name} needs another ElevenLabs model or Azure Speech")
+        # Hinglish is read with Hindi pronunciation but not marked as Hindi text.
+        return entry.elevenlabs
 
     def _speech_socket(self, voice_id: str | None, language: str | None) -> ElevenLabsSocket:
         key = (voice_id or self.default_voice_id, self._language_code(language))

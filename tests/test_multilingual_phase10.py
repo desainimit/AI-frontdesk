@@ -51,9 +51,9 @@ def test_transcript_confidence_is_not_language_confidence() -> None:
     ConversationStateManager.process_caller_utterance(
         state, "Mujhe doctor appointment chahiye", detected_language="hi", confidence=0.01
     )
-    assert state.language == "hinglish"
+    assert state.language == "hi-Latn"
     assert observe_language("haan", "hi") is None
-    assert observe_language("Doctor se milna hai", "hi").language == "hinglish"  # type: ignore[union-attr]
+    assert observe_language("Doctor se milna hai", "hi").language == "hi-Latn"  # type: ignore[union-attr]
 
 
 class SpeechSocketFake:
@@ -125,7 +125,7 @@ async def test_tts_language_and_fallback_routing() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(eleven)) as client:
         provider = ElevenLabsTTSProvider(SecretStr("key"), client=client)
         _ = [chunk async for chunk in provider.synthesize("Namaste", language="hi")]
-        _ = [chunk async for chunk in provider.synthesize("Mujhe appointment", language="hinglish")]
+        _ = [chunk async for chunk in provider.synthesize("Mujhe appointment", language="hi-Latn")]
     assert payloads[0]["language_code"] == "hi"
     assert "language_code" not in payloads[1]
 
@@ -147,7 +147,7 @@ def test_hindi_confirmation_and_server_owned_speech() -> None:
     assert "\u0905\u092a\u0949\u0907\u0902\u091f\u092e\u0947\u0902\u091f" in spoken(
         "hi", "booked", time="10:00", reference="A-7"
     )
-    assert "appointment" in spoken("hinglish", "booked", time="10:00", reference="A-7")
+    assert "appointment" in spoken("hi-Latn", "booked", time="10:00", reference="A-7")
 
 
 @pytest.mark.asyncio

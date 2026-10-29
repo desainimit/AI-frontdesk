@@ -31,7 +31,7 @@ from app.settings.schemas import (
 )
 from app.tenants.models import Tenant
 from app.users.models import User
-from app.voice.factory import GujaratiVoiceConfigurationError, validate_gujarati_voice
+from app.voice.factory import VoiceLanguageError, validate_voices
 
 
 def field_changes(before: JsonValue, after: JsonValue, field: str = "") -> list[FieldChange]:
@@ -108,10 +108,11 @@ class SettingsService:
                     {**row.document, section.value: saved}
                 )
                 policy = configuration.receptionist.languages
-                if configuration.calls.enabled and "gu" in policy.enabled_languages:
+                # Every offered language must be understood and spoken on calls.
+                if configuration.calls.enabled:
                     try:
-                        validate_gujarati_voice(self._settings, policy, stt, tts)
-                    except GujaratiVoiceConfigurationError as failure:
+                        validate_voices(self._settings, policy, stt, tts)
+                    except VoiceLanguageError as failure:
                         raise ValidationFailedError(failure.issues) from None
             before = cast(JsonValue, row.document[section.value])
             changes = field_changes(before, cast(JsonValue, saved))

@@ -1,43 +1,28 @@
-"""Launch-language capabilities and tenant policy, not vocabulary-based detection."""
+"""A clinic's language policy: which languages it offers and which it starts in.
 
-from dataclasses import dataclass
+What each language is and how it is spoken lives in the registry (app.languages).
+"""
+
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.languages import LANGUAGES, family, normalize
 
-@dataclass(frozen=True)
-class Locale:
-    name: str
-    speech_locale: str
-    azure_voice: str
-
-
-LOCALES = {
-    "en": Locale("English", "en-US", "en-US-JennyNeural"),
-    "es": Locale("Spanish", "es-ES", "es-ES-ElviraNeural"),
-    "fr": Locale("French", "fr-FR", "fr-FR-DeniseNeural"),
-    "de": Locale("German", "de-DE", "de-DE-KatjaNeural"),
-    "pt": Locale("Portuguese", "pt-BR", "pt-BR-FranciscaNeural"),
-    "hi": Locale("Hindi", "hi-IN", "hi-IN-SwaraNeural"),
-    "gu": Locale("Gujarati", "gu-IN", "gu-IN-DhwaniNeural"),
-}
-LAUNCH_LANGUAGES = tuple(LOCALES)
+# The spoken languages a clinic can offer. Hinglish comes with Hindi.
+LAUNCH_LANGUAGES = tuple(code for code, entry in LANGUAGES.items() if entry.family == code)
 # Adding an opt-in language must not expand an omitted policy on existing documents.
 DEFAULT_LANGUAGES = ("en", "es", "fr", "de", "pt", "hi")
 
 
 def normalize_language(value: str) -> str:
-    code = value.strip().lower().replace("_", "-")
-    if code in {"hinglish", "hi-latn"}:
-        return "hinglish"
-    language = code.split("-")[0]
-    return "gu" if language == "guj" else language
+    """The registry code for a language tag ("hinglish" -> "hi-Latn", "gu-IN" -> "gu")."""
+    return normalize(value)
 
 
 def base_language(value: str) -> str:
-    code = normalize_language(value)
-    return "hi" if code == "hinglish" else code
+    """The spoken language: Hinglish is Hindi."""
+    return family(value)
 
 
 class LanguagePolicy(BaseModel):
@@ -49,7 +34,9 @@ class LanguagePolicy(BaseModel):
     @field_validator("default_language")
     @classmethod
     def canonical_default(cls, value: str) -> str:
-        return "gu" if value.strip().lower().replace("_", "-") in {"gu", "guj", "gu-in"} else value
+        # Any tag of an offered language ("hi-IN", "gu_IN") means that language.
+        code = family(value)
+        return code if code in LAUNCH_LANGUAGES else value
 
     @field_validator("enabled_languages")
     @classmethod
@@ -58,10 +45,10 @@ class LanguagePolicy(BaseModel):
 
     @model_validator(mode="after")
     def validate_languages(self) -> Self:
-        if not self.enabled_languages or len(self.enabled_languages) > len(LOCALES):
+        if not self.enabled_languages or len(self.enabled_languages) > len(LAUNCH_LANGUAGES):
             raise ValueError("Choose at least one supported language")
-        if any(code not in LOCALES for code in self.enabled_languages):
-            raise ValueError(f"Supported languages: {', '.join(LOCALES)}")
+        if any(code not in LAUNCH_LANGUAGES for code in self.enabled_languages):
+            raise ValueError(f"Supported languages: {', '.join(LAUNCH_LANGUAGES)}")
         if len(set(self.enabled_languages)) != len(self.enabled_languages):
             raise ValueError("Enabled languages must be unique")
         if self.default_language not in self.enabled_languages:

@@ -19,65 +19,29 @@ from functools import lru_cache
 
 from lingua import Language, LanguageDetector, LanguageDetectorBuilder
 
-from app.conversation.locales import LAUNCH_LANGUAGES, base_language, normalize_language
+from app.conversation.locales import LAUNCH_LANGUAGES
+from app.languages import LANGUAGES, all_packs, family
 
-_LATIN_LANGUAGES = (
-    Language.ENGLISH,
-    Language.SPANISH,
-    Language.FRENCH,
-    Language.GERMAN,
-    Language.PORTUGUESE,
+# Latin-script languages told apart by Lingua, and the registry code of each.
+_LINGUA = {
+    getattr(Language, entry.lingua): code for code, entry in LANGUAGES.items() if entry.lingua
+}
+# Languages written in a script of their own: (code, first, last character).
+_SCRIPTS = tuple(
+    (code, entry.script[0], entry.script[1])
+    for code, entry in LANGUAGES.items()
+    if entry.script is not None
 )
-_SCRIPTS = (("hi", "\u0900", "\u097f"), ("gu", "\u0a80", "\u0aff"))
-
-
-def _listed(text: str) -> frozenset[str]:
-    return frozenset(text.split())
-
-
-# Everyday Hindi and Gujarati words as they come out in Latin letters. Words that are
-# also English ("to", "do", "main", "the", "par", "lie") are left out.
-_HINDI_WORDS = _listed(
-    """
-    hai hain tha thi ho hoga hogi hona ka ki ke ko se mein mai lekin aur bhi toh nahi
-    nahin kya kyun kyon kab kaise kaisa kitna kitne kahan kaun kuch koi sab bas sirf
-    mujhe mujhko mera meri mere hum hamara hamari hamare humko aap aapka aapki aapke
-    aapko tum tumhara yeh ye woh vo wo unka unki inka chahiye chahta chahti karna karni
-    karne karo kar kardo kariye kijiye dijiye dena dedo lena milna milega milegi mil
-    sakta sakti sakte sakenge hoon hu haan han ji jee accha achha acha theek thik thoda
-    zara jaldi abhi kal aaj parso baje bje subah sham shaam dopahar raat din hafte
-    mahina samay wala wali wale liye saath pehle baad wahi matlab batao bataiye boliye
-    bolo dekhiye dekho chalega chalo gaya gayi gaye raha rahi rahe hua hui baat zaroor
-    jarur bilkul dhanyavaad shukriya namaste kripya
-    """
-)
-_GUJARATI_WORDS = _listed(
-    """
-    chhe che nathi hatu hati hata maare mare mane mara mari maru tame tamne tamaru
-    tamari tamara amne amaru kem shu shun kyare kyan kayu karvu karvi karvo karo joie
-    joiye jove aavjo aavu saru barabar haa aaje kale savare saanje bapore vagye vage ane
-    thi sathe pachhi pehla
-    """
-)
+# Languages also written in Latin letters, with their everyday words in that form.
+# Words that are also English ("to", "do", "main", "the", "par", "lie") are left out.
+_LATIN_WORDS = tuple((item.code, item.latin_words) for item in all_packs() if item.latin_words)
 # Names of the languages a caller may ask for, in any language they may ask in.
-_NAMES = {
-    "en": ("english", "angrezi", "angreji", "अंग्रेज़ी", "अंग्रेजी", "इंग्लिश", "ઇંગ્લિશ", "અંગ્રેજી"),
-    "hi": ("hindi", "हिंदी", "हिन्दी", "હિન્દી", "હિંદી"),
-    "gu": ("gujarati", "gujrati", "ગુજરાતી", "गुजराती"),
-    "es": ("spanish", "español", "espanol"),
-    "fr": ("french", "français", "francais"),
-    "de": ("german", "deutsch"),
-    "pt": ("portuguese", "português", "portugues"),
-}  # fmt: skip
+_NAMES: dict[str, tuple[str, ...]] = {}
+for _item in all_packs():
+    for _code, _names in _item.language_names.items():
+        _NAMES[_code] = tuple(dict.fromkeys((*_NAMES.get(_code, ()), *_names)))
 # Words that make naming a language a request to speak it ("Hindi mein bolo").
-_ASKING = _listed(
-    """
-    speak talk say language please can could prefer switch reply answer continue mein me
-    bolo boliye baat kariye karo karein chalega samjha samajh में बोलो बोलिए बात करो
-    कीजिए समझ भाषा માં બોલો વાત કરો ભાષા habla hablar idioma parlez parler langue
-    sprechen sprache fala falar
-    """
-)
+_ASKING: frozenset[str] = frozenset[str]().union(*(item.asking for item in all_packs()))
 # A reply is checked once it has this many words; fewer say too little.
 CHECK_WORDS = 4
 
@@ -93,12 +57,7 @@ class LanguageObservation:
 def _detector() -> LanguageDetector:
     # Keep all candidates even for a one-language clinic: restricting to one language
     # would classify every sentence as that language.
-    return LanguageDetectorBuilder.from_languages(*_LATIN_LANGUAGES).build()
-
-
-def family(code: str) -> str:
-    """The spoken language: Hinglish is Hindi written in Latin letters."""
-    return base_language(normalize_language(code))
+    return LanguageDetectorBuilder.from_languages(*_LINGUA).build()
 
 
 def _words(text: str) -> list[str]:
@@ -119,7 +78,7 @@ def _script(words: list[str]) -> str | None:
 
 def _latin_indic(words: list[str]) -> tuple[str, float] | None:
     """Hinglish or Gujarati in Latin letters, from how many everyday words it has."""
-    for code, lexicon in (("hinglish", _HINDI_WORDS), ("gu", _GUJARATI_WORDS)):
+    for code, lexicon in _LATIN_WORDS:
         hits = sum(word in lexicon for word in words)
         if hits >= 2 and hits * 4 >= len(words):
             return code, min(0.95, 0.6 + hits / len(words))
@@ -156,8 +115,7 @@ def observe_language(
         best = values[0]
         if best.value < 0.6 or (len(values) > 1 and best.value - values[1].value < 0.15):
             return None
-        code = best.language.iso_code_639_1.name.lower()
-        reading = LanguageObservation(code, best.value)
+        reading = LanguageObservation(_LINGUA[best.language], best.value)
     if family(reading.language) not in enabled_languages:
         return None
     return reading
@@ -171,7 +129,7 @@ def asked_for_language(text: str, enabled_languages: tuple[str, ...]) -> str | N
     named = [
         code
         for code, names in _NAMES.items()
-        if code in enabled_languages and any(name in words for name in names)
+        if family(code) in enabled_languages and any(name in words for name in names)
     ]
     if len(named) != 1:
         # None, or "Hindi or English?": not a clear request.

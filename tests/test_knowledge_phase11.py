@@ -74,7 +74,7 @@ def test_docling_preserves_headings_and_tokens() -> None:
 
 
 def test_no_result_message_exists_in_every_launch_language() -> None:
-    for code in ("en", "es", "fr", "de", "pt", "hi", "hinglish"):
+    for code in ("en", "es", "fr", "de", "pt", "hi", "hi-Latn"):
         assert spoken(code, "knowledge_unavailable")
 
 

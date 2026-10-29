@@ -159,7 +159,8 @@ async def provision_worker(settings: Settings) -> None:
             )
             await connection.exec_driver_sql(
                 "GRANT UPDATE (status, attempts, available_at, lease_token, lease_until, "
-                f"sent_at, last_error, updated_at) ON outbound_messages TO {quoted}"
+                "sent_at, last_error, provider_message_id, updated_at) "
+                f"ON outbound_messages TO {quoted}"
             )
             await connection.exec_driver_sql(
                 "DROP POLICY IF EXISTS message_delivery ON outbound_messages"
