@@ -75,6 +75,8 @@ async def _measure(model: str, key: str, languages: set[str]) -> list[Result]:
 
 
 async def main() -> int:
+    # Replies in Hindi or Gujarati must print on a Windows console too.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     provider, key = os.environ.get("EVAL_PROVIDER", ""), os.environ.get("EVAL_API_KEY", "")
     models = _listed("EVAL_MODELS") or _listed("EVAL_MODEL")
     languages = set(_listed("EVAL_LANGUAGES"))

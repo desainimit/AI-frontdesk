@@ -22,6 +22,7 @@ from app.ai.llm.base import ChatRequest, Completed, LLMProviderError, TextDelta,
 from app.ai.llm.factory import provider_for
 from app.ai.llm.models import profile
 from app.ai.prompts import prompt_parts
+from app.conversation.locales import LanguagePolicy
 from app.conversation.manager import ConversationStateManager
 from app.settings.defaults import default_settings
 
@@ -37,8 +38,13 @@ async def probe(model: str, key: str) -> None:
     configuration = default_settings("Lotus Clinic")
     session = MagicMock(configuration=configuration, channel="voice", contact=None, directory=None)
     for language, line in LINES.items():
+        # A clinic that offers just this language, so the call is held in it.
         state = ConversationStateManager.create_initial_state(
-            uuid4(), uuid4(), "CA" + "0" * 32, default_language=language
+            uuid4(),
+            uuid4(),
+            "CA" + "0" * 32,
+            default_language=language,
+            language_policy=LanguagePolicy(default_language=language, enabled_languages=[language]),
         )
         system, context = prompt_parts(session, state)
         first: list[int] = []
@@ -64,6 +70,8 @@ async def probe(model: str, key: str) -> None:
 
 
 async def main() -> int:
+    # Replies in Hindi or Gujarati must print on a Windows console too.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     provider, key = os.environ.get("EVAL_PROVIDER", ""), os.environ.get("EVAL_API_KEY", "")
     models = [m.strip() for m in os.environ.get("EVAL_MODELS", "").split(",") if m.strip()]
     if provider not in {"openrouter", "gemini"} or not models or not key:
