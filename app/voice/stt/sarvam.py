@@ -37,6 +37,7 @@ REST_URL = "https://api.sarvam.ai/speech-to-text"
 # Closed by Sarvam: rate limit, quota or key (1003); bad parameters or account (4000).
 _REFUSED = {1003, 4000}
 PING_SECONDS = 20
+SILENCE_MS = 300
 
 
 def sarvam_code(language: str | None) -> str:
@@ -167,6 +168,11 @@ class SarvamSTTProvider:
                 "mode": "codemix" if self.language == "hi-Latn" else "transcribe",
                 "encoding": "mulaw" if encoding == "mulaw" else "linear16",
                 "sample_rate": 8000 if sample_rate <= 8000 else 16000,
+                # The same beat as Deepgram: 300 ms of silence ends a turn (Sarvam's own
+                # default is 500). A caller who only paused mid-sentence is held and
+                # joined by the pipeline, so this does not cut people off.
+                "endpointing": "vad",
+                "silence_duration_ms": SILENCE_MS,
             }
         )
 

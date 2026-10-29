@@ -114,6 +114,8 @@ SUPPORT_ROUTES: dict[tuple[str, str], Permission | None] = {
     ("POST", "/api/v1/integrations/{integration_id}/disconnect"): Permission.INTEGRATION_MANAGE,
     ("GET", "/api/v1/integrations/{integration_id}/phone-numbers"): Permission.INTEGRATION_MANAGE,
     ("POST", "/api/v1/integrations/{integration_id}/phone-numbers"): Permission.INTEGRATION_MANAGE,
+    ("GET", "/api/v1/tenants/current/phone-numbers"): Permission.SETTINGS_READ,
+    ("PATCH", "/api/v1/tenants/current/phone-numbers/{number_id}"): Permission.SETTINGS_UPDATE,
     ("GET", "/api/v1/tenants/current/readiness"): Permission.INTEGRATION_READ,
     ("POST", "/api/v1/tenants/current/activate"): Permission.TENANT_ACTIVATE,
     ("POST", "/api/v1/tenants/current/deactivate"): Permission.TENANT_ACTIVATE,

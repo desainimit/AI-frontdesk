@@ -35,12 +35,12 @@ async def voice_key(app: FastAPI, settings: Settings, tenant_id: UUID) -> Secret
         if connection is not None:
             if connection.provider == "elevenlabs":
                 return connection.secret("api_key")
-            if connection.provider == "language_router":
+            if connection.provider in {"language_router", "sarvam_router"}:
                 return connection.secrets.get("elevenlabs_api_key")
             return None
     if settings.tts_provider == "elevenlabs":
         return settings.elevenlabs_api_key
-    if settings.tts_provider == "language_router":
+    if settings.tts_provider in {"language_router", "sarvam_router"}:
         return settings.routed_tts_secrets.get("elevenlabs_api_key")
     return None
 

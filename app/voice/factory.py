@@ -14,7 +14,12 @@ from app.conversation.locales import LanguagePolicy
 from app.core.settings import Settings, SpeakingSpeed
 from app.integrations.resolver import IntegrationUnavailableError, ResolvedIntegration
 from app.languages import language as registry_language
-from app.voice.routing import RoutedSTTProvider, RoutedTTSProvider
+from app.voice.routing import (
+    RoutedSTTProvider,
+    RoutedTTSProvider,
+    SarvamRouterSTTProvider,
+    SarvamRouterTTSProvider,
+)
 from app.voice.stt.azure import AzureSTTProvider
 from app.voice.stt.base import SpeechToTextProvider
 from app.voice.stt.deepgram import DeepgramSTTProvider
@@ -55,6 +60,9 @@ def _understands(provider: str, config: Mapping[str, Any], code: str, alone: boo
         return True
     if provider == "sarvam":
         return entry.sarvam is not None
+    if provider == "sarvam_router":
+        # Sarvam for its languages, Deepgram Nova 3 for the rest.
+        return entry.sarvam is not None or entry.family in _NOVA_MULTI
     if provider == "deepgram":
         language = str(config.get("language") or "multi")
         if language != "multi":
@@ -79,6 +87,9 @@ def _speaks(provider: str, config: Mapping[str, Any], code: str) -> bool:
         return str(config.get("model_id")) in entry.elevenlabs_models
     if provider == "sarvam":
         return entry.sarvam is not None
+    if provider == "sarvam_router":
+        # Sarvam's voices for its languages; the ElevenLabs voice for the rest.
+        return entry.sarvam is not None or str(config.get("model_id")) in entry.elevenlabs_models
     return False
 
 
@@ -210,6 +221,84 @@ def _routed_tts(
     )
 
 
+def _spoken(policy: LanguagePolicy | None) -> list[str]:
+    if policy is None:
+        return []
+    return sorted(
+        set(policy.enabled_languages) if policy.auto_detect else {policy.default_language}
+    )
+
+
+def _sarvam_router_stt(
+    config: Mapping[str, Any],
+    secrets: Mapping[str, SecretStr],
+    policy: LanguagePolicy | None,
+    locale: LanguageResolver | None,
+    keyterms: tuple[str, ...] = (),
+) -> SarvamRouterSTTProvider:
+    spoken = _spoken(policy)
+    # Sarvam listens for the one Indian language offered, or tells which it is.
+    indian = [code for code in spoken if registry_language(code).sarvam]
+    # Deepgram hears the rest; English may go either way, by the clinic's country.
+    others = {
+        registry_language(code).family
+        for code in spoken
+        if not registry_language(code).sarvam or registry_language(code).family == "en"
+    }
+    deepgram_key = secrets["deepgram_api_key"]
+
+    def deepgram(language: str) -> DeepgramSTTProvider:
+        return DeepgramSTTProvider(
+            api_key=deepgram_key,
+            model="nova-3",
+            language=language,
+            keyterms=keyterms,
+            language_hints=tuple(spoken),
+        )
+
+    def backup(speech_locale: str) -> SpeechToTextProvider:
+        # Deepgram's own model for a language Sarvam was hearing: Gujarati alone,
+        # Hindi, Hinglish and Indian English in its multilingual mode.
+        return deepgram("gu" if speech_locale == "gu-IN" else "multi")
+
+    default = policy.default_language if policy else "en"
+    return SarvamRouterSTTProvider(
+        SarvamSTTProvider(
+            secrets["sarvam_api_key"],
+            str(config["model"]),
+            indian[0] if len(indian) == 1 else None,
+            stream_type=str(config["stream_type"]),
+        ),
+        deepgram(next(iter(others)) if len(others) == 1 else "multi"),
+        backup,
+        locale or (lambda: registry_language(default).default_locale),
+    )
+
+
+def _sarvam_router_tts(
+    config: Mapping[str, Any],
+    secrets: Mapping[str, SecretStr],
+    speed: SpeakingSpeed,
+    country: str | None,
+) -> SarvamRouterTTSProvider:
+    return SarvamRouterTTSProvider(
+        SarvamTTSProvider(
+            secrets["sarvam_api_key"],
+            model=str(config["model"]),
+            speaker=str(config["speaker"]),
+            speed=speed,
+        ),
+        ElevenLabsTTSProvider(
+            api_key=secrets["elevenlabs_api_key"],
+            speed=speed,
+            default_voice_id=str(config["voice_id"]),
+            model_id=str(config["model_id"]),
+        ),
+        elevenlabs_model=str(config["model_id"]),
+        country=country,
+    )
+
+
 def _sarvam_language(policy: LanguagePolicy | None) -> str | None:
     """The one language Sarvam listens for, or None to let it tell which Indian language
     is spoken (a clinic offering several)."""
@@ -233,6 +322,10 @@ def stt_from_connection(
     config = connection.config
     if connection.provider == "language_router":
         return _routed_stt(config, connection.secrets, language_policy, keyterms)
+    if connection.provider == "sarvam_router":
+        return _sarvam_router_stt(
+            config, connection.secrets, language_policy, language_resolver, keyterms
+        )
     if connection.provider == "deepgram":
         return DeepgramSTTProvider(
             api_key=connection.secret("api_key"),
@@ -260,11 +353,14 @@ def stt_from_connection(
 
 
 def tts_from_connection(
-    settings: Settings, connection: ResolvedIntegration
+    settings: Settings, connection: ResolvedIntegration, country: str | None = None
 ) -> TextToSpeechProvider:
+    """country: the clinic's, which decides whether its English is Indian English."""
     config = connection.config
     if connection.provider == "language_router":
         return _routed_tts(config, connection.secrets, settings.speaking_speed)
+    if connection.provider == "sarvam_router":
+        return _sarvam_router_tts(config, connection.secrets, settings.speaking_speed, country)
     if connection.provider == "elevenlabs":
         return ElevenLabsTTSProvider(
             api_key=connection.secret("api_key"),
@@ -306,6 +402,16 @@ def platform_stt(
                 settings.routed_stt_config, settings.routed_stt_secrets, language_policy, keyterms
             )
         return None
+    if settings.stt_provider == "sarvam_router":
+        if _has(settings.routed_stt_secrets, "sarvam_api_key", "deepgram_api_key"):
+            return _sarvam_router_stt(
+                settings.routed_stt_config,
+                settings.routed_stt_secrets,
+                language_policy,
+                language_resolver,
+                keyterms,
+            )
+        return None
     if settings.stt_provider == "sarvam" and settings.sarvam_stt_key.get_secret_value():
         return SarvamSTTProvider(
             settings.sarvam_stt_key,
@@ -341,8 +447,17 @@ def platform_stt(
     return None
 
 
-def platform_tts(settings: Settings) -> TextToSpeechProvider | None:
+def platform_tts(settings: Settings, country: str | None = None) -> TextToSpeechProvider | None:
     """The platform account's text-to-speech, or None when its key is not configured."""
+    if settings.tts_provider == "sarvam_router":
+        if _has(settings.routed_tts_secrets, "sarvam_api_key", "elevenlabs_api_key"):
+            return _sarvam_router_tts(
+                settings.routed_tts_config,
+                settings.routed_tts_secrets,
+                settings.speaking_speed,
+                country,
+            )
+        return None
     if settings.tts_provider == "language_router":
         if all(
             settings.routed_tts_secrets.get(name, SecretStr("")).get_secret_value()
@@ -386,17 +501,22 @@ def platform_tts(settings: Settings) -> TextToSpeechProvider | None:
     return None
 
 
+def _has(secrets: Mapping[str, SecretStr], *names: str) -> bool:
+    return all(secrets.get(name, SecretStr("")).get_secret_value() for name in names)
+
+
 def follows_caller_language(settings: Settings, connection: ResolvedIntegration | None) -> bool:
     """Whether the speech-to-text in use can transcribe more than one language per call.
 
-    Deepgram does when set to its multilingual mode; Azure does by switching locale.
+    Deepgram does when set to its multilingual mode; Azure does by switching locale; the
+    Sarvam router by moving between Sarvam and Deepgram.
     """
     if connection is not None:
         return (
-            connection.provider in {"azure_speech", "language_router"}
+            connection.provider in {"azure_speech", "language_router", "sarvam_router"}
             or connection.config.get("language") == "multi"
         )
     return (
-        settings.stt_provider in {"azure", "language_router"}
+        settings.stt_provider in {"azure", "language_router", "sarvam_router"}
         or settings.deepgram_language == "multi"
     )

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -308,6 +308,10 @@ class TenantReadinessService:
             return self._view(tenant, checks)
 
 
+def _keys(secrets: dict[str, SecretStr], *names: str) -> bool:
+    return all(name in secrets and bool(secrets[name].get_secret_value()) for name in names)
+
+
 def _stt_key(settings: Settings) -> bool:
     if settings.stt_provider == "language_router":
         return all(
@@ -315,6 +319,10 @@ def _stt_key(settings: Settings) -> bool:
             and bool(settings.routed_stt_secrets[name].get_secret_value())
             for name in ("speech_key", "deepgram_api_key")
         )
+    if settings.stt_provider == "sarvam_router":
+        return _keys(settings.routed_stt_secrets, "sarvam_api_key", "deepgram_api_key")
+    if settings.stt_provider == "sarvam":
+        return bool(settings.sarvam_stt_key.get_secret_value())
     if settings.stt_provider == "azure" and settings.azure_stt_key.get_secret_value():
         return True
     key = (
@@ -332,6 +340,10 @@ def _tts_key(settings: Settings) -> bool:
             and bool(settings.routed_tts_secrets[name].get_secret_value())
             for name in ("speech_key", "elevenlabs_api_key")
         )
+    if settings.tts_provider == "sarvam_router":
+        return _keys(settings.routed_tts_secrets, "sarvam_api_key", "elevenlabs_api_key")
+    if settings.tts_provider == "sarvam":
+        return bool(settings.sarvam_tts_key.get_secret_value())
     if settings.tts_provider == "azure" and settings.azure_tts_key.get_secret_value():
         return True
     key = (

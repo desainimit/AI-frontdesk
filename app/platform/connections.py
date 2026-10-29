@@ -204,9 +204,9 @@ def platform_values(
     }
     for row, secrets in connections:
         config = row.config
-        if row.provider == "language_router":
+        if row.provider in {"language_router", "sarvam_router"}:
             prefix = "stt" if row.purpose == Purpose.STT else "tts"
-            values[f"{prefix}_provider"] = "language_router"
+            values[f"{prefix}_provider"] = row.provider
             values[f"routed_{prefix}_config"] = dict(config)
             values[f"routed_{prefix}_secrets"] = {
                 name: SecretStr(value) for name, value in secrets.items()

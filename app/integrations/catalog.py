@@ -129,6 +129,16 @@ class RoutedVoiceConfig(ElevenLabsConfig):
     region: AzureRegion = "eastus"
 
 
+class SarvamRouterRecognitionConfig(SarvamRecognitionConfig):
+    """Sarvam's settings; the other languages, and Sarvam's stand-in, are Deepgram Nova 3."""
+
+
+class SarvamRouterVoiceConfig(ElevenLabsConfig):
+    # Sarvam's voice for the Indian languages; the ElevenLabs voice for the rest.
+    model: Literal["bulbul:v3"] = "bulbul:v3"
+    speaker: SarvamSpeaker = "priya"
+
+
 class RoutedRecognitionConfig(_Config):
     region: AzureRegion = "eastus"
     gujarati_recognition: Literal["deepgram", "azure_speech"] = "deepgram"
@@ -263,6 +273,36 @@ class RoutedVoiceSecrets(AzureSecrets):
         return self
 
 
+class _SarvamRouterSecrets(_Secrets):
+    sarvam_api_key: SecretStr = Field(min_length=16, max_length=256)
+
+    @model_validator(mode="after")
+    def valid_sarvam_key(self) -> Self:
+        if not _printable(self.sarvam_api_key):
+            raise ValueError("Invalid Sarvam key")
+        return self
+
+
+class SarvamRouterRecognitionSecrets(_SarvamRouterSecrets):
+    deepgram_api_key: SecretStr = Field(min_length=16, max_length=256)
+
+    @model_validator(mode="after")
+    def valid_deepgram_key(self) -> Self:
+        if not _printable(self.deepgram_api_key):
+            raise ValueError("Invalid Deepgram key")
+        return self
+
+
+class SarvamRouterVoiceSecrets(_SarvamRouterSecrets):
+    elevenlabs_api_key: SecretStr = Field(min_length=16, max_length=256)
+
+    @model_validator(mode="after")
+    def valid_elevenlabs_key(self) -> Self:
+        if not _printable(self.elevenlabs_api_key):
+            raise ValueError("Invalid ElevenLabs key")
+        return self
+
+
 def _printable(value: SecretStr) -> bool:
     # Header-safe: no whitespace, control characters or non-ASCII.
     return re.fullmatch(r"[\x21-\x7e]+", value.get_secret_value()) is not None
@@ -300,6 +340,22 @@ _SPECS = (
         RoutedVoiceSecrets,
         locked_fields=frozenset({"region"}),
         suffix_field="speech_key",
+    ),
+    ProviderSpec(
+        "sarvam_router",
+        Purpose.STT,
+        "Automatic: Sarvam for Indian languages + Deepgram",
+        SarvamRouterRecognitionConfig,
+        SarvamRouterRecognitionSecrets,
+        suffix_field="sarvam_api_key",
+    ),
+    ProviderSpec(
+        "sarvam_router",
+        Purpose.TTS,
+        "Automatic: Sarvam for Indian languages + ElevenLabs",
+        SarvamRouterVoiceConfig,
+        SarvamRouterVoiceSecrets,
+        suffix_field="sarvam_api_key",
     ),
     ProviderSpec(
         "twilio",

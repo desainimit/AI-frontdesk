@@ -106,6 +106,19 @@ class HttpProviderVerifier:
             return await self.verify(
                 purpose, other, None, config, {"api_key": secrets[f"{other}_api_key"]}
             )
+        if provider == "sarvam_router":
+            if purpose not in {Purpose.STT, Purpose.TTS}:
+                return Verification("invalid", "unsupported_provider")
+            other = "deepgram" if purpose == Purpose.STT else "elevenlabs"
+            if not secrets.get("sarvam_api_key") or not secrets.get(f"{other}_api_key"):
+                return Verification("invalid", "credentials_rejected")
+            # Both accounts, each checked as on its own; nothing is transcribed or spoken.
+            sarvam = await _sarvam(secrets["sarvam_api_key"])
+            if sarvam.outcome != "verified":
+                return sarvam
+            return await self.verify(
+                purpose, other, None, config, {"api_key": secrets[f"{other}_api_key"]}
+            )
         try:
             async with self._client() as client:
                 if provider == "twilio":

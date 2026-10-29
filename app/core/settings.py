@@ -138,8 +138,12 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: SecretStr = SecretStr("")
     telephony_public_base_url: str = ""
-    stt_provider: Literal["deepgram", "azure", "language_router", "sarvam"] = "deepgram"
-    tts_provider: Literal["elevenlabs", "azure", "language_router", "sarvam"] = "elevenlabs"
+    stt_provider: Literal["deepgram", "azure", "language_router", "sarvam", "sarvam_router"] = (
+        "deepgram"
+    )
+    tts_provider: Literal["elevenlabs", "azure", "language_router", "sarvam", "sarvam_router"] = (
+        "elevenlabs"
+    )
     routed_stt_config: dict[str, Any] = Field(default_factory=dict)
     routed_stt_secrets: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
     routed_tts_config: dict[str, Any] = Field(default_factory=dict)

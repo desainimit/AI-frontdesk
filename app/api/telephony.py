@@ -581,6 +581,7 @@ async def resolve_call_providers(
     settings: Settings,
     tenant_id: UUID,
     language_policy: LanguagePolicy | None = None,
+    country: str | None = None,
 ) -> CallProviders:
     """Every provider this call needs, checked before the caller hears anything.
 
@@ -597,9 +598,9 @@ async def resolve_call_providers(
     if stt_connection is None and app.state.stt_provider is None and platform_stt(settings) is None:
         raise IntegrationUnavailableError()
     tts: TextToSpeechProvider | None = (
-        tts_from_connection(settings, tts_connection)
+        tts_from_connection(settings, tts_connection, country)
         if tts_connection is not None
-        else app.state.tts_provider or platform_tts(settings)
+        else app.state.tts_provider or platform_tts(settings, country)
     )
     if tts is None:
         raise IntegrationUnavailableError()
@@ -761,8 +762,10 @@ async def run_media(
         directory = await clinic_directory(
             service.sessions, tenant_id, configuration, caller_number
         )
+        # English in India is recognised and spoken as Indian English, and so on.
+        country = clinic_country(configuration.clinic.phone, configuration.clinic.timezone)
         providers = await resolve_call_providers(
-            socket.app, settings, tenant_id, configuration.receptionist.languages
+            socket.app, settings, tenant_id, configuration.receptionist.languages, country
         )
         models, multilingual = providers.models, providers.multilingual
         owned, llm = models.owned, models.reply
@@ -785,9 +788,6 @@ async def run_media(
             returned.call_state.ended_at = None
             returned.safety_state.decision = SafetyDecision.CONTINUE
             returned.active_flow_state.reset()
-
-        # English in India is recognised and spoken as Indian English, and so on.
-        country = clinic_country(configuration.clinic.phone, configuration.clinic.timezone)
 
         def speech_locale() -> str:
             return registry_language(initial_conv_state.language).locale(country)
@@ -878,7 +878,7 @@ async def run_media(
             # A clinic's chosen voice is an ElevenLabs voice; another service keeps its own.
             voice_id=(
                 configuration.receptionist.voice_id or None
-                if tts.name in {"elevenlabs", "language_router"}
+                if tts.name in {"elevenlabs", "language_router", "sarvam_router"}
                 else None
             ),
         )
