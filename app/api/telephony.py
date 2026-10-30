@@ -788,6 +788,10 @@ async def run_media(
             caller_phone=caller_number,
             language_policy=configuration.receptionist.languages,
         )
+        initial_conv_state.language_state.native_script = tts.name in {
+            "sarvam",
+            "sarvam_router",
+        }
         if returned is not None:
             # Staff did not pick up: the receptionist carries on with the same call.
             returned.call_state.status = CallStatus.IN_PROGRESS
@@ -906,7 +910,8 @@ async def run_media(
                         # number by name, the greeting, that the clinic is closed, and
                         # the greeting's question last.
                         await pipeline.speak_lines(
-                            opening(
+                            protect_first=True,
+                            lines=opening(
                                 configuration.receptionist.greeting_in(
                                     language, configuration.clinic.name
                                 ),
@@ -914,7 +919,7 @@ async def run_media(
                                 closed=None
                                 if opened_while_open
                                 else spoken(language, "closed_now"),
-                            )
+                            ),
                         )
                 except TTSError as error:
                     # Without a greeting the caller can still speak and be answered.

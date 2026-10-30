@@ -270,7 +270,7 @@ async def test_sarvam_voice_streams_and_keeps_its_socket_between_sentences() -> 
     # A sample split across two pieces is joined, never played as noise.
     assert first == [b"\1\2", b"\3\4"]
     second = [chunk async for chunk in voice.synthesize("जी", language="gu")]
-    assert second == [b"\5\6"] and len(opened) == 1 and "bulbul%3Av3" in opened[0]
+    assert second == [b"\5\6"] and len(opened) == 1 and "bulbul%3Av4-flash" in opened[0]
     config = sockets[0].sent[0]["data"]
     assert config["speech_sample_rate"] == 8000 and config["output_audio_codec"] == "linear16"
     assert config["speaker"] == "eleven" and sockets[0].sent[3]["data"]["language_code"] == "gu-IN"

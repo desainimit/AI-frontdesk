@@ -127,3 +127,5 @@ class LanguagePack:
     # Everyday words of a language usually written in another script, as they come out
     # in Latin letters ("mujhe", "chahiye"), for telling it apart from English.
     latin_words: frozenset[str] = frozenset()
+    # Regex alternatives: the receptionist's own goodbye ("take care").
+    farewell: str = ""

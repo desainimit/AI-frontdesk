@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from app.ai.speech_text import speakable
-from app.conversation.backchannel import is_backchannel
+from app.conversation.backchannel import interrupts, is_backchannel
 from app.conversation.manager import ConversationStateManager
 from app.conversation.state import ConversationState
 from app.conversation.store import ConversationStateStore
@@ -41,6 +41,8 @@ RESUME_AFTER_SECONDS = 1.5
 BARGE_IN_CONFIDENCE = 0.5
 # Silence after the receptionist finished, before it asks whether the caller is there.
 SILENCE_SECONDS = 7.0
+# Silence after the receptionist's goodbye, before she hangs up.
+AFTER_GOODBYE_SECONDS = 4.0
 # Words that stop mid-sentence ("I'd like to check my") wait this long for the rest
 # before they are answered as they are.
 HOLD_UNFINISHED_SECONDS = 0.9
@@ -207,6 +209,9 @@ class VoicePipeline:
         self._played.set()
         # A "mm-hmm" heard while the receptionist was talking, kept until it finishes.
         self._deferred: TranscriptionResult | None = None
+        # The greeting's first sentence is said whole; what the caller says over it waits.
+        self._protected = False
+        self._over_greeting: TranscriptionResult | None = None
         self.interrupted_at: float | None = None
         self.received_frames = 0
         self.sent_frames = 0
@@ -261,7 +266,10 @@ class VoicePipeline:
                 # Talking is not silence; the clock starts when the reply has been heard.
                 self._quiet_since = monotonic()
                 continue
-            if monotonic() - self._quiet_since < SILENCE_SECONDS:
+            goodbye = self.conversation_state and self.conversation_state.said_farewell
+            if monotonic() - self._quiet_since < (
+                AFTER_GOODBYE_SECONDS if goodbye else SILENCE_SECONDS
+            ):
                 continue
             self._silences += 1
             self._quiet_since = monotonic()
@@ -314,7 +322,7 @@ class VoicePipeline:
         pcm16 = ulaw_to_pcm(ulaw_audio)
 
         # Check for caller barge-in if TTS is currently synthesizing/playing
-        if self.barge_in_enabled:
+        if self.barge_in_enabled and not self._protected:
             self.interruption.process_incoming_audio(pcm16)
         else:
             self.interruption.hear(pcm16)
@@ -337,11 +345,12 @@ class VoicePipeline:
         self._caller_active()
         if (
             self.barge_in_enabled
+            and not self._protected
             and self.interruption.is_synthesizing
             # Background chatter is often half-heard: words the recognizer is unsure of
             # do not stop the receptionist; the caller's own clear words do.
             and result.confidence >= BARGE_IN_CONFIDENCE
-            and not is_backchannel(result.text, self._language)
+            and interrupts(result.text, self._language)
         ):
             self.interruption.trigger_interruption(reason="caller_words")
 
@@ -369,8 +378,12 @@ class VoicePipeline:
                     )
                 self._cancel_resume()
                 self._caller_active()
-                if self._replying and is_backchannel(result.text, self._language):
-                    # "Okay" while the receptionist is talking means "go on".
+                if self._protected:
+                    self._hold_over_greeting(result)
+                    continue
+                if self._replying and not interrupts(result.text, self._language):
+                    # "Okay" while the receptionist is talking means "go on"; one stray
+                    # word is not worth stopping her for either.
                     self._deferred = result
                     continue
                 self._deferred = None
@@ -390,6 +403,23 @@ class VoicePipeline:
         except Exception:
             logger.error("stt_stream_consumer_failed")
             raise RuntimeError("Speech stream failed") from None
+
+    def _hold_over_greeting(self, result: TranscriptionResult) -> None:
+        if is_backchannel(result.text, self._language):
+            return
+        held = self._over_greeting
+        self._over_greeting = (
+            result if held is None else replace(result, text=held.text + " " + result.text)
+        )
+
+    def _greeting_heard(self) -> None:
+        """The protected sentence is over: answer what was said over it, if it was more
+        than a "hello"."""
+        self._protected = False
+        held, self._over_greeting = self._over_greeting, None
+        if held is not None and interrupts(held.text, self._language):
+            with suppress(asyncio.QueueFull):
+                self._turns.put_nowait(held)
 
     def _joined(self, result: TranscriptionResult) -> TranscriptionResult:
         """These words, after any the caller stopped on mid-sentence."""
@@ -520,14 +550,19 @@ class VoicePipeline:
             await self._record(text)
         return await self.play(await self.prepare(text, voice_id, cache=cache), follow_on=follow_on)
 
-    async def speak_lines(self, lines: list[Line], *, beat: float = BEAT_SECONDS) -> bool:
+    async def speak_lines(
+        self, lines: list[Line], *, beat: float = BEAT_SECONDS, protect_first: bool = False
+    ) -> bool:
         """Say several lines one after the other, a short beat between them, none
         cutting off the end of the one before. False when the caller spoke over them.
 
-        All are made at once, so each is ready by the time the one before it ends.
+        All are made at once, so each is ready by the time the one before it ends. With
+        `protect_first` nothing stops the lines up to the first recorded one: on 30 Oct
+        a noise cut the greeting after a second and the caller never heard who answered.
         """
         lines = [line for line in lines if line.text.strip()]
         speeches = [await self.prepare(line.text, cache=line.cache) for line in lines]
+        self._protected = protect_first
         try:
             for index, (line, speech) in enumerate(zip(lines, speeches, strict=True)):
                 if index and beat > 0:
@@ -538,8 +573,12 @@ class VoicePipeline:
                     await self._record(line.text)
                 if not await self.play(speech, follow_on=True):
                     return False
+                if line.record and self._protected:
+                    self._greeting_heard()
             return True
         finally:
+            if self._protected:
+                self._greeting_heard()
             for speech in speeches:
                 speech.cancel()
 

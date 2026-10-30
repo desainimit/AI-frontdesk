@@ -45,6 +45,7 @@ PLATFORM_MANAGED = frozenset(
         "sarvam_tts_key",
         "sarvam_tts_model",
         "sarvam_speaker",
+        "sarvam_voices",
         "deepgram_model",
         "deepgram_language",
         "elevenlabs_api_key",
@@ -157,11 +158,12 @@ class Settings(BaseSettings):
 
     # Sarvam, for Indian languages: recognition and voice may be saved apart.
     sarvam_stt_key: SecretStr = Field(default=SecretStr(""), repr=False)
-    sarvam_stt_model: str = "saaras:v3-realtime"
+    sarvam_stt_model: str = "saaras:v4"
     sarvam_stream_type: str = "fast"
     sarvam_tts_key: SecretStr = Field(default=SecretStr(""), repr=False)
-    sarvam_tts_model: str = "bulbul:v3"
+    sarvam_tts_model: str = "bulbul:v4-flash"
     sarvam_speaker: str = "priya"
+    sarvam_voices: dict[str, str] = Field(default_factory=dict)
 
     # ElevenLabs TTS
     elevenlabs_api_key: SecretStr = SecretStr("")

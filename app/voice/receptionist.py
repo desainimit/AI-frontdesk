@@ -19,13 +19,16 @@ from app.ai.usage import record_turn
 from app.ai.wording import filler, spoken
 from app.audit.events import AuditAction
 from app.calls.service import CallService
-from app.conversation.backchannel import is_closing, wants_to_end
+from app.conversation.backchannel import is_closing, is_line_check, says_farewell, wants_to_end
 from app.conversation.manager import ConversationStateManager
+from app.conversation.promises import announces_lookup
 from app.conversation.state import ConversationState, SafetyDecision, TranscriptTurn
 from app.conversation.store import ConversationStateStore
 from app.core.database.rls import set_tenant_scope
 from app.core.errors import ApplicationError
 from app.core.settings import Settings
+from app.languages import family, name_in
+from app.languages import language as registry_language
 from app.safety import handover
 from app.safety.messages import transfer_failed_message
 from app.safety.transfer import TransferError, hang_up, transfer_call
@@ -113,15 +116,19 @@ class CallReceptionist:
     async def reply(self, result: TranscriptionResult) -> None:
         if self.pipeline is None or not result.is_final or not result.text.strip():
             return
+        if self._unsaid and is_line_check(result.text):
+            # "Hello?" after a reply was cut off or never played: say it again.
+            await self.resume()
+            return
         self._unsaid = []
         self._turn_started = monotonic()
-        if self.state.end_requested:
+        if self.state.end_requested or self.state.said_farewell:
             if is_closing(result.text, self.state.language):
                 # "Bye", "thank you", "you can cut it" after the goodbye: end the call.
                 await self._end_call("goodbye")
                 return
             # They are not done after all.
-            self.state.end_requested = False
+            self.state.end_requested = self.state.said_farewell = False
         if self._saying_goodbye(result.text):
             await self._goodbye()
             return
@@ -136,8 +143,36 @@ class CallReceptionist:
             await self._respond(self._lines(spoken(self.state.language, "line_unclear")))
             return
         self._asked_again = False
+        await self._tell_unavailable_language()
         ack = acknowledgement(self.state.language, result.text, self._acks, self._last_ack)
         await self._respond(self.engine.run(self.session, self.state, result.text), acknowledge=ack)
+
+    async def _tell_unavailable_language(self) -> None:
+        """Once, before the reply: this clinic does not speak the language they used."""
+        languages = self.state.language_state
+        heard, languages.unavailable_heard = languages.unavailable_heard, None
+        if heard is None or languages.unavailable_told:
+            return
+        languages.unavailable_told = True
+        language = self.state.language
+        current = family(language)
+        offered = sorted(
+            (
+                code
+                for code in languages.policy.enabled_languages
+                if registry_language(code).sarvam or code == current
+            ),
+            key=lambda code: code != current,
+        )
+        line = spoken(
+            language,
+            "language_offer",
+            heard=name_in(heard, language),
+            offer=f" {spoken(language, 'word_or')} ".join(
+                name_in(code, language) for code in offered[:2]
+            ),
+        )
+        await self._respond(self._lines(line), fillers=False)
 
     def warm_acknowledgements(self) -> None:
         """Make the acknowledgements' audio now, one at a time, so each plays at once
@@ -202,6 +237,9 @@ class CallReceptionist:
         """The caller has said nothing for a while: check they are there, then let them go."""
         if self.pipeline is None or self.transferred or self.ended:
             return
+        if self.state.said_farewell:
+            await self._end_call("goodbye")
+            return
         if times == 1:
             await self._respond(
                 self._lines(spoken(self.state.language, "still_there")), fillers=False
@@ -249,8 +287,10 @@ class CallReceptionist:
         # Everything queued to be said, in order; False marks a filler, not remembered.
         items: list[tuple[Speech, bool]] = []
         finished = False
+        failed = False
 
         async def play() -> None:
+            nonlocal failed
             while (speech := await queue.get()) is not None:
                 try:
                     if not await pipeline.play(speech, follow_on=True):
@@ -258,7 +298,15 @@ class CallReceptionist:
                 except TTSError as error:
                     # The speech service failed on this sentence. The call goes on: the
                     # caller can say it again, and the next reply may get through.
-                    logger.warning("call_speech_failed", extra={"error_type": error.code})
+                    failed = True
+                    logger.warning(
+                        "call_speech_failed",
+                        extra={
+                            "error_type": error.code,
+                            "reason": str(error),
+                            "provider": pipeline.tts.name,
+                        },
+                    )
                     return
 
         async def enqueue(text: str, *, record: bool = True, cache: bool = False) -> None:
@@ -317,6 +365,15 @@ class CallReceptionist:
                 if event is None:
                     break
                 if isinstance(event, Say):
+                    if (
+                        fillers
+                        and not event.urgent
+                        and not any(record for _, record in items)
+                        and announces_lookup(event.text)
+                    ):
+                        # The server says that itself, in the call's language, as the
+                        # lookup starts.
+                        continue
                     fill_at = ack_at = None
                     if event.urgent:
                         # A safety alarm: whatever is still queued or playing gives way.
@@ -371,7 +428,7 @@ class CallReceptionist:
                     await task
             for speech, _ in items:
                 speech.cancel()
-            self._remember(items, finished, pipeline.interrupted_at)
+            self._remember(items, finished, pipeline.interrupted_at, failed)
             with suppress(Exception):
                 await self.store.save(self.state, self.store_ttl_seconds)
             first_audio = self._first_audio(items)
@@ -431,7 +488,11 @@ class CallReceptionist:
         self.state.summarized_through = through
 
     def _remember(
-        self, items: list[tuple[Speech, bool]], finished: bool, stopped_at: float | None
+        self,
+        items: list[tuple[Speech, bool]],
+        finished: bool,
+        stopped_at: float | None,
+        failed: bool = False,
     ) -> None:
         """Only what the caller actually heard counts as having been said.
 
@@ -445,7 +506,7 @@ class CallReceptionist:
         for speech, record in items:
             if not record:
                 continue
-            if finished or speech.played:
+            if (finished and not failed) or speech.played:
                 heard.append(speech.text)
                 continue
             if unsaid or speech.started_at is None:
@@ -461,8 +522,10 @@ class CallReceptionist:
             text = " ".join(heard)
             ConversationStateManager.record_agent_response(self.state, text)
             self.state.append_transcript_turn("agent", text)
-        # A reply cut off before a word of it played was never said at all.
-        cut = cut or bool(heard and unsaid)
+            self.state.said_farewell = says_farewell(text)
+        # A reply cut off before a word of it played was never said at all, unless the
+        # voice failed on it: then the caller is waiting for it.
+        cut = cut or bool(heard and unsaid) or (failed and bool(unsaid))
         self.state.reply_cut_off = cut
         self.state.unsaid = " ".join(unsaid)[:1000] if cut else None
         self._unsaid = unsaid if cut else []

@@ -6,6 +6,7 @@ import re
 from datetime import UTC, datetime
 
 from app.ai.wording import spoken
+from app.conversation.confirmation import plain_answer
 from app.conversation.state import ConversationState, FlowType, SafetyDecision
 from app.safety import handover
 from app.safety.classifier import SafetyClassifier
@@ -73,11 +74,15 @@ class SafetyEngine:
         # The runtime has already replaced the code with a fixed marker before
         # safety classification; an access-code-only turn needs no semantic call.
         access_code = re.fullmatch(r"\s*(?:\d{8}|\[call access code\])\s*", utterance) is not None
+        # A bare "yes please" says nothing about their health, and the model sees it
+        # without the question it answers: on 30 Oct it asked about chest pain.
+        bare_answer = context_hint == "none" and plain_answer(utterance, state.language)
         if (
             semantic
             and self.classifier is not None
             and decision != SafetyDecision.EMERGENCY_PROTOCOL
             and not access_code
+            and not bare_answer
         ):
             try:
                 async with asyncio.timeout(self.classifier_timeout_seconds):

@@ -275,6 +275,22 @@ def _sarvam_router_stt(
     )
 
 
+def _sarvam_voice(
+    api_key: SecretStr, config: Mapping[str, Any], speed: SpeakingSpeed
+) -> SarvamTTSProvider:
+    return SarvamTTSProvider(
+        api_key,
+        model=str(config["model"]),
+        speaker=str(config["speaker"]),
+        voices={
+            "hi": str(config["speaker_hindi"]),
+            "gu": str(config["speaker_gujarati"]),
+            "en": str(config["speaker_english"]),
+        },
+        speed=speed,
+    )
+
+
 def _sarvam_router_tts(
     config: Mapping[str, Any],
     secrets: Mapping[str, SecretStr],
@@ -282,12 +298,7 @@ def _sarvam_router_tts(
     country: str | None,
 ) -> SarvamRouterTTSProvider:
     return SarvamRouterTTSProvider(
-        SarvamTTSProvider(
-            secrets["sarvam_api_key"],
-            model=str(config["model"]),
-            speaker=str(config["speaker"]),
-            speed=speed,
-        ),
+        _sarvam_voice(secrets["sarvam_api_key"], config, speed),
         ElevenLabsTTSProvider(
             api_key=secrets["elevenlabs_api_key"],
             speed=speed,
@@ -369,12 +380,7 @@ def tts_from_connection(
             speed=settings.speaking_speed,
         )
     if connection.provider == "sarvam":
-        return SarvamTTSProvider(
-            connection.secret("api_key"),
-            model=str(config["model"]),
-            speaker=str(config["speaker"]),
-            speed=settings.speaking_speed,
-        )
+        return _sarvam_voice(connection.secret("api_key"), config, settings.speaking_speed)
     if connection.provider == "azure_speech":
         return AzureTTSProvider(
             speech_key=connection.secret("speech_key"),
@@ -472,6 +478,7 @@ def platform_tts(settings: Settings, country: str | None = None) -> TextToSpeech
             settings.sarvam_tts_key,
             model=settings.sarvam_tts_model,
             speaker=settings.sarvam_speaker,
+            voices=settings.sarvam_voices,
             speed=settings.speaking_speed,
         )
     if settings.tts_provider == "elevenlabs" and settings.elevenlabs_api_key.get_secret_value():

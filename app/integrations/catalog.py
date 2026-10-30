@@ -7,7 +7,7 @@ URLs, hosts or headers: every outbound provider address is derived from typed fi
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, ClassVar, Literal, Self, cast
+from typing import Annotated, Any, ClassVar, Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
 
@@ -89,7 +89,7 @@ class DeepgramConfig(_Config):
 
 class SarvamRecognitionConfig(_Config):
     # Saaras: built for Indian languages and Indian English; "fast" answers soonest.
-    model: Literal["saaras:v3-realtime", "saaras:v4"] = "saaras:v3-realtime"
+    model: Literal["saaras:v4", "saaras:v3-realtime"] = "saaras:v4"
     stream_type: Literal["fast", "balanced"] = "fast"
 
 
@@ -102,9 +102,18 @@ SarvamSpeaker = Literal[
 ]  # fmt: skip
 
 
+# Bulbul v4 Flash names a person, a language and a style: "ritu_hi_customer_warm".
+SarvamPersona = Annotated[str, Field(pattern=r"^[a-z]+_[a-z]+_[a-z_]+$", max_length=60)]
+
+
 class SarvamVoiceConfig(_Config):
-    model: Literal["bulbul:v3"] = "bulbul:v3"
+    model: Literal["bulbul:v4-flash", "bulbul:v3"] = "bulbul:v4-flash"
+    # Bulbul v3's one voice, for every language.
     speaker: SarvamSpeaker = "priya"
+    # Bulbul v4 Flash's voice per language. Hinglish is spoken by the Hindi voice.
+    speaker_hindi: SarvamPersona = "ishita_enhi_customer"
+    speaker_gujarati: SarvamPersona = "pooja_gu_customer"
+    speaker_english: SarvamPersona = "ishita_en_customer"
 
 
 class AzureSpeechToTextConfig(_Config):
@@ -134,9 +143,12 @@ class SarvamRouterRecognitionConfig(SarvamRecognitionConfig):
 
 
 class SarvamRouterVoiceConfig(ElevenLabsConfig):
-    # Sarvam's voice for the Indian languages; the ElevenLabs voice for the rest.
-    model: Literal["bulbul:v3"] = "bulbul:v3"
+    # Sarvam's voices for the Indian languages; the ElevenLabs voice for the rest.
+    model: Literal["bulbul:v4-flash", "bulbul:v3"] = "bulbul:v4-flash"
     speaker: SarvamSpeaker = "priya"
+    speaker_hindi: SarvamPersona = "ishita_enhi_customer"
+    speaker_gujarati: SarvamPersona = "pooja_gu_customer"
+    speaker_english: SarvamPersona = "ishita_en_customer"
 
 
 class RoutedRecognitionConfig(_Config):

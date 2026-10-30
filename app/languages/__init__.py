@@ -211,6 +211,14 @@ def language(value: str) -> Language:
     return LANGUAGES[normalize(value)]
 
 
+def name_in(code: str, language: str) -> str:
+    """What `language` calls the language `code`: "गुजराती", "Gujarati"."""
+    names = pack(language).language_names.get(code)
+    if not names:
+        return LANGUAGES[code].name
+    return names[0].title() if names[0].isascii() else names[0]
+
+
 def family(value: str) -> str:
     """The spoken language: Hinglish is Hindi."""
     code = normalize(value)

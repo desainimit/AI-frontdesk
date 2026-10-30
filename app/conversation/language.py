@@ -44,6 +44,8 @@ for _item in all_packs():
 _ASKING: frozenset[str] = frozenset[str]().union(*(item.asking for item in all_packs()))
 # A reply is checked once it has this many words; fewer say too little.
 CHECK_WORDS = 4
+# The Indian scripts, Devanagari to Malayalam.
+INDIC_FIRST, INDIC_LAST = "\u0900", "\u0dff"
 
 
 @dataclass(frozen=True)
@@ -77,11 +79,13 @@ def _script(words: list[str]) -> str | None:
 
 
 def _latin_indic(words: list[str]) -> tuple[str, float] | None:
-    """Hinglish or Gujarati in Latin letters, from how many everyday words it has."""
-    for code, lexicon in _LATIN_WORDS:
-        hits = sum(word in lexicon for word in words)
-        if hits >= 2 and hits * 4 >= len(words):
-            return code, min(0.95, 0.6 + hits / len(words))
+    """Hinglish or Gujarati in Latin letters, from how many everyday words it has. They
+    share words ("koi"): the one with the most is the one spoken."""
+    hits, code = max(
+        (sum(word in lexicon for word in words), code) for code, lexicon in _LATIN_WORDS
+    )
+    if hits >= 2 and hits * 4 >= len(words):
+        return code, min(0.95, 0.6 + hits / len(words))
     return None
 
 
@@ -139,8 +143,20 @@ def asked_for_language(text: str, enabled_languages: tuple[str, ...]) -> str | N
     return None
 
 
+def _foreign_letters(text: str, language: str) -> bool:
+    """Letters of another Indian script in a Hindi or Gujarati reply: on 30 Oct a Gujarati
+    reply opened "કૃપા করে", with a Bengali word in it."""
+    script = LANGUAGES[family(language)].script
+    if script is None:
+        return False
+    first, last = script
+    return any(INDIC_FIRST <= c <= INDIC_LAST and not first <= c <= last for c in text)
+
+
 def reply_fits(text: str, language: str) -> bool:
     """Whether a reply is in the call's language. Too short to tell counts as yes."""
+    if _foreign_letters(text, language):
+        return False
     if len(_words(text)) < CHECK_WORDS:
         return True
     reading = observe_language(text)

@@ -7,7 +7,7 @@ only then writes. A test chat proposes nothing and writes nothing.
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
@@ -15,6 +15,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from app.ai.caller_check import appointment_number
 from app.ai.identity import ContactIdentity
 from app.ai.memory import first_name
+from app.ai.romanize import latin_fold
 from app.ai.session import AssistantAuthorizationError, Session
 from app.ai.speech_time import spoken_when
 from app.ai.wording import spoken
@@ -30,6 +31,7 @@ from app.calendar_sync.service import CalendarService
 from app.calls.access import CallPatientAccess, IdentifyPatient, normalize_access_code
 from app.conversation.confirmation import confirmation_answer, only_a_no
 from app.conversation.manager import ConversationStateManager
+from app.conversation.promises import asked_not_chose
 from app.conversation.state import (
     AppointmentDraft,
     AppointmentOperation,
@@ -280,6 +282,9 @@ class AppointmentFlow:
         self, session: Session, state: ConversationState, payload: BaseModel
     ) -> BaseModel:
         command = AvailabilityInput.model_validate(payload.model_dump())
+        asked = self._ask_doctor_first(session, state)
+        if asked is not None:
+            return asked
         query = SlotQuery(starts_at=command.starts_at, ends_at=command.ends_at)
         state.active_flow_state.transition(FlowStep.CHECKING_AVAILABILITY)
         slots = await self.availability.slots(
@@ -300,12 +305,40 @@ class AppointmentFlow:
         state.active_flow_state.transition(FlowStep.OFFERING_SLOTS)
         return Outcome(status="available" if items else "no_availability", items=items)
 
+    @staticmethod
+    def _ask_doctor_first(session: Session, state: ConversationState) -> Outcome | None:
+        """With several doctors the caller chooses, not the model: the tool needs a doctor,
+        and on 30 Oct it took the first one without a word to the caller."""
+        doctors = cast(list[dict[str, Any]], (session.directory or {}).get("doctors") or [])
+        if state.doctor_settled or len(doctors) < 2:
+            return None
+        state.doctor_settled = True
+        said_so_far = " ".join(
+            latin_fold(turn.text) for turn in state.transcript_turns if turn.speaker == "caller"
+        )
+        names = [latin_fold(str(doctor.get("name"))) for doctor in doctors]
+        if any(
+            len(word) > 2 and word in said_so_far
+            for name in names
+            for word in name.replace("dr.", " ").split()
+        ):
+            return None
+        return Outcome(
+            status="ask_which_doctor",
+            next="ask_what_the_visit_is_for_and_which_doctor_then_check_again",
+            items=[
+                {"name": doctor.get("name"), "for": doctor.get("specialty")} for doctor in doctors
+            ],
+        )
+
     async def list_appointments(
         self, session: Session, state: ConversationState, payload: BaseModel
     ) -> BaseModel:
         refused = self._must_be_known(session, state, managing=True)
         if refused is not None:
             return refused
+        # Their own appointment has its doctor already.
+        state.doctor_settled = True
         which = payload.which if isinstance(payload, AppointmentsInput) else "upcoming"
         now = datetime.now(UTC)
         if which == "past":
@@ -386,6 +419,10 @@ class AppointmentFlow:
         refused = self._must_be_known(session, state, managing=action != "book_appointment")
         if refused is not None:
             return refused
+        if action == "book_appointment" and asked_not_chose(
+            state.last_caller_utterance or "", state.active_flow_state.offered_slots
+        ):
+            return Outcome(status="no_time_chosen", next="answer_them_then_ask_which_time")
         request = session.request(state)
         params = payload.model_dump(mode="json")
         provider_id: UUID

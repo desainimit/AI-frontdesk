@@ -105,6 +105,7 @@ class LanguageGate:
     def __init__(self, language: str, *, check: bool) -> None:
         self._language = language
         self._checking = check
+        self._strict = check
         self._held: list[str] = []
         self.wrong = False
 
@@ -113,7 +114,9 @@ class LanguageGate:
         if self.wrong:
             return []
         if not self._checking:
-            return [sentence]
+            # Once the reply has begun, a later sentence in another language is left out.
+            fits = not self._strict or reply_fits(sentence, self._language)
+            return [sentence] if fits else []
         self._held.append(sentence)
         if len(" ".join(self._held).split()) < CHECK_WORDS:
             return []

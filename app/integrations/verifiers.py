@@ -139,6 +139,17 @@ class HttpProviderVerifier:
                     # ElevenLabs answers 400, not 404, for a voice the account does not have.
                     if response.status_code == 400:
                         return Verification("invalid", "voice_not_found")
+                    # A restricted key may not list voices but still speak, which is all a
+                    # call needs. Nothing to say costs nothing and proves it can.
+                    if response.status_code == 401 and "missing_permissions" in response.text:
+                        spoken = await client.post(
+                            f"https://api.elevenlabs.io/v1/text-to-speech/{config['voice_id']}",
+                            headers={"xi-api-key": secrets["api_key"]},
+                            json={"text": "", "model_id": config.get("model_id")},
+                        )
+                        if spoken.status_code == 401:
+                            return Verification("invalid", "missing_permissions")
+                        return _classify(spoken.status_code, missing="voice_not_found")
                     return _classify(response.status_code, missing="voice_not_found")
                 if provider == "azure_speech":
                     host = f"{config['region']}.api.cognitive.microsoft.com"

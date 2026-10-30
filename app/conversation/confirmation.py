@@ -57,6 +57,11 @@ def confirmation_answer(text: str, language: str = "en") -> bool | None:
     return None
 
 
+def plain_answer(text: str, language: str = "en") -> bool:
+    """Only a yes or a no ("Yes yes please.", "No, thanks."), with nothing else in it."""
+    return confirmation_answer(text, language) is True or only_a_no(text)
+
+
 def only_a_no(text: str) -> bool:
     """A no and nothing more ("No, that's wrong"), not a correction ("No, it's Balsar")."""
     if confirmation_answer(text) is not False:

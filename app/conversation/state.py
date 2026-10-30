@@ -49,6 +49,16 @@ class LanguageState(BaseModel):
     # Another language heard in the last sentences in a row, and how many.
     switch_to: str | None = None
     switch_votes: int = Field(default=0, ge=0)
+    # Sarvam speaks this call: romanised Hindi spoils its voice, so a Hinglish call is held
+    # as Hindi, in Devanagari with English words in Latin letters.
+    native_script: bool = False
+    # An Indian language heard that the clinic has off, until the caller has been told.
+    unavailable_heard: str | None = None
+    unavailable_told: bool = False
+
+    def note_unavailable(self, language: str) -> None:
+        if not self.unavailable_told:
+            self.unavailable_heard = language
 
     def record_utterance(
         self,
@@ -58,7 +68,7 @@ class LanguageState(BaseModel):
         code_switching: bool = False,
     ) -> None:
         """Take one sentence's language into account (see the class docstring)."""
-        normalized = self._normalize_language(detected_language)
+        normalized = self._code(detected_language)
         if base_language(normalized) not in self.policy.enabled_languages or confidence < threshold:
             return
         self.recent_languages.append(normalized)
@@ -86,13 +96,13 @@ class LanguageState(BaseModel):
 
     def establish(self, language: str, confidence: float) -> None:
         """The first sentence that shows a language sets it for the call."""
-        self.primary_language, self.confidence = self._normalize_language(language), confidence
+        self.primary_language, self.confidence = self._code(language), confidence
         self.switch_to, self.switch_votes = None, 0
 
     def request(self, language: str) -> bool:
         """They asked for a language: from now on, at once. False when the clinic does not
         offer it. Asked for Hindi in a Hinglish call, it stays Hinglish (the same)."""
-        code = self._normalize_language(language)
+        code = self._code(language)
         if base_language(code) not in self.policy.enabled_languages:
             return False
         if base_language(code) != base_language(self.primary_language):
@@ -101,9 +111,9 @@ class LanguageState(BaseModel):
         self.switch_to, self.switch_votes = None, 0
         return True
 
-    @staticmethod
-    def _normalize_language(lang: str) -> str:
-        return normalize_language(lang)
+    def _code(self, lang: str) -> str:
+        code = normalize_language(lang)
+        return base_language(code) if self.native_script else code
 
 
 class CallStatus(StrEnum):
@@ -435,6 +445,10 @@ class ConversationState(BaseModel):
     last_agent_response: str | None = None
     # The receptionist said goodbye and the call is to end once that has played.
     end_requested: bool = False
+    # Asked which doctor, or no need to: a caller is asked once.
+    doctor_settled: bool = False
+    # The receptionist said goodbye: a last "okay" or silence ends the call.
+    said_farewell: bool = False
     # The caller talked over the last reply; what they did not hear of it.
     reply_cut_off: bool = False
     unsaid: str | None = Field(default=None, max_length=1000)

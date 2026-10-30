@@ -57,6 +57,9 @@ REFRESH_SECONDS = 15
 # What a failed check means, in words an administrator can act on.
 PROBLEMS = {
     "credentials_rejected": "The provider did not accept these credentials.",
+    "missing_permissions": (
+        "This key is restricted. In ElevenLabs, edit the key and turn on Text to Speech."
+    ),
     "account_not_found": "The provider has no account with this ID.",
     "account_not_active": "This provider account is not active.",
     "api_key_rejected": "The provider did not accept the API key.",
@@ -238,6 +241,11 @@ def platform_values(
                 sarvam_tts_key=SecretStr(secrets["api_key"]),
                 sarvam_tts_model=config["model"],
                 sarvam_speaker=config["speaker"],
+                sarvam_voices={
+                    "hi": config["speaker_hindi"],
+                    "gu": config["speaker_gujarati"],
+                    "en": config["speaker_english"],
+                },
             )
         elif row.provider == "elevenlabs":
             values.update(

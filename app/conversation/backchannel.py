@@ -11,16 +11,27 @@ import unicodedata
 from app.languages import CODES, all_packs, normalize, pack
 
 _WORDS: dict[str, frozenset[str]] = {code: pack(code).backchannel for code in CODES}
-# Hindi and English are mixed on the same call so often that both always count.
-_ALWAYS = _WORDS["en"] | _WORDS["hi"] | _WORDS["hi-Latn"]
+# Hindi, Gujarati and English are mixed on Indian calls so often that all always count.
+_ALWAYS = _WORDS["en"] | _WORDS["hi"] | _WORDS["hi-Latn"] | _WORDS["gu"]
 MAX_WORDS = 3
+# Someone checking the line is there, not saying anything to answer.
+_LINE_CHECK = frozenset(
+    {"allo", "hallo", "hello", "helo", "hey", "hi", "हलो", "हाय", "हेलो", "हैलो", "હલો", "હાય", "હેલો"}
+)
+# A word that stops the receptionist on its own; one sound or stray word does not.
+INTERRUPT_WORDS = 2
 
 
 def _words(text: str) -> list[str]:
     normalized = unicodedata.normalize("NFKC", text).casefold()
     cleaned = "".join(" " if c in ',.!?;:।"' else c for c in normalized)
     edges = "'\u2019-"
-    return [word.strip(edges) for word in cleaned.split() if word.strip(edges)]
+    # "Hmmmm" is "hmm".
+    return [
+        re.sub(r"(.)\1{2,}$", r"\1\1", word.strip(edges))
+        for word in cleaned.split()
+        if word.strip(edges)
+    ]
 
 
 # Said to end a call ("bye", "thank you", "you can cut the call", "rakh do"), and the
@@ -74,5 +85,37 @@ def is_backchannel(text: str, language: str = "en") -> bool:
     words = _words(text)
     if not words or len(words) > MAX_WORDS:
         return False
-    known = _ALWAYS | _WORDS.get(normalize(language), frozenset())
+    known = _known(language)
     return all(word in known for word in words)
+
+
+def _known(language: str) -> frozenset[str]:
+    return _ALWAYS | _WORDS.get(normalize(language), frozenset())
+
+
+def is_line_check(text: str) -> bool:
+    """ "Hello?", "Hey?": the caller is asking whether anyone is there."""
+    words = _words(text)
+    return bool(words) and len(words) <= MAX_WORDS and all(word in _LINE_CHECK for word in words)
+
+
+def interrupts(text: str, language: str = "en") -> bool:
+    """Whether words said over the receptionist should stop her: "wait", or at least two
+    real words. "Hmm", "ha ha", "hello" and one half-heard word ("Extra") do not."""
+    words = _words(text)
+    if any(word in _CARRY_ON for word in words):
+        return True
+    known = _known(language) | _LINE_CHECK
+    return sum(word not in known for word in words) >= INTERRUPT_WORDS
+
+
+# The receptionist's own goodbye, said without end_call being asked for.
+_FAREWELL = re.compile(
+    "|".join(item.farewell for item in all_packs() if item.farewell), re.IGNORECASE
+)
+
+
+def says_farewell(reply: str) -> bool:
+    """Whether a reply of the receptionist's closes the call."""
+    last = re.split(r"(?<=[.!?।])\s+", reply.strip())[-1]
+    return "?" not in last and bool(_FAREWELL.search(last))

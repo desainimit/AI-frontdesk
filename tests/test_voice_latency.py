@@ -211,7 +211,7 @@ async def test_a_speech_failure_does_not_end_the_call(monkeypatch: Any) -> None:
         # Before, the error escaped the reply and the call was dropped.
         await receptionist.reply(TranscriptionResult("Hello?", True))
         receptionist.engine = ScriptedEngine([(0.05, Say("Sorry, how can I help?"))])  # type: ignore[assignment]
-        await receptionist.reply(TranscriptionResult("Hello?", True))
+        await receptionist.reply(TranscriptionResult("I need an appointment", True))
     finally:
         await pipeline.close()
     assert receptionist.state.transcript_turns[-1].text == "Sorry, how can I help?"

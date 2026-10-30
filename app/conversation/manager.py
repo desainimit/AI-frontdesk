@@ -15,6 +15,8 @@ from app.conversation.state import (
     LanguageState,
     SafetyState,
 )
+from app.languages import family
+from app.languages import language as registry_language
 
 
 class ConversationStateManager:
@@ -111,11 +113,15 @@ class ConversationStateManager:
         if asked is not None and language.request(asked):
             return
         observation = observe_language(
-            text,
-            detected_language,
-            provider_languages=detected_languages,
-            enabled_languages=enabled,
+            text, detected_language, provider_languages=detected_languages
         )
+        if observation is not None and family(observation.language) not in enabled:
+            # Not silently: a caller speaking Gujarati to a Hindi clinic is told so.
+            if registry_language(observation.language).script and (
+                observation.confidence >= threshold
+            ):
+                language.note_unavailable(family(observation.language))
+            return
         if observation is not None:
             # The first sentence that shows a language sets it; after that it takes
             # sentences in a row (LanguageState) or a request to change it.

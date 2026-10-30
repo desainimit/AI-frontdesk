@@ -14,7 +14,7 @@ import io
 import json
 import logging
 import wave
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import suppress
 from time import monotonic
 from typing import Any, cast
@@ -26,7 +26,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 
 from app.core.settings import SpeakingSpeed
-from app.languages import known
+from app.languages import family, known
 from app.languages import language as registry_language
 from app.voice.http import retry_after_seconds
 from app.voice.tts.base import (
@@ -43,6 +43,14 @@ URL = "https://api.sarvam.ai/text-to-speech"
 SOCKET_URL = "wss://api.sarvam.ai/text-to-speech/ws"
 # Bulbul's pace for the platform's speaking speed (1.0 is its own normal pace).
 PACE: dict[str, float] = {"slow": 0.8, "normal": 0.9, "fast": 1.0, "very_fast": 1.1}
+PACE_V4: dict[str, float] = {"slow": 0.85, "normal": 0.95, "fast": 1.05, "very_fast": 1.15}
+V4_MODEL = "bulbul:v4-flash"
+# Bulbul v4 Flash's voices, used when a connection names none.
+V4_VOICES: dict[str, str] = {
+    "hi": "ishita_enhi_customer",
+    "gu": "pooja_gu_customer",
+    "en": "ishita_en_customer",
+}
 MAX_CHARACTERS = 2500
 # Sarvam closes a socket after a minute without traffic; one idle longer than this is
 # not reused.
@@ -69,8 +77,9 @@ class SarvamTTSProvider:
         self,
         api_key: SecretStr,
         *,
-        model: str = "bulbul:v3",
+        model: str = V4_MODEL,
         speaker: str = "priya",
+        voices: Mapping[str, str] | None = None,
         speed: SpeakingSpeed = "normal",
         timeout_seconds: float = 8.0,
         client: httpx.AsyncClient | None = None,
@@ -80,6 +89,8 @@ class SarvamTTSProvider:
         self._key = api_key
         self.model = model
         self.speaker = speaker
+        # Bulbul v4 Flash's voices are one language each; v3's one voice speaks them all.
+        self.voices = dict(voices or V4_VOICES) if model == V4_MODEL else {}
         self.speed = speed
         self._timeout = timeout_seconds
         self._client = client
@@ -95,7 +106,19 @@ class SarvamTTSProvider:
 
     @property
     def voice_key(self) -> str:
-        return f"sarvam:{self.model}:{self.speaker}"
+        voices = ",".join(self.voices[code] for code in sorted(self.voices)) or self.speaker
+        return f"sarvam:{self.model}:{voices}:{self._pace}"
+
+    @property
+    def _pace(self) -> float:
+        pace = PACE_V4 if self.model == V4_MODEL else PACE
+        return pace.get(self.speed, pace["normal"])
+
+    def _speaker(self, language: str | None) -> str:
+        if not self.voices:
+            return self.speaker
+        spoken = family(language) if language and known(language) else "en"
+        return self.voices.get(spoken, self.voices.get("en", self.speaker))
 
     def _language_code(self, language: str | None) -> str:
         code = registry_language(language).sarvam if language and known(language) else "en-IN"
@@ -111,7 +134,9 @@ class SarvamTTSProvider:
         if not text.strip():
             return
         code = self._language_code(language)
-        speaker = voice_id or self.speaker
+        speaker = voice_id or self._speaker(language)
+        # Bulbul reads "!" with force; a receptionist does not raise her voice.
+        text = text.replace("!", ".")
         if self.streaming:
             started = False
             try:
@@ -164,7 +189,7 @@ class SarvamTTSProvider:
             "target_language_code": code,
             "speaker": speaker,
             "model": self.model,
-            "pace": PACE.get(self.speed, 0.9),
+            "pace": self._pace,
             "speech_sample_rate": 8000,
             "output_audio_codec": "linear16",
             "min_buffer_size": MIN_BUFFER,
@@ -221,6 +246,7 @@ class SarvamTTSProvider:
                         raise TTSPermanentError("Sarvam rejected the API key")
                     if code_number == 429:
                         raise TTSRateLimitError()
+                    logger.warning("sarvam_voice_refused", extra={"code": code_number})
                     raise TTSTransientError("Sarvam voice stream refused the request")
         finally:
             if finished:
@@ -234,9 +260,10 @@ class SarvamTTSProvider:
         body = {
             "text": text[:MAX_CHARACTERS],
             "language_code": code,
+            "target_language_code": code,
             "speaker": speaker,
             "model": self.model,
-            "pace": PACE.get(self.speed, 0.9),
+            "pace": self._pace,
             "speech_sample_rate": 8000,
             "output_audio_codec": "wav",
         }

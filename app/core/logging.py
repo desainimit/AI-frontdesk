@@ -28,6 +28,8 @@ class JsonFormatter(logging.Formatter):
             "duration_ms",
             "dependency",
             "error_type",
+            "provider",
+            "reason",
             "tenant_id",
             "call_id",
             "event_id",

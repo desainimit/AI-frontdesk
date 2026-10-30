@@ -375,6 +375,10 @@ class SarvamRouterTTSProvider:
             return False
         return indian(registry_language(language).locale(self.country))
 
+    @staticmethod
+    def _sarvam_speaks(language: str | None) -> bool:
+        return bool(language and known(language) and registry_language(language).sarvam)
+
     def _elevenlabs_speaks(self, language: str | None) -> bool:
         if not language or not known(language):
             return True
@@ -383,11 +387,20 @@ class SarvamRouterTTSProvider:
     async def synthesize(
         self, text: str, voice_id: str | None = None, *, language: str | None = None
     ) -> AsyncIterator[bytes]:
+        started = False
         if not self._sarvam(language):
-            async for chunk in self.elevenlabs.synthesize(text, voice_id, language=language):
+            try:
+                async for chunk in self.elevenlabs.synthesize(text, voice_id, language=language):
+                    started = True
+                    yield chunk
+                return
+            except TTSError as error:
+                if started or not self._sarvam_speaks(language):
+                    raise
+                logger.warning("elevenlabs_voice_failed_over", extra={"reason": error.code})
+            async for chunk in self.sarvam.synthesize(text, None, language=language):
                 yield chunk
             return
-        started = False
         try:
             # The clinic's ElevenLabs voice ID means nothing to Sarvam.
             async for chunk in self.sarvam.synthesize(text, None, language=language):
@@ -403,7 +416,7 @@ class SarvamRouterTTSProvider:
 
     @property
     def voice_key(self) -> str:
-        speaker = str(getattr(self.sarvam, "speaker", ""))
+        speaker = str(getattr(self.sarvam, "voice_key", self.sarvam.name))
         other = str(getattr(self.elevenlabs, "voice_key", self.elevenlabs.name))
         return f"sarvam_router:{speaker}:{other}"
 

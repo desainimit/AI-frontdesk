@@ -42,6 +42,32 @@ def promises_a_lookup(text: str) -> bool:
     return bool(_PROMISE.search(text))
 
 
+def asked_not_chose(text: str, offered: list[dict[str, Any]]) -> bool:
+    """A question that names no time ("Do you have a follow-up tomorrow?") is not a choice
+    of one. A time in it ("Can I come at 9?", an offered time as the server worded it) is."""
+    words = " ".join(text.casefold().split())
+    if not words.endswith(("?", "?")) or any(c.isdigit() for c in words):
+        return False
+    return not any(
+        when and when in words
+        for when in (" ".join(str(slot.get("when") or "").casefold().split()) for slot in offered)
+    )
+
+
+# An announcement is a line, not a sentence that also carries the answer.
+ANNOUNCEMENT_WORDS = 14
+
+
+def announces_lookup(text: str) -> bool:
+    """A sentence that only says a lookup is about to happen."""
+    return (
+        promises_a_lookup(text)
+        and "?" not in text
+        and not any(c.isdigit() for c in text)
+        and len(text.split()) <= ANNOUNCEMENT_WORDS
+    )
+
+
 def settles_a_time(text: str, offered: list[dict[str, Any]]) -> str | None:
     """The one offered time a reply speaks of as settled ("पक्का, आज सुबह सवा नौ बजे का रख
     लेते हैं।"), or None. Offering times, or asking about one, is not settling it.

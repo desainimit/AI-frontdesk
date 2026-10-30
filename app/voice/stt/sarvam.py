@@ -38,6 +38,11 @@ REST_URL = "https://api.sarvam.ai/speech-to-text"
 _REFUSED = {1003, 4000}
 PING_SECONDS = 20
 SILENCE_MS = 300
+# What the call is about, so "परसों" is not heard as "बरसों".
+PROMPT = (
+    "Phone call to a medical clinic in India about appointments, doctors and timings. "
+    "The caller speaks Hindi, Gujarati, Hinglish or Indian English."
+)
 
 
 def sarvam_code(language: str | None) -> str:
@@ -133,7 +138,7 @@ class SarvamSTTProvider:
     def __init__(
         self,
         api_key: SecretStr,
-        model: str = "saaras:v3-realtime",
+        model: str = "saaras:v4",
         language: str | None = None,
         *,
         stream_type: str = "fast",
@@ -158,14 +163,22 @@ class SarvamSTTProvider:
             raise STTPermanentError("Sarvam API key is not configured")
         return {"api-subscription-key": key}
 
+    @property
+    def _mode(self) -> str:
+        # Comes back as people say it: Hindi or Gujarati words in their script, English
+        # ones in Latin letters.
+        return "transcribe" if self.language == "en" else "codemix"
+
     def _query(self, sample_rate: int, encoding: str) -> str:
         return urlencode(
             {
                 "language_code": sarvam_code(self.language),
                 "model": self.model,
                 "stream_type": self.stream_type,
-                # Hinglish comes back as people say it: Hindi words with English ones.
-                "mode": "codemix" if self.language == "hi-Latn" else "transcribe",
+                "mode": self._mode,
+                # No keyterms: on 30 Oct Saaras v4 heard them in silence ("પરમ દિવસે",
+                # "Follow-up visit") and each one cut the receptionist off as a real line.
+                "prompt": PROMPT,
                 "encoding": "mulaw" if encoding == "mulaw" else "linear16",
                 "sample_rate": 8000 if sample_rate <= 8000 else 16000,
                 # The same beat as Deepgram: 300 ms of silence ends a turn (Sarvam's own
@@ -201,9 +214,11 @@ class SarvamSTTProvider:
             file.setsampwidth(2)
             file.setframerate(sample_rate)
             file.writeframes(audio)
-        data = {"model": "saaras:v3", "language_code": sarvam_code(self.language)}
-        if self.language == "hi-Latn":
-            data["mode"] = "codemix"
+        data = {
+            "model": self.model.removesuffix("-realtime"),
+            "language_code": sarvam_code(self.language),
+            "mode": self._mode,
+        }
         client = self._client or httpx.AsyncClient(timeout=self._timeout)
         try:
             response = await client.post(
