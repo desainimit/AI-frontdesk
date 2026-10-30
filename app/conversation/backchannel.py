@@ -43,13 +43,14 @@ MAX_CLOSING_WORDS = 6
 
 def is_closing(text: str, language: str = "en") -> bool:
     """A reply after the receptionist's goodbye that still ends the call: a thank-you,
-    a bye, "you can cut it", or a short sound the recognizer half-heard."""
+    a bye, "you can cut it", or a short sound of agreement."""
     words = _words(text)
     if not words or "?" in text or any(word in _CARRY_ON for word in words):
         return False
     if any(word in _CLOSING for word in words):
         return True
-    return is_backchannel(text, language) or len(words) <= 2
+    # Not any two words: on 30 Oct "Day after" hung up on a caller moving an appointment.
+    return is_backchannel(text, language)
 
 
 # The caller is ending the call: "bye", "you can cut the call", "that's all",
@@ -60,6 +61,8 @@ _ANYTHING_ELSE = re.compile("|".join(item.anything_else for item in all_packs())
 # All a caller says to "anything else?" when they are done: "no, thanks", "that's all",
 # "nahi bas", "thank you so much".
 _DONE_WORDS = frozenset[str]().union(*(item.done for item in all_packs()))
+# What makes those words an answer at all: "So," after "anything else?" is not a no.
+_FINISHED = _CLOSING.union(*(item.refuse | item.soft_no for item in all_packs()))
 # An explicit goodbye inside a longer request ("I need to cancel, bye") is not one.
 MAX_ENDING_WORDS = 10
 
@@ -78,7 +81,12 @@ def wants_to_end(text: str, last_reply: str | None = None) -> bool:
     if _ENDING.search(text) and len(words) <= MAX_ENDING_WORDS:
         return True
     asked = bool(last_reply and _ANYTHING_ELSE.search(last_reply))
-    return asked and len(words) <= MAX_CLOSING_WORDS and all(word in _DONE_WORDS for word in words)
+    return (
+        asked
+        and len(words) <= MAX_CLOSING_WORDS
+        and all(word in _DONE_WORDS for word in words)
+        and any(word in _FINISHED for word in words)
+    )
 
 
 def is_backchannel(text: str, language: str = "en") -> bool:

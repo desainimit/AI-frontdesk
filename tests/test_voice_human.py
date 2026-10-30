@@ -86,7 +86,9 @@ def test_the_booking_question_sounds_like_a_receptionist() -> None:
 @pytest.mark.parametrize(
     ("said", "expected"),
     [
-        ("Nomás.", True),
+        # A word that is not a goodbye: they may be going on ("Day after" on 30 Oct).
+        ("Nomás.", False),
+        ("Day after.", False),
         ("आप call call कर, cut कर सकते हो.", True),
         ("Ok. Bye-bye, sir. Thank you.", True),
         ("wait, one more thing", False),
@@ -105,7 +107,7 @@ async def test_a_bye_after_the_goodbye_hangs_up(monkeypatch: Any) -> None:
     receptionist.pipeline = pipeline
     receptionist.state.end_requested = True
     try:
-        await receptionist.reply(TranscriptionResult("Nomás.", True))
+        await receptionist.reply(TranscriptionResult("Bye.", True))
     finally:
         await pipeline.close()
     hung_up.assert_awaited_once()

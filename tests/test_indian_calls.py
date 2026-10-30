@@ -18,7 +18,7 @@ from app.ai.wording import spoken
 from app.conversation.backchannel import (
     _ANYTHING_ELSE as _ANYTHING,  # pyright: ignore[reportPrivateUsage]
 )
-from app.conversation.backchannel import interrupts, is_line_check, says_farewell
+from app.conversation.backchannel import interrupts, is_line_check, says_farewell, wants_to_end
 from app.conversation.confirmation import confirmation_answer
 from app.conversation.language import observe_language, reply_fits
 from app.conversation.locales import LanguagePolicy
@@ -459,3 +459,77 @@ def test_a_doctor_the_caller_named_or_the_only_one_needs_no_question() -> None:
 def test_after_a_booking_the_caller_is_asked_if_there_is_anything_else(code: str) -> None:
     line = spoken(code, "booked", time="x", reference="A-1")
     assert _ANYTHING.search(line)
+
+
+def test_a_fragment_after_anything_else_is_not_a_goodbye() -> None:
+    last = "Anything else I can help with?"
+    assert not wants_to_end("So,", last) and not wants_to_end("I want to reschedule it.", last)
+    assert wants_to_end("No, thanks.", last) and wants_to_end("ના બસ, આભાર.", "બીજું કંઈ?")
+
+
+def speaking(*enabled: str) -> Any:
+    state = safety_state()
+    state.language_state.policy = LanguagePolicy(
+        default_language="en", enabled_languages=list(enabled)
+    )
+    state.language_state.native_script = True
+    return state
+
+
+def say(state: Any, text: str) -> str:
+    ConversationStateManager.process_caller_utterance(state, text)
+    return state.language
+
+
+def test_a_clear_hindi_or_gujarati_sentence_moves_the_call_at_once() -> None:
+    state = speaking("en", "hi", "gu")
+    say(state, "I want to know about my appointment")
+    assert say(state, "No, I ના ના એમ નહીં નહીં મને સાંજની કહી શકશો") == "gu"
+    assert say(state, "तो मुझे गुरुवार का 9 बजे का time देखना है") == "hi"
+
+
+def test_a_hindi_sentence_full_of_english_words_is_still_hindi() -> None:
+    reading = observe_language("मुझे Tuesday का time appointment available चाहिए")
+    assert reading is not None and reading.language == "hi"
+
+
+def test_a_few_english_words_do_not_move_a_gujarati_call() -> None:
+    state = speaking("en", "gu")
+    say(state, "મારે કાલની appointment જોવી છે કોઈ available હશે?")
+    assert say(state, "So I did not feel like it") == "gu"
+    assert say(state, "Can you give me the list of Tuesday times") == "en"
+
+
+def test_a_caller_mixing_three_languages_is_followed_to_the_latest() -> None:
+    state = speaking("en", "hi", "gu")
+    say(state, "મારે કાલની appointment જોવી છે કોઈ available હશે?")
+    say(state, "Can you give me the list of Tuesday times")
+    assert say(state, "मुझे सोमवार का time बता दीजिए") == "hi"
+
+
+DOCTORS = (
+    {"id": "d1", "name": "Dr. Asha", "specialty": "general"},
+    {"id": "d2", "name": "Dr. Dhruvil", "specialty": "general"},
+)
+
+
+def clinic_with_two_doctors() -> Any:
+    return MagicMock(directory={"doctors": list(DOCTORS)})
+
+
+def test_the_doctor_they_chose_stays() -> None:
+    state, session = safety_state(), clinic_with_two_doctors()
+    state.append_transcript_turn("caller", "Dhruvil સાથે appointment જોઈએ છે")
+    ask = AppointmentFlow._ask_doctor_first  # pyright: ignore[reportPrivateUsage]
+    keep = AppointmentFlow._keep_their_doctor  # pyright: ignore[reportPrivateUsage]
+    assert ask(session, state) is None and state.chosen_doctor == "d2"
+    other = keep(session, state, "d1")
+    assert other is not None and other.status == "they_chose_another_doctor"
+    assert other.items[0]["doctor"] == "Dr. Dhruvil"
+    assert keep(session, state, "d2") is None
+
+
+def test_no_doctor_chosen_is_no_reason_to_refuse_one() -> None:
+    state, session = safety_state(), clinic_with_two_doctors()
+    keep = AppointmentFlow._keep_their_doctor  # pyright: ignore[reportPrivateUsage]
+    assert keep(session, state, "d1") is None

@@ -72,8 +72,11 @@ def _words(text: str) -> list[str]:
 
 
 def _script(words: list[str]) -> str | None:
+    # Sarvam keeps English words in Latin letters, so a Hindi sentence full of "time" and
+    # "appointment" may be under half Devanagari: two in five words decide it.
     for code, first, last in _SCRIPTS:
-        if sum(any(first <= c <= last for c in word) for word in words) * 2 > len(words):
+        hits = sum(any(first <= c <= last for c in word) for word in words)
+        if hits >= 2 and hits * 5 >= len(words) * 2:
             return code
     return None
 

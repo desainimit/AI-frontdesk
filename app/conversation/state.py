@@ -25,7 +25,9 @@ class SupportedLanguage(StrEnum):
     HINGLISH = "hi-Latn"
 
 
-# Sentences in a row, in another language, that make it the call's language.
+# Sentences in a row not in the call's language that move it to the latest one. A clear
+# sentence in Hindi or Gujarati moves it at once: Sarvam writes those in their own script,
+# which is not misheard the way a noise comes out as a few English words.
 SWITCH_AFTER = 2
 
 
@@ -66,6 +68,7 @@ class LanguageState(BaseModel):
         confidence: float,
         threshold: float = 0.6,
         code_switching: bool = False,
+        at_once: bool = False,
     ) -> None:
         """Take one sentence's language into account (see the class docstring)."""
         normalized = self._code(detected_language)
@@ -84,13 +87,11 @@ class LanguageState(BaseModel):
             self.switch_to, self.switch_votes = None, 0
             self.confidence = confidence
             return
-        if self.switch_to is not None and base_language(self.switch_to) == base_language(
-            normalized
-        ):
-            self.switch_votes += 1
-        else:
-            self.switch_to, self.switch_votes = normalized, 1
-        if self.switch_votes >= SWITCH_AFTER:
+        # English, then Hindi, then Gujarati from one caller: each is a sentence away from
+        # the call's language, and the latest is the one to follow.
+        self.switch_votes = self.switch_votes + 1 if self.switch_to is not None else 1
+        self.switch_to = normalized
+        if at_once or self.switch_votes >= SWITCH_AFTER:
             self.primary_language, self.confidence = normalized, confidence
             self.switch_to, self.switch_votes = None, 0
 
@@ -445,8 +446,12 @@ class ConversationState(BaseModel):
     last_agent_response: str | None = None
     # The receptionist said goodbye and the call is to end once that has played.
     end_requested: bool = False
-    # Asked which doctor, or no need to: a caller is asked once.
+    # Asked which doctor, or no need to: a caller is asked once per booking.
     doctor_settled: bool = False
+    # The doctor the caller named, and whether the model was reminded to stay with them.
+    chosen_doctor: str | None = None
+    doctor_from_turn: int = 0
+    doctor_reminded: bool = False
     # The receptionist said goodbye: a last "okay" or silence ends the call.
     said_farewell: bool = False
     # The caller talked over the last reply; what they did not hear of it.

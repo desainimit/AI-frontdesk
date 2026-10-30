@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
-from app.ai.caller_check import appointment_number
+from app.ai.caller_check import appointment_number, names_match
 from app.ai.identity import ContactIdentity
 from app.ai.memory import first_name
 from app.ai.romanize import latin_fold
@@ -130,6 +130,34 @@ class Direct:
 
     response: str
     tool: str
+
+
+def _doctors(session: Session) -> list[dict[str, Any]]:
+    return cast(list[dict[str, Any]], (session.directory or {}).get("doctors") or [])
+
+
+def _doctor_name(session: Session, provider_id: str) -> str:
+    return next(
+        (str(doctor["name"]) for doctor in _doctors(session) if doctor.get("id") == provider_id),
+        "",
+    )
+
+
+def _note_named_doctor(doctors: list[dict[str, Any]], state: ConversationState) -> None:
+    """The doctor the caller last named, by first name or surname, however it was heard."""
+    if len(doctors) < 2:
+        return
+    for turn in state.transcript_turns[state.doctor_from_turn :]:
+        if turn.speaker != "caller":
+            continue
+        said = [word for word in latin_fold(turn.text).split() if len(word) > 2]
+        for doctor in doctors:
+            parts = str(doctor.get("name") or "").replace("Dr.", " ").split()
+            if any(names_match(word, part) for word in said for part in parts):
+                if state.chosen_doctor != doctor.get("id"):
+                    state.doctor_reminded = False
+                state.chosen_doctor = str(doctor.get("id"))
+                state.doctor_settled = True
 
 
 class AppointmentFlow:
@@ -285,6 +313,9 @@ class AppointmentFlow:
         asked = self._ask_doctor_first(session, state)
         if asked is not None:
             return asked
+        kept = self._keep_their_doctor(session, state, command.provider_id)
+        if kept is not None:
+            return kept
         query = SlotQuery(starts_at=command.starts_at, ends_at=command.ends_at)
         state.active_flow_state.transition(FlowStep.CHECKING_AVAILABILITY)
         slots = await self.availability.slots(
@@ -294,6 +325,7 @@ class AppointmentFlow:
         items = [
             {
                 "provider_id": str(command.provider_id),
+                "doctor": _doctor_name(session, str(command.provider_id)),
                 # Said for the model, which got the clock wrong converting it itself
                 # (6:15 pm as "पौने छह", a quarter to six).
                 "when": said(session, slot.starts_at, timezone, state.language),
@@ -309,26 +341,36 @@ class AppointmentFlow:
     def _ask_doctor_first(session: Session, state: ConversationState) -> Outcome | None:
         """With several doctors the caller chooses, not the model: the tool needs a doctor,
         and on 30 Oct it took the first one without a word to the caller."""
-        doctors = cast(list[dict[str, Any]], (session.directory or {}).get("doctors") or [])
+        doctors = _doctors(session)
+        _note_named_doctor(doctors, state)
         if state.doctor_settled or len(doctors) < 2:
             return None
         state.doctor_settled = True
-        said_so_far = " ".join(
-            latin_fold(turn.text) for turn in state.transcript_turns if turn.speaker == "caller"
-        )
-        names = [latin_fold(str(doctor.get("name"))) for doctor in doctors]
-        if any(
-            len(word) > 2 and word in said_so_far
-            for name in names
-            for word in name.replace("dr.", " ").split()
-        ):
+        if state.chosen_doctor is not None:
             return None
         return Outcome(
             status="ask_which_doctor",
-            next="ask_what_the_visit_is_for_and_which_doctor_then_check_again",
+            # Moving an appointment keeps its doctor, so there is nothing to ask.
+            next="moving_one_keeps_its_doctor_so_check_again_else_ask_which_doctor_then_check",
             items=[
                 {"name": doctor.get("name"), "for": doctor.get("specialty")} for doctor in doctors
             ],
+        )
+
+    @staticmethod
+    def _keep_their_doctor(
+        session: Session, state: ConversationState, provider_id: UUID
+    ) -> Outcome | None:
+        """The doctor they asked for stays: on 30 Oct times came from whichever doctor the
+        model looked at next. Reminded once; if it goes on, it has told them why."""
+        chosen = state.chosen_doctor
+        if chosen is None or chosen == str(provider_id) or state.doctor_reminded:
+            return None
+        state.doctor_reminded = True
+        return Outcome(
+            status="they_chose_another_doctor",
+            next="check_that_doctor_or_ask_them_before_changing",
+            items=[{"provider_id": chosen, "doctor": _doctor_name(session, chosen)}],
         )
 
     async def list_appointments(
@@ -337,8 +379,6 @@ class AppointmentFlow:
         refused = self._must_be_known(session, state, managing=True)
         if refused is not None:
             return refused
-        # Their own appointment has its doctor already.
-        state.doctor_settled = True
         which = payload.which if isinstance(payload, AppointmentsInput) else "upcoming"
         now = datetime.now(UTC)
         if which == "past":
@@ -619,5 +659,9 @@ class AppointmentFlow:
         operation.status = "completed"
         confirmation.reset()
         state.active_flow_state.transition(FlowStep.COMPLETED)
+        # Another booking on this call starts with the choice of doctor again.
+        state.doctor_settled = state.doctor_reminded = False
+        state.chosen_doctor = None
+        state.doctor_from_turn = len(state.transcript_turns)
         ConversationStateManager.record_tool_call(state, operation.action)
         return Direct(message, operation.action)

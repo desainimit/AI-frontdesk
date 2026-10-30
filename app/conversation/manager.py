@@ -15,8 +15,11 @@ from app.conversation.state import (
     LanguageState,
     SafetyState,
 )
-from app.languages import family
+from app.languages import LANGUAGES, family
 from app.languages import language as registry_language
+
+# A sentence this long in Hindi or Gujarati says which language the caller is using.
+CLEAR_SENTENCE_WORDS = 4
 
 
 class ConversationStateManager:
@@ -132,6 +135,8 @@ class ConversationStateManager:
                 confidence=observation.confidence,
                 threshold=threshold,
                 code_switching=observation.code_switching,
+                at_once=bool(LANGUAGES[family(observation.language)].script)
+                and len(text.split()) >= CLEAR_SENTENCE_WORDS,
             )
 
     @classmethod
